@@ -83,13 +83,29 @@ def _run(cmd: list[str], **kw):
     return subprocess.run(cmd, **kw)
 
 
+def _ytdlp_base() -> list[str]:
+    """yt-dlp command prefix, with --cookies appended if a cookies file exists.
+
+    Cookies file location is configurable via ``YT_COOKIES_PATH`` (env var). On
+    a VPS where YouTube returns *"Sign in to confirm you're not a bot"*, dropping
+    a Netscape-format cookies.txt at that path lets yt-dlp authenticate as your
+    logged-in browser session and bypass the challenge.
+    """
+    import os
+    cmd = ["yt-dlp"]
+    cookies_path = os.environ.get("YT_COOKIES_PATH", "/home/botuser/cookies.txt")
+    if cookies_path and Path(cookies_path).exists():
+        cmd += ["--cookies", cookies_path]
+    return cmd
+
+
 def fetch_metadata(url: str) -> dict:
     """Return {'id', 'title', 'duration'} via yt-dlp --print.
 
     Uses three separate ``--print`` flags so each field is on its own line —
     avoids brittle separator parsing when titles contain pipes / tabs / etc.
     """
-    cmd = ["yt-dlp", "--skip-download", "--no-playlist",
+    cmd = _ytdlp_base() + ["--skip-download", "--no-playlist",
            "--print", "%(id)s",
            "--print", "%(title)s",
            "--print", "%(duration)s",
@@ -120,7 +136,7 @@ def ensure_audio(url: str, work: Path, on_progress: ProgressFn = None) -> Path:
     raw = work / "raw_audio.m4a"
     if not raw.exists():
         _emit(on_progress, "Downloading audio...")
-        cmd = ["yt-dlp", "-f", "bestaudio[ext=m4a]/bestaudio",
+        cmd = _ytdlp_base() + ["-f", "bestaudio[ext=m4a]/bestaudio",
                "--no-playlist", "-o", str(raw), url]
         if _run(cmd).returncode != 0:
             raise RuntimeError("yt-dlp audio download failed")
@@ -139,10 +155,11 @@ def ensure_video(url: str, work: Path, on_progress: ProgressFn = None) -> Path:
     if raw_video.exists() and raw_video.stat().st_size > 0:
         return raw_video
     _emit(on_progress, "Downloading video for frame extraction...")
-    cmd = ["yt-dlp", "-f", "bestvideo[height<=720][ext=mp4]/best[height<=720]/worst",
+    cmd = _ytdlp_base() + ["-f", "bestvideo[height<=720][ext=mp4]/best[height<=720]/worst",
            "--no-playlist", "-o", str(raw_video), url]
     if _run(cmd).returncode != 0:
-        cmd = ["yt-dlp", "-f", "worst", "--no-playlist", "-o", str(raw_video), url]
+        cmd = _ytdlp_base() + ["-f", "worst", "--no-playlist",
+                               "-o", str(raw_video), url]
         if _run(cmd).returncode != 0:
             raise RuntimeError("yt-dlp video download failed")
     return raw_video
