@@ -6,12 +6,11 @@ import { Ic } from '@/components/icons';
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ next?: string }>;
+  searchParams?: { next?: string };
 }) {
   // If already signed in, bounce home (or to ?next=... if provided)
   const session = await auth();
-  const params = await (searchParams ?? Promise.resolve({}));
-  const nextUrl = params?.next ?? '/generate';
+  const nextUrl = searchParams?.next ?? '/generate';
   if (session?.user) redirect(nextUrl);
 
   async function googleSignIn() {
