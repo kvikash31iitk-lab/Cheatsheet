@@ -244,7 +244,9 @@ function GenerateForm() {
                     <Ic.check size={10} /> Within 30-min free limit
                   </Tag>
                 ) : (
-                  <Tag tone="gold">Over 30 min — counts double</Tag>
+                  <Tag tone="error">
+                    Over free limit (30 min) — wallet top-up needed
+                  </Tag>
                 )}
                 <Tag tone="neutral">
                   ~{kind === 'cheatsheet' ? 30 : 120}s to generate
@@ -315,12 +317,35 @@ function GenerateForm() {
           </div>
         )}
 
+        {preview && preview.duration_seconds > 1800 && (
+          <div
+            style={{
+              background: 'var(--c-error-bg)',
+              color: 'var(--c-error)',
+              padding: 12,
+              borderRadius: 10,
+              fontSize: 13,
+              marginBottom: 16,
+            }}
+          >
+            Free tier supports videos up to 30 min. This one is{' '}
+            {Math.round(preview.duration_seconds / 60)} min. Wallet top-up coming
+            in Phase 2.
+          </div>
+        )}
+
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn
             variant="accent"
             size="lg"
             icon={<Ic.sparkle size={14} />}
-            disabled={!valid || submitting || previewLoading || !!previewError}
+            disabled={
+              !valid ||
+              submitting ||
+              previewLoading ||
+              !!previewError ||
+              (preview ? preview.duration_seconds > 1800 : false)
+            }
             onClick={submit}
           >
             {submitting ? 'Starting…' : 'Generate now'}

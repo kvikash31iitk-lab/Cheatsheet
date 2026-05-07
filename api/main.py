@@ -103,6 +103,7 @@ ANON_USER_EMAIL = "anonymous@local.dev"
 # Free-tier limits (lifetime, per user)
 FREE_CHEATSHEETS = 5
 FREE_BOOKS = 2
+FREE_MAX_DURATION_S = 30 * 60  # 30 minutes
 
 
 # --- FastAPI app -----------------------------------------------------------
@@ -291,13 +292,41 @@ async def create_generation(
     user: User = Depends(current_user),
     s: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
+    is_paid = user.wallet_balance_paise > 0
+
     # Quota check
     if req.kind == "cheatsheet" and user.free_cheatsheets_used >= FREE_CHEATSHEETS \
-            and user.wallet_balance_paise <= 0:
+            and not is_paid:
         raise HTTPException(402, "Free cheatsheet quota exhausted. Top up your wallet.")
-    if req.kind == "book" and user.free_books_used >= FREE_BOOKS \
-            and user.wallet_balance_paise <= 0:
+    if req.kind == "book" and user.free_books_used >= FREE_BOOKS and not is_paid:
         raise HTTPException(402, "Free book-notes quota exhausted. Top up your wallet.")
+
+    # Duration check — free tier is limited to 30-min videos. Use the
+    # preview cache so a recent click on this URL is free; otherwise pay
+    # the metadata round-trip now (small, cached).
+    if not is_paid:
+        cached = _PREVIEW_CACHE.get(req.url)
+        if cached:
+            duration = float(cached.get("duration_seconds") or 0)
+        else:
+            try:
+                meta = await asyncio.to_thread(fetch_metadata, req.url)
+                duration = float(meta["duration"])
+                _PREVIEW_CACHE[req.url] = {
+                    "video_id": meta["id"],
+                    "title": meta["title"],
+                    "duration_seconds": meta["duration"],
+                    "thumbnail_url": f"https://i.ytimg.com/vi/{meta['id']}/hqdefault.jpg",
+                }
+            except Exception as exc:
+                raise HTTPException(400, f"Could not read URL: {exc}")
+        if duration > FREE_MAX_DURATION_S:
+            mins = int(duration // 60)
+            raise HTTPException(
+                402,
+                f"Free tier supports videos up to {FREE_MAX_DURATION_S // 60} min. "
+                f"This one is {mins} min — top up your wallet to continue.",
+            )
 
     gen = Generation(
         id=uuid.uuid4().hex,
