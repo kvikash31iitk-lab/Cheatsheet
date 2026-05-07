@@ -93,19 +93,50 @@ if ! command -v nginx >/dev/null 2>&1; then
   apt-get install -y -qq nginx certbot python3-certbot-nginx
 fi
 
-# Plain HTTP config first — certbot will rewrite this to add the HTTPS server.
+# HTTP-only bootstrap config so certbot's HTTP-01 challenge can succeed.
+# After certbot issues the cert we rewrite the file to add the HTTPS server
+# block ourselves — relying on `certbot --nginx` to mutate the file is
+# fragile when other server blocks already exist with default_server / *
+# wildcards, which we've seen on this VPS (the bot's "grid" config).
 NGINX_CONF=/etc/nginx/sites-available/cheatsheet
-cat > "$NGINX_CONF" <<EOF
+write_http_only_conf() {
+  cat > "$NGINX_CONF" <<EOF
 server {
     listen 80;
     listen [::]:80;
     server_name $DOMAIN;
+    client_max_body_size 50M;
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+}
+
+write_full_conf() {
+  cat > "$NGINX_CONF" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN;
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { return 301 https://\$host\$request_uri; }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name $DOMAIN;
+
+    ssl_certificate     /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
 
     client_max_body_size 50M;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -121,11 +152,18 @@ server {
     }
 }
 EOF
+}
 
 mkdir -p /var/www/certbot
-ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/cheatsheet
 rm -f /etc/nginx/sites-enabled/default
-nginx -t && systemctl reload nginx
+
+if [[ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
+  # No cert yet: bootstrap with HTTP-only config first so certbot's
+  # HTTP challenge has a path to land on.
+  write_http_only_conf
+  ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/cheatsheet
+  nginx -t && systemctl reload nginx
+fi
 
 ufw allow 80/tcp 2>/dev/null || true
 ufw allow 443/tcp 2>/dev/null || true
@@ -134,12 +172,21 @@ ufw allow 443/tcp 2>/dev/null || true
 
 if [[ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
   echo "==> requesting Let's Encrypt cert for $DOMAIN..."
-  certbot --nginx -d "$DOMAIN" \
+  # Use the webroot plugin instead of --nginx so certbot doesn't try to
+  # mutate our nginx config (which can fail silently when the VPS has
+  # pre-existing server blocks with default_server flags).
+  certbot certonly --webroot -w /var/www/certbot \
+    -d "$DOMAIN" \
     --non-interactive --agree-tos \
-    --email "$EMAIL_FOR_LE" --redirect
+    --email "$EMAIL_FOR_LE"
 else
   echo "==> cert for $DOMAIN already exists, skipping certbot..."
 fi
+
+# Now write the full HTTP+HTTPS config and reload.
+write_full_conf
+ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/cheatsheet
+nginx -t && systemctl reload nginx
 
 # --- 4. App secrets (idempotent: kept across runs) ------------------------
 
