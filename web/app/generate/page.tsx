@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppBar } from '@/components/app-bar';
 import { Btn, Tag } from '@/components/ui';
@@ -10,6 +10,25 @@ import { createJob, getPreview, type JobKind, type Preview } from '@/lib/api';
 const YT_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)[\w-]{11}/;
 
 export default function GeneratePage() {
+  return (
+    <Suspense fallback={<GeneratePageShell />}>
+      <GenerateForm />
+    </Suspense>
+  );
+}
+
+function GeneratePageShell() {
+  return (
+    <main style={{ minHeight: '100vh' }}>
+      <AppBar />
+      <div style={{ padding: 32, maxWidth: 760, margin: '0 auto' }}>
+        <div style={{ fontSize: 14, color: 'var(--c-ink-3)' }}>Loading…</div>
+      </div>
+    </main>
+  );
+}
+
+function GenerateForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [url, setUrl] = useState(() => searchParams?.get('url') ?? '');
