@@ -168,7 +168,7 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=$VENV/bin/python -u -m bot.main
 Restart=on-failure
 RestartSec=15
-Environment=PATH=/home/$BOT_USER/.npm-global/bin:/home/$BOT_USER/.deno/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PATH=$VENV/bin:/home/$BOT_USER/.npm-global/bin:/home/$BOT_USER/.deno/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StandardOutput=journal
 StandardError=journal
 
