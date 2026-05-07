@@ -70,6 +70,9 @@ export function AppBar() {
       >
         {status === 'loading' ? null : user ? (
           <>
+            <Link href="/dashboard" style={{ color: 'inherit', textDecoration: 'none' }}>
+              Dashboard
+            </Link>
             <Link href="/generate" style={{ color: 'inherit', textDecoration: 'none' }}>
               Generate
             </Link>

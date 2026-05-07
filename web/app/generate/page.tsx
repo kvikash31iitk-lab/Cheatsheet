@@ -1,22 +1,61 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppBar } from '@/components/app-bar';
 import { Btn, Tag } from '@/components/ui';
 import { Ic } from '@/components/icons';
-import { createJob, type JobKind } from '@/lib/api';
+import { createJob, getPreview, type JobKind, type Preview } from '@/lib/api';
 
 const YT_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)[\w-]{11}/;
 
 export default function GeneratePage() {
   const router = useRouter();
-  const [url, setUrl] = useState('');
-  const [kind, setKind] = useState<JobKind>('cheatsheet');
+  const searchParams = useSearchParams();
+  const [url, setUrl] = useState(() => searchParams?.get('url') ?? '');
+  const [kind, setKind] = useState<JobKind>(
+    () => ((searchParams?.get('kind') as JobKind) ?? 'cheatsheet'),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const valid = YT_RE.test(url);
+
+  // Debounced preview fetch when URL becomes valid
+  useEffect(() => {
+    if (!valid) {
+      setPreview(null);
+      setPreviewError(null);
+      return;
+    }
+    setPreviewLoading(true);
+    setPreviewError(null);
+    const t = setTimeout(() => {
+      getPreview(url)
+        .then((p) => {
+          setPreview(p);
+          setPreviewLoading(false);
+        })
+        .catch((e) => {
+          setPreviewError(e instanceof Error ? e.message : String(e));
+          setPreviewLoading(false);
+        });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [url, valid]);
+
+  // If both url + kind came from the dashboard QuickGenerate, auto-submit
+  // once preview returns.
+  useEffect(() => {
+    const fromDash = searchParams?.get('url') && searchParams?.get('kind');
+    if (fromDash && preview && !submitting) {
+      submit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview]);
 
   async function submit() {
     if (!valid || submitting) return;
@@ -106,13 +145,109 @@ export default function GeneratePage() {
             }}
             autoFocus
           />
-          {valid && (
+          {valid && !previewLoading && preview && (
             <Tag tone="mint">
               <Ic.check size={10} /> Valid
             </Tag>
           )}
+          {previewLoading && <Tag tone="neutral">Loading…</Tag>}
           {url && !valid && <Tag tone="error">Invalid URL</Tag>}
         </div>
+
+        {/* Preview card */}
+        {preview && (
+          <div
+            style={{
+              display: 'flex',
+              gap: 16,
+              padding: 14,
+              background: 'var(--c-surface)',
+              border: '1px solid var(--c-line)',
+              borderRadius: 12,
+              marginBottom: 24,
+            }}
+          >
+            <div
+              style={{
+                width: 144,
+                height: 81,
+                borderRadius: 8,
+                background: `url(${preview.thumbnail_url}) center/cover, linear-gradient(135deg, #2a3658, #1a2440)`,
+                position: 'relative',
+                flex: 'none',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: 5,
+                  right: 5,
+                  fontSize: 10,
+                  fontFamily: 'var(--font-mono)',
+                  color: '#fff',
+                  background: 'rgba(0,0,0,.8)',
+                  padding: '1px 5px',
+                  borderRadius: 3,
+                }}
+              >
+                {formatDuration(preview.duration_seconds)}
+              </div>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: 'var(--c-ink)',
+                  marginBottom: 4,
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                }}
+              >
+                {preview.title}
+              </div>
+              <div
+                style={{
+                  fontSize: 12.5,
+                  color: 'var(--c-ink-3)',
+                  marginBottom: 8,
+                  fontFamily: 'var(--font-mono)',
+                }}
+              >
+                {preview.video_id}
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {preview.duration_seconds <= 1800 ? (
+                  <Tag tone="mint">
+                    <Ic.check size={10} /> Within 30-min free limit
+                  </Tag>
+                ) : (
+                  <Tag tone="gold">Over 30 min — counts double</Tag>
+                )}
+                <Tag tone="neutral">
+                  ~{kind === 'cheatsheet' ? 30 : 120}s to generate
+                </Tag>
+              </div>
+            </div>
+          </div>
+        )}
+        {previewError && (
+          <div
+            style={{
+              background: 'var(--c-error-bg)',
+              color: 'var(--c-error)',
+              padding: 12,
+              borderRadius: 10,
+              fontSize: 13,
+              marginBottom: 16,
+            }}
+          >
+            {previewError}
+          </div>
+        )}
 
         <label
           style={{
@@ -166,7 +301,7 @@ export default function GeneratePage() {
             variant="accent"
             size="lg"
             icon={<Ic.sparkle size={14} />}
-            disabled={!valid || submitting}
+            disabled={!valid || submitting || previewLoading || !!previewError}
             onClick={submit}
           >
             {submitting ? 'Starting…' : 'Generate now'}
@@ -175,6 +310,14 @@ export default function GeneratePage() {
       </div>
     </main>
   );
+}
+
+function formatDuration(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
 function KindCard({

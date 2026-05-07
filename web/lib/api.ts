@@ -61,3 +61,23 @@ export async function getLibrary(): Promise<Job[]> {
   if (!r.ok) throw new Error(`get library failed: ${r.status}`);
   return r.json();
 }
+
+export type Preview = {
+  video_id: string;
+  title: string;
+  duration_seconds: number;
+  thumbnail_url: string;
+};
+
+export async function getPreview(url: string): Promise<Preview> {
+  const r = await fetch('/api/preview', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  if (!r.ok) {
+    const body = await r.text();
+    throw new Error(body || `preview failed: ${r.status}`);
+  }
+  return r.json();
+}

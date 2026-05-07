@@ -55,3 +55,52 @@ input, textarea {
   font-size: inherit;
   color: inherit;
 }
+
+/* Phone breakpoint — quick pass to keep landing + app usable on mobile.
+   The design was desktop-first; here we just rein in the worst overflow
+   issues without restructuring layouts. */
+@media (max-width: 760px) {
+  /* Knock back outsized typographic moments */
+  h1[style*="88px"], h1[style*="font-size: 88"] { font-size: 44px !important; line-height: 1.05 !important; }
+  h1[style*="64px"], h1[style*="font-size: 64"] { font-size: 36px !important; line-height: 1.05 !important; }
+  h1[style*="56px"], h2[style*="56px"], h2[style*="font-size: 56"] { font-size: 32px !important; }
+  h1[style*="44px"], h2[style*="44px"] { font-size: 28px !important; }
+  h2[style*="48px"] { font-size: 28px !important; }
+
+  /* Fall back to single column for any 2/3/4-col grids */
+  div[style*="grid-template-columns: 1fr 1fr"],
+  div[style*="grid-template-columns: 1fr 1.1fr"],
+  div[style*="grid-template-columns: 1fr 1.2fr"],
+  div[style*="grid-template-columns: 1fr 1.4fr"],
+  div[style*="grid-template-columns: 1.4fr 1fr 1fr"],
+  div[style*="grid-template-columns: 1.6fr 1fr"],
+  div[style*="repeat(3"],
+  div[style*="repeat(4"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Reduce excessive section padding on small screens */
+  section[style*="padding: 80px 56px"],
+  section[style*="padding: 96px 56px"],
+  section[style*="padding: 72px 56px"] {
+    padding: 56px 20px !important;
+  }
+  header[style*="padding: 20px 56px"] {
+    padding: 16px 20px !important;
+    flex-wrap: wrap !important;
+    gap: 12px !important;
+  }
+  /* Hide secondary nav links on mobile to make room for sign-in btn */
+  header nav a[href="#features"],
+  header nav a[href="#pricing"],
+  header nav a[href="#how"],
+  header nav a[href="#faq"] {
+    display: none !important;
+  }
+
+  /* Login page two-column → stack on mobile, hide editorial */
+  main[style*="grid-template-columns: 1fr 1.1fr"] section:last-child {
+    display: none !important;
+  }
+}
+

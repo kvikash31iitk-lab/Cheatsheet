@@ -189,6 +189,12 @@ export const Ic = {
       <path d="M20 12a8 8 0 0 1-14 5l-2 2v-6h6l-3 3" />
     </Icon>
   ),
+  trend: (p: P = {}) => (
+    <Icon {...p}>
+      <polyline points="3 17 9 11 13 15 21 7" />
+      <polyline points="15 7 21 7 21 13" />
+    </Icon>
+  ),
   filter: (p: P = {}) => (
     <Icon {...p}>
       <polygon points="3 4 21 4 14 13 14 19 10 21 10 13 3 4" />

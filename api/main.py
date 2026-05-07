@@ -248,6 +248,42 @@ class CreateRequest(BaseModel):
     kind: Literal["cheatsheet", "book"]
 
 
+class PreviewRequest(BaseModel):
+    url: str = Field(..., min_length=10)
+
+
+# Tiny in-memory cache so refreshing the page or trying multiple kinds for the
+# same URL doesn't re-spawn yt-dlp every time. Keyed by URL, capped at 256.
+_PREVIEW_CACHE: dict[str, dict[str, Any]] = {}
+
+
+@app.post("/api/preview")
+async def preview(
+    req: PreviewRequest,
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """Cheap metadata lookup for a YouTube URL — used by the generate UI to
+    show a thumbnail + title + duration BEFORE the user commits to spending
+    a free-tier slot.
+    """
+    if req.url in _PREVIEW_CACHE:
+        return _PREVIEW_CACHE[req.url]
+    try:
+        meta = await asyncio.to_thread(fetch_metadata, req.url)
+    except Exception as exc:
+        raise HTTPException(400, f"Could not read URL: {exc}")
+    out = {
+        "video_id": meta["id"],
+        "title": meta["title"],
+        "duration_seconds": meta["duration"],
+        "thumbnail_url": f"https://i.ytimg.com/vi/{meta['id']}/hqdefault.jpg",
+    }
+    if len(_PREVIEW_CACHE) > 256:
+        _PREVIEW_CACHE.clear()
+    _PREVIEW_CACHE[req.url] = out
+    return out
+
+
 @app.post("/api/generate")
 async def create_generation(
     req: CreateRequest,
