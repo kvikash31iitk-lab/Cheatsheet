@@ -115,23 +115,11 @@ fi
 WATCH_DIR="/home/$BOT_USER/.claude/skills/watch"
 if [[ ! -d "$WATCH_DIR/scripts" ]]; then
   echo "==> cloning bradautomates/claude-video into ~/.claude/skills/watch..."
-  sudo -u "$BOT_USER" -i mkdir -p "/home/$BOT_USER/.claude/skills"
-  sudo -u "$BOT_USER" -i git clone --depth 1 \
+  sudo -u "$BOT_USER" -H mkdir -p "/home/$BOT_USER/.claude/skills"
+  sudo -u "$BOT_USER" -H git clone --depth 1 \
     https://github.com/bradautomates/claude-video.git "$WATCH_DIR"
-  # Apply the Windows-UTF8 patches — they're harmless on Linux but match Windows behaviour.
-  sudo -u "$BOT_USER" -i bash -c "
-    cd '$WATCH_DIR'
-    python3 -c \"
-import pathlib
-for p in ['scripts/watch.py', 'scripts/setup.py', 'scripts/whisper.py']:
-    fp = pathlib.Path(p)
-    if fp.exists():
-        s = fp.read_text(encoding='utf-8')
-        if '→' in s:
-            fp.write_text(s.replace('→', '->'), encoding='utf-8')
-\"
-  "
 fi
+# (Skipping the Windows cp1252 patches — Linux has UTF-8 by default.)
 
 # --- 7. .env scaffold ------------------------------------------------------
 
