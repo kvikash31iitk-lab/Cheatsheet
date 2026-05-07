@@ -90,9 +90,13 @@ def _ytdlp_base() -> list[str]:
     a VPS where YouTube returns *"Sign in to confirm you're not a bot"*, dropping
     a Netscape-format cookies.txt at that path lets yt-dlp authenticate as your
     logged-in browser session and bypass the challenge.
+
+    Also forces ``player_client=default,android`` — the android client returns
+    stream URLs that don't require solving the JS-based "n challenge", which
+    needs deno/node and frequently fails on headless VPS environments.
     """
     import os
-    cmd = ["yt-dlp"]
+    cmd = ["yt-dlp", "--extractor-args", "youtube:player_client=default,android"]
     cookies_path = os.environ.get("YT_COOKIES_PATH", "/home/botuser/cookies.txt")
     if cookies_path and Path(cookies_path).exists():
         cmd += ["--cookies", cookies_path]
