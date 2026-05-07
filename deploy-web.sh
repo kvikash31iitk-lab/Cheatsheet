@@ -60,6 +60,15 @@ sudo -u "$BOT_USER" -H bash -c "
 
 # --- 3. systemd units -----------------------------------------------------
 
+# EnvironmentFile= is conditional: only included when .env exists, so the
+# Phase-0-only flow (no auth/DB yet) still works on a fresh VPS. After
+# deploy-phase1.sh runs, .env contains DATABASE_URL, AUTH_*, etc., and the
+# units pick those up automatically on the next deploy-web.sh.
+ENV_FILE_DIRECTIVE=""
+if [[ -f "$INSTALL_DIR/.env" ]]; then
+  ENV_FILE_DIRECTIVE="EnvironmentFile=$INSTALL_DIR/.env"
+fi
+
 echo "==> writing $API_SVC.service..."
 cat > "/etc/systemd/system/$API_SVC.service" <<EOF
 [Unit]
@@ -74,6 +83,7 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=10
+$ENV_FILE_DIRECTIVE
 Environment=PATH=$INSTALL_DIR/.venv/bin:/home/$BOT_USER/.npm-global/bin:/home/$BOT_USER/.deno/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=YT_COOKIES_PATH=/home/$BOT_USER/cookies.txt
 StandardOutput=journal
@@ -96,6 +106,7 @@ WorkingDirectory=$INSTALL_DIR/web
 ExecStart=/usr/bin/node $INSTALL_DIR/web/node_modules/next/dist/bin/next start -p $WEB_PORT -H 0.0.0.0
 Restart=on-failure
 RestartSec=10
+$ENV_FILE_DIRECTIVE
 Environment=NODE_ENV=production
 Environment=PORT=$WEB_PORT
 StandardOutput=journal
@@ -106,7 +117,8 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now "$API_SVC" "$WEB_SVC"
+systemctl enable "$API_SVC" "$WEB_SVC"
+systemctl restart "$API_SVC" "$WEB_SVC"
 
 # --- 4. firewall ----------------------------------------------------------
 
