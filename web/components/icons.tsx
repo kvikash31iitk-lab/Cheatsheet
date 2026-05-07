@@ -189,6 +189,18 @@ export const Ic = {
       <path d="M20 12a8 8 0 0 1-14 5l-2 2v-6h6l-3 3" />
     </Icon>
   ),
+  filter: (p: P = {}) => (
+    <Icon {...p}>
+      <polygon points="3 4 21 4 14 13 14 19 10 21 10 13 3 4" />
+    </Icon>
+  ),
+  trash: (p: P = {}) => (
+    <Icon {...p}>
+      <polyline points="4 7 20 7" />
+      <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
+      <path d="M9 7V4h6v3" />
+    </Icon>
+  ),
   more: (p: P = {}) => (
     <Icon {...p}>
       <circle cx="6" cy="12" r="1.4" fill="currentColor" />

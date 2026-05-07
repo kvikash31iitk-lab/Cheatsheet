@@ -19,3 +19,11 @@ Pillow>=10.0.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.0.0
+
+# Phase 1: Auth + DB
+SQLAlchemy[asyncio]>=2.0.30
+alembic>=1.13.0
+asyncpg>=0.29.0       # async Postgres driver (used by FastAPI handlers)
+aiosqlite>=0.20.0     # async SQLite driver (used in local dev)
+psycopg[binary]>=3.1.0  # sync Postgres driver (used by the worker thread)
+greenlet>=3.0.0       # required by SQLAlchemy async

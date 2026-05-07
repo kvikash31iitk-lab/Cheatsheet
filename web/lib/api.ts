@@ -38,3 +38,26 @@ export async function getJob(id: string): Promise<Job> {
   if (!r.ok) throw new Error(`get job failed: ${r.status}`);
   return r.json();
 }
+
+export type Me = {
+  id: string;
+  email: string;
+  name: string | null;
+  picture_url: string | null;
+  is_admin: boolean;
+  free_cheatsheets_left: number;
+  free_books_left: number;
+  wallet_balance_paise: number;
+};
+
+export async function getMe(): Promise<Me> {
+  const r = await fetch('/api/me', { cache: 'no-store' });
+  if (!r.ok) throw new Error(`get me failed: ${r.status}`);
+  return r.json();
+}
+
+export async function getLibrary(): Promise<Job[]> {
+  const r = await fetch('/api/library', { cache: 'no-store' });
+  if (!r.ok) throw new Error(`get library failed: ${r.status}`);
+  return r.json();
+}
