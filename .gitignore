@@ -2,12 +2,18 @@
 .env
 *.env
 !.env.example
+cookies.txt
 
 # User data / runtime artifacts
 work/
+web_work/
 cache/
-output/_thumbs*/
-output/test_*
+output/
+
+# Web frontend
+web/node_modules/
+web/.next/
+_design_review/
 
 # Python build / runtime
 __pycache__/

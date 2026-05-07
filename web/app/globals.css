@@ -1,0 +1,57 @@
+/* Design tokens — ported verbatim from cheatsheet.html */
+:root {
+  --c-bg: #faf8f3;
+  --c-surface: #ffffff;
+  --c-surface-2: #f5f2eb;
+  --c-surface-3: #ebe6dc;
+  --c-ink: #1c1916;
+  --c-ink-2: #4a4540;
+  --c-ink-3: #807972;
+  --c-ink-4: #b8b0a6;
+  --c-line: #e8e2d6;
+  --c-line-2: #d9d2c2;
+  --c-accent: #c9572b;
+  --c-accent-2: #f0e4d4;
+  --c-accent-ink: #7a3416;
+  --c-mint: #5a8a6b;
+  --c-mint-bg: #e3eee5;
+  --c-gold: #b88a2a;
+  --c-gold-bg: #f5ebd2;
+  --c-violet: #6b5c9c;
+  --c-violet-bg: #ece8f5;
+  --c-rose: #b85a6e;
+  --c-rose-bg: #f4e2e6;
+  --c-error: #b8423a;
+  --c-error-bg: #f5e0de;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --shadow-sm: 0 1px 2px rgba(28, 25, 22, 0.04), 0 0 0 1px rgba(28, 25, 22, 0.06);
+  --shadow-md: 0 2px 8px rgba(28, 25, 22, 0.06), 0 0 0 1px rgba(28, 25, 22, 0.05);
+  --shadow-lg: 0 12px 32px rgba(28, 25, 22, 0.08), 0 0 0 1px rgba(28, 25, 22, 0.04);
+  --font-sans: 'Inter', -apple-system, system-ui, sans-serif;
+  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--c-bg);
+  color: var(--c-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a { color: inherit; }
+button { font-family: inherit; }
+
+input, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
