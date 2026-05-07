@@ -26,7 +26,7 @@
 set -euo pipefail
 shopt -s extglob
 
-REPO_URL="${REPO_URL:-https://github.com/CHANGE-ME/video-notes-bot.git}"
+REPO_URL="${REPO_URL:-https://github.com/kvikash31iitk-lab/Cheatsheet.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/video-notes-bot}"
 SERVICE_NAME="video-notes-bot"
 BOT_USER="${BOT_USER:-botuser}"
