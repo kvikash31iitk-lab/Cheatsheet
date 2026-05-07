@@ -1,0 +1,16 @@
+# Telegram bot
+python-telegram-bot>=22.0   # 21.x breaks on Python 3.14's stricter get_event_loop()
+python-dotenv>=1.0.0
+
+# LLM authoring (Groq Llama by default; OpenAI/Anthropic optional)
+groq>=0.11.0
+
+# Transcription / video pipeline
+yt-dlp>=2025.1.0
+
+# PDF / image processing
+reportlab>=4.0.0
+pymupdf>=1.24.0
+pypdf>=4.0.0
+imagehash>=4.3.0
+Pillow>=10.0.0

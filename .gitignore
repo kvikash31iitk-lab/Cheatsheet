@@ -1,0 +1,27 @@
+# Secrets — never commit
+.env
+*.env
+!.env.example
+
+# User data / runtime artifacts
+work/
+cache/
+output/_thumbs*/
+output/test_*
+
+# Python build / runtime
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Claude Code session metadata
+.claude/
