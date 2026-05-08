@@ -236,6 +236,18 @@ echo "==> installing/upgrading Python deps..."
 sudo -u "$BOT_USER" "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade \
   -r "$INSTALL_DIR/requirements.txt"
 
+# Pre-download the Whisper model when WHISPER_BACKEND=local so the first
+# user request doesn't pay a 10-minute model download.
+if grep -q "^WHISPER_BACKEND=local" "$ENV_FILE" 2>/dev/null; then
+  WHISPER_MODEL=$(grep "^WHISPER_MODEL=" "$ENV_FILE" 2>/dev/null | cut -d= -f2-)
+  WHISPER_MODEL="${WHISPER_MODEL:-small}"
+  echo "==> warming up faster-whisper '$WHISPER_MODEL' model (one-time download)..."
+  sudo -u "$BOT_USER" -H WHISPER_MODEL="$WHISPER_MODEL" \
+    "$INSTALL_DIR/.venv/bin/python" -c \
+    "from scripts.whisper_local import warmup; warmup()" \
+    || echo "WARN: model warmup failed; first request will retry"
+fi
+
 # --- 6. systemd unit refresh ----------------------------------------------
 
 for svc in cheatsheet-api cheatsheet-web; do

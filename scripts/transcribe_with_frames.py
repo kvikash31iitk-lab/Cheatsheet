@@ -287,10 +287,36 @@ def split_audio(audio: Path, work: Path, on_progress: ProgressFn = None
     return chunks
 
 
+def _make_whisper_runner():
+    """Returns ``(transcribe_fn, is_local)`` for the configured backend.
+
+    ``WHISPER_BACKEND=local`` selects the on-VPS faster-whisper runner;
+    anything else (or unset) keeps the original Groq Whisper path.
+    """
+    import os as _os
+
+    backend = (_os.environ.get("WHISPER_BACKEND") or "groq").lower()
+
+    if backend == "local":
+        from scripts.whisper_local import transcribe_chunk as _local_transcribe
+
+        def _do(path):
+            return _local_transcribe(path)
+
+        return _do, True
+
+    backend_, api_key = load_api_key()
+    if backend_ != "groq":
+        raise RuntimeError(f"Expected groq backend, got {backend_}")
+
+    def _do(path):
+        return _post_whisper(GROQ_ENDPOINT, api_key, GROQ_MODEL, path)
+
+    return _do, False
+
+
 def transcribe_chunks(chunks, on_progress: ProgressFn = None):
-    backend, api_key = load_api_key()
-    if backend != "groq":
-        raise RuntimeError(f"Expected groq backend, got {backend}")
+    transcribe_one, is_local = _make_whisper_runner()
     all_segments = []
     total = len(chunks)
     for i, (path, start_offset, _end) in enumerate(chunks, 1):
@@ -303,21 +329,26 @@ def transcribe_chunks(chunks, on_progress: ProgressFn = None):
             data = None
             for attempt in range(1, CHUNK_RETRY_ATTEMPTS + 1):
                 try:
-                    data = _post_whisper(GROQ_ENDPOINT, api_key, GROQ_MODEL, path)
+                    data = transcribe_one(path)
                     break
                 except KeyboardInterrupt:
                     raise
                 except BaseException as exc:
-                    if attempt < CHUNK_RETRY_ATTEMPTS:
-                        _emit(on_progress,
-                              f"Groq rate-limited; waiting {CHUNK_RETRY_WAIT:.0f}s "
-                              f"before retry {attempt+1}/{CHUNK_RETRY_ATTEMPTS}...")
-                        time.sleep(CHUNK_RETRY_WAIT)
-                    else:
-                        raise RuntimeError(f"chunk {i} failed after "
-                                           f"{CHUNK_RETRY_ATTEMPTS} attempts: {exc}")
+                    # Local whisper failures are usually fatal (OOM, bad audio)
+                    # so don't waste 4 minutes per retry.
+                    if is_local or attempt >= CHUNK_RETRY_ATTEMPTS:
+                        raise RuntimeError(
+                            f"chunk {i} failed after "
+                            f"{attempt} attempts: {exc}"
+                        )
+                    _emit(
+                        on_progress,
+                        f"Groq rate-limited; waiting {CHUNK_RETRY_WAIT:.0f}s "
+                        f"before retry {attempt+1}/{CHUNK_RETRY_ATTEMPTS}...",
+                    )
+                    time.sleep(CHUNK_RETRY_WAIT)
             cache.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            used_net = True
+            used_net = not is_local
         for seg in data.get("segments") or []:
             text = (seg.get("text") or "").strip()
             if not text:
@@ -328,6 +359,8 @@ def transcribe_chunks(chunks, on_progress: ProgressFn = None):
                 "chunk": i,
                 "text": text,
             })
+        # Only throttle between chunks for the rate-limited Groq path —
+        # local whisper has no throttle reason to wait.
         if i < len(chunks) and used_net:
             time.sleep(INTER_CALL_DELAY)
     return all_segments

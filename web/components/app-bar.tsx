@@ -79,6 +79,9 @@ export function AppBar() {
             <Link href="/library" style={{ color: 'inherit', textDecoration: 'none' }}>
               Library
             </Link>
+            <Link href="/wallet" style={{ color: 'inherit', textDecoration: 'none' }}>
+              Wallet
+            </Link>
             <span style={{ color: 'var(--c-line-2)' }}>·</span>
             <Avatar src={user.image} name={user.name} />
             <Btn variant="ghost" size="sm" onClick={() => signOut({ callbackUrl: '/' })}>

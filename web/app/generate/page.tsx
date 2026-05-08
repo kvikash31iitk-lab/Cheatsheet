@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { AppBar } from '@/components/app-bar';
 import { Btn, Tag } from '@/components/ui';
 import { Ic } from '@/components/icons';
-import { createJob, getPreview, type JobKind, type Preview } from '@/lib/api';
+import { createJob, getPreview, getMe, type JobKind, type Preview, type Me } from '@/lib/api';
 
 const YT_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)[\w-]{11}/;
 
@@ -40,6 +40,11 @@ function GenerateForm() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
+
+  useEffect(() => {
+    getMe().then(setMe).catch(() => {});
+  }, []);
 
   const valid = YT_RE.test(url);
 

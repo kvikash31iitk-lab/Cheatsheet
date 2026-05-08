@@ -13,10 +13,11 @@ Phase 1 (this version):
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -24,7 +25,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Make the existing bot modules importable.
@@ -92,7 +93,7 @@ from api.db import (  # noqa: E402
     async_engine,
     get_session,
 )
-from api.models import Generation, User  # noqa: E402
+from api.models import Generation, Transaction, User  # noqa: E402
 
 WORK_ROOT = PROJECT_ROOT / "web_work"
 WORK_ROOT.mkdir(exist_ok=True)
@@ -100,10 +101,51 @@ WORK_ROOT.mkdir(exist_ok=True)
 INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
 ANON_USER_EMAIL = "anonymous@local.dev"
 
-# Free-tier limits (lifetime, per user)
-FREE_CHEATSHEETS = 5
-FREE_BOOKS = 2
-FREE_MAX_DURATION_S = 30 * 60  # 30 minutes
+# Free tier — daily cap, resets at midnight IST
+FREE_CHEATSHEETS_PER_DAY = 3
+FREE_BOOKS_PER_DAY = 1
+
+# Pricing — paise per 30-minute slab (rounded up). 30 min cheatsheet = ₹1,
+# 30 min book = ₹2, 90 min cheatsheet = ₹3 etc.
+COST_PAISE_PER_30MIN: dict[str, int] = {
+    "cheatsheet": 100,
+    "book": 200,
+}
+MIN_TOPUP_PAISE = 100 * 100  # ₹100
+
+# Razorpay test/live credentials. Live values come from .env / systemd env.
+RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
+
+
+def _ist_day_start_utc() -> datetime:
+    """UTC datetime for the start of the current IST calendar day. Used to
+    bound the daily-quota query."""
+    now_utc = datetime.now(timezone.utc)
+    ist = now_utc + timedelta(hours=5, minutes=30)
+    ist_day_start = ist.replace(hour=0, minute=0, second=0, microsecond=0)
+    return ist_day_start - timedelta(hours=5, minutes=30)
+
+
+def _calc_cost_paise(duration_seconds: float, kind: str) -> int:
+    """Cost in paise, rounded up to the next 30-minute slab. Minimum one slab."""
+    slabs = max(1, math.ceil(max(1.0, duration_seconds) / (30 * 60)))
+    return slabs * COST_PAISE_PER_30MIN[kind]
+
+
+async def _daily_used(s: AsyncSession, user_id: str) -> tuple[int, int]:
+    """Free-tier generations consumed today (cheatsheets, books)."""
+    start = _ist_day_start_utc()
+    result = await s.execute(
+        select(Generation.kind, func.count())
+        .where(Generation.user_id == user_id)
+        .where(Generation.created_at >= start)
+        .where(Generation.was_free.is_(True))
+        .where(Generation.status != "error")
+        .group_by(Generation.kind)
+    )
+    counts = {kind: int(c) for kind, c in result.all()}
+    return counts.get("cheatsheet", 0), counts.get("book", 0)
 
 
 # --- FastAPI app -----------------------------------------------------------
@@ -216,15 +258,21 @@ async def upsert_user(
 
 
 @app.get("/api/me")
-async def me(user: User = Depends(current_user)) -> dict[str, Any]:
+async def me(
+    user: User = Depends(current_user),
+    s: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    cheats_today, books_today = await _daily_used(s, user.id)
     return {
         "id": user.id,
         "email": user.email,
         "name": user.name,
         "picture_url": user.picture_url,
         "is_admin": user.is_admin,
-        "free_cheatsheets_left": max(0, FREE_CHEATSHEETS - user.free_cheatsheets_used),
-        "free_books_left": max(0, FREE_BOOKS - user.free_books_used),
+        "free_cheatsheets_left": max(0, FREE_CHEATSHEETS_PER_DAY - cheats_today),
+        "free_books_left": max(0, FREE_BOOKS_PER_DAY - books_today),
+        "free_cheatsheets_per_day": FREE_CHEATSHEETS_PER_DAY,
+        "free_books_per_day": FREE_BOOKS_PER_DAY,
         "wallet_balance_paise": user.wallet_balance_paise,
     }
 
@@ -264,24 +312,31 @@ async def preview(
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
     """Cheap metadata lookup for a YouTube URL — used by the generate UI to
-    show a thumbnail + title + duration BEFORE the user commits to spending
-    a free-tier slot.
+    show a thumbnail + title + duration + cost preview BEFORE the user
+    commits to a generation.
     """
     if req.url in _PREVIEW_CACHE:
-        return _PREVIEW_CACHE[req.url]
-    try:
-        meta = await asyncio.to_thread(fetch_metadata, req.url)
-    except Exception as exc:
-        raise HTTPException(400, f"Could not read URL: {exc}")
-    out = {
-        "video_id": meta["id"],
-        "title": meta["title"],
-        "duration_seconds": meta["duration"],
-        "thumbnail_url": f"https://i.ytimg.com/vi/{meta['id']}/hqdefault.jpg",
+        out = dict(_PREVIEW_CACHE[req.url])
+    else:
+        try:
+            meta = await asyncio.to_thread(fetch_metadata, req.url)
+        except Exception as exc:
+            raise HTTPException(400, f"Could not read URL: {exc}")
+        out = {
+            "video_id": meta["id"],
+            "title": meta["title"],
+            "duration_seconds": meta["duration"],
+            "thumbnail_url": f"https://i.ytimg.com/vi/{meta['id']}/hqdefault.jpg",
+        }
+        if len(_PREVIEW_CACHE) > 256:
+            _PREVIEW_CACHE.clear()
+        _PREVIEW_CACHE[req.url] = out
+
+    # Annotate with what it would cost if the user is past today's free tier.
+    out["cost_paise"] = {
+        "cheatsheet": _calc_cost_paise(out["duration_seconds"], "cheatsheet"),
+        "book": _calc_cost_paise(out["duration_seconds"], "book"),
     }
-    if len(_PREVIEW_CACHE) > 256:
-        _PREVIEW_CACHE.clear()
-    _PREVIEW_CACHE[req.url] = out
     return out
 
 
@@ -292,41 +347,44 @@ async def create_generation(
     user: User = Depends(current_user),
     s: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
-    is_paid = user.wallet_balance_paise > 0
+    # Resolve duration up-front so we can price + decide free vs paid.
+    cached = _PREVIEW_CACHE.get(req.url)
+    if cached:
+        duration = float(cached.get("duration_seconds") or 0)
+    else:
+        try:
+            meta = await asyncio.to_thread(fetch_metadata, req.url)
+        except Exception as exc:
+            raise HTTPException(400, f"Could not read URL: {exc}")
+        duration = float(meta["duration"])
+        _PREVIEW_CACHE[req.url] = {
+            "video_id": meta["id"],
+            "title": meta["title"],
+            "duration_seconds": meta["duration"],
+            "thumbnail_url": f"https://i.ytimg.com/vi/{meta['id']}/hqdefault.jpg",
+        }
 
-    # Quota check
-    if req.kind == "cheatsheet" and user.free_cheatsheets_used >= FREE_CHEATSHEETS \
-            and not is_paid:
-        raise HTTPException(402, "Free cheatsheet quota exhausted. Top up your wallet.")
-    if req.kind == "book" and user.free_books_used >= FREE_BOOKS and not is_paid:
-        raise HTTPException(402, "Free book-notes quota exhausted. Top up your wallet.")
+    cheats_today, books_today = await _daily_used(s, user.id)
+    if req.kind == "cheatsheet":
+        within_free = cheats_today < FREE_CHEATSHEETS_PER_DAY
+    else:
+        within_free = books_today < FREE_BOOKS_PER_DAY
 
-    # Duration check — free tier is limited to 30-min videos. Use the
-    # preview cache so a recent click on this URL is free; otherwise pay
-    # the metadata round-trip now (small, cached).
-    if not is_paid:
-        cached = _PREVIEW_CACHE.get(req.url)
-        if cached:
-            duration = float(cached.get("duration_seconds") or 0)
-        else:
-            try:
-                meta = await asyncio.to_thread(fetch_metadata, req.url)
-                duration = float(meta["duration"])
-                _PREVIEW_CACHE[req.url] = {
-                    "video_id": meta["id"],
-                    "title": meta["title"],
-                    "duration_seconds": meta["duration"],
-                    "thumbnail_url": f"https://i.ytimg.com/vi/{meta['id']}/hqdefault.jpg",
-                }
-            except Exception as exc:
-                raise HTTPException(400, f"Could not read URL: {exc}")
-        if duration > FREE_MAX_DURATION_S:
-            mins = int(duration // 60)
+    cost_paise = 0
+    if within_free:
+        was_free = True
+    else:
+        cost_paise = _calc_cost_paise(duration, req.kind)
+        if user.wallet_balance_paise < cost_paise:
+            mins = math.ceil(duration / 60)
             raise HTTPException(
                 402,
-                f"Free tier supports videos up to {FREE_MAX_DURATION_S // 60} min. "
-                f"This one is {mins} min — top up your wallet to continue.",
+                f"Today's free {req.kind}s are used. "
+                f"This {mins}-min video would cost ₹{cost_paise / 100:.0f} "
+                f"but your wallet has ₹{user.wallet_balance_paise / 100:.2f}. "
+                f"Top up to continue.",
             )
+        was_free = False
 
     gen = Generation(
         id=uuid.uuid4().hex,
@@ -335,9 +393,26 @@ async def create_generation(
         url=req.url,
         status="queued",
         progress=0.0,
-        was_free=True,  # Phase 1: every generation is free until Razorpay lands
+        was_free=was_free,
+        cost_paise=cost_paise,
     )
     s.add(gen)
+
+    # Deduct + log spend transaction now (refunded automatically if the job
+    # later errors out — see _run_job).
+    if cost_paise > 0:
+        user.wallet_balance_paise -= cost_paise
+        s.add(
+            Transaction(
+                user_id=user.id,
+                kind="spend",
+                amount_paise=-cost_paise,
+                generation_id=gen.id,
+                status="success",
+                note=f"{req.kind} · {math.ceil(duration / 60)}min",
+            )
+        )
+
     await s.commit()
     await s.refresh(gen)
 
@@ -358,6 +433,122 @@ async def get_job(
     if gen.user_id != user.id and not user.is_admin:
         raise HTTPException(403, "not your job")
     return _serialize(gen)
+
+
+# --- wallet -----------------------------------------------------------------
+
+class TopupOrderRequest(BaseModel):
+    amount_paise: int = Field(..., ge=MIN_TOPUP_PAISE)
+
+
+def _razorpay_client():
+    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+        raise HTTPException(503, "Wallet payments are not configured yet.")
+    import razorpay  # type: ignore
+    return razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+
+
+@app.post("/api/wallet/order")
+async def wallet_create_order(
+    req: TopupOrderRequest,
+    user: User = Depends(current_user),
+    s: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    client = _razorpay_client()
+    order = await asyncio.to_thread(
+        client.order.create,
+        {
+            "amount": req.amount_paise,
+            "currency": "INR",
+            "notes": {"user_id": user.id, "user_email": user.email},
+        },
+    )
+    s.add(
+        Transaction(
+            user_id=user.id,
+            kind="topup",
+            amount_paise=req.amount_paise,
+            razorpay_order_id=order["id"],
+            status="pending",
+        )
+    )
+    await s.commit()
+    return {
+        "order_id": order["id"],
+        "amount_paise": req.amount_paise,
+        "key_id": RAZORPAY_KEY_ID,
+        "currency": "INR",
+    }
+
+
+class VerifyRequest(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+@app.post("/api/wallet/verify")
+async def wallet_verify(
+    req: VerifyRequest,
+    user: User = Depends(current_user),
+    s: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    client = _razorpay_client()
+    try:
+        await asyncio.to_thread(
+            client.utility.verify_payment_signature,
+            {
+                "razorpay_order_id": req.razorpay_order_id,
+                "razorpay_payment_id": req.razorpay_payment_id,
+                "razorpay_signature": req.razorpay_signature,
+            },
+        )
+    except Exception:
+        raise HTTPException(400, "Invalid payment signature")
+
+    result = await s.execute(
+        select(Transaction).where(
+            Transaction.razorpay_order_id == req.razorpay_order_id,
+            Transaction.user_id == user.id,
+        )
+    )
+    tx = result.scalar_one_or_none()
+    if not tx:
+        raise HTTPException(404, "Order not found")
+    if tx.status == "success":
+        return {"balance_paise": user.wallet_balance_paise, "already": True}
+
+    tx.razorpay_payment_id = req.razorpay_payment_id
+    tx.status = "success"
+    user.wallet_balance_paise += tx.amount_paise
+    await s.commit()
+    return {"balance_paise": user.wallet_balance_paise, "credited": tx.amount_paise}
+
+
+@app.get("/api/wallet/transactions")
+async def wallet_transactions(
+    user: User = Depends(current_user),
+    s: AsyncSession = Depends(get_session),
+) -> list[dict[str, Any]]:
+    result = await s.execute(
+        select(Transaction)
+        .where(Transaction.user_id == user.id)
+        .order_by(Transaction.created_at.desc())
+        .limit(100)
+    )
+    rows = result.scalars().all()
+    return [
+        {
+            "id": tx.id,
+            "kind": tx.kind,
+            "amount_paise": tx.amount_paise,
+            "status": tx.status,
+            "note": tx.note,
+            "generation_id": tx.generation_id,
+            "created_at": tx.created_at.isoformat() if tx.created_at else None,
+        }
+        for tx in rows
+    ]
 
 
 @app.get("/api/files/{job_id}/pdf")
@@ -536,7 +727,8 @@ async def _run_job(job_id: str) -> None:
                 None,
             )
 
-        # Mark done + bump quota counter.
+        # Mark done. Daily usage is derived from generations rows so there's
+        # no per-user counter to bump here.
         with SyncSessionLocal() as s:
             gen = s.get(Generation, job_id)
             if gen:
@@ -546,21 +738,31 @@ async def _run_job(job_id: str) -> None:
                 gen.markdown = md_text
                 gen.pdf_path = str(pdf_path)
                 gen.completed_at = datetime.now(timezone.utc)
-                user = s.get(User, gen.user_id)
-                if user and gen.was_free:
-                    if kind == "cheatsheet":
-                        user.free_cheatsheets_used += 1
-                    else:
-                        user.free_books_used += 1
                 s.commit()
 
     except Exception as exc:
-        _update_sync(
-            job_id,
-            status="error",
-            error_message=f"{type(exc).__name__}: {exc}",
-            completed_at=datetime.now(timezone.utc),
-        )
+        # Refund the wallet for paid jobs that fail mid-pipeline.
+        with SyncSessionLocal() as s:
+            gen = s.get(Generation, job_id)
+            if gen:
+                gen.status = "error"
+                gen.error_message = f"{type(exc).__name__}: {exc}"
+                gen.completed_at = datetime.now(timezone.utc)
+                if gen.cost_paise and not gen.was_free:
+                    user_row = s.get(User, gen.user_id)
+                    if user_row:
+                        user_row.wallet_balance_paise += gen.cost_paise
+                        s.add(
+                            Transaction(
+                                user_id=user_row.id,
+                                kind="refund",
+                                amount_paise=gen.cost_paise,
+                                generation_id=gen.id,
+                                status="success",
+                                note="Auto-refund: generation failed",
+                            )
+                        )
+                s.commit()
 
 
 if __name__ == "__main__":

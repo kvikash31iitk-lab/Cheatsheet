@@ -67,6 +67,41 @@ class User(Base):
     )
 
 
+class Transaction(Base):
+    """Wallet ledger entry. ``amount_paise`` is positive for credits
+    (top-ups, refunds) and negative for debits (spends)."""
+
+    __tablename__ = "transactions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # topup | spend | refund
+
+    amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # For spend/refund: which generation this relates to.
+    generation_id: Mapped[Optional[str]] = mapped_column(
+        String(32), ForeignKey("generations.id", ondelete="SET NULL")
+    )
+
+    # For topups: Razorpay identifiers.
+    razorpay_order_id: Mapped[Optional[str]] = mapped_column(String(64))
+    razorpay_payment_id: Mapped[Optional[str]] = mapped_column(String(64))
+
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="success"
+    )  # pending | success | failed
+    note: Mapped[Optional[str]] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+
+
 class Generation(Base):
     __tablename__ = "generations"
 
@@ -112,3 +147,4 @@ class Generation(Base):
 # Indexes
 Index("ix_generations_user_created", Generation.user_id, Generation.created_at.desc())
 Index("ix_generations_status", Generation.status)
+Index("ix_transactions_user_created", Transaction.user_id, Transaction.created_at.desc())
