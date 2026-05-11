@@ -96,7 +96,7 @@ export default function DashboardPage() {
           </h1>
           <div style={{ fontSize: 13.5, color: 'var(--c-ink-2)', marginTop: 4 }}>
             {me
-              ? `${me.free_cheatsheets_left} cheatsheet${me.free_cheatsheets_left === 1 ? '' : 's'} and ${me.free_books_left} book note${me.free_books_left === 1 ? '' : 's'} on your free tier.`
+              ? `${me.free_cheatsheets_left} of ${me.free_cheatsheets_per_day} free cheatsheets and ${me.free_books_left} of ${me.free_books_per_day} book notes left today.`
               : 'Loading…'}
           </div>
         </div>
@@ -120,25 +120,26 @@ export default function DashboardPage() {
           <StatCard
             label="WALLET"
             value={`₹${((me?.wallet_balance_paise ?? 0) / 100).toFixed(2)}`}
-            hint="Top up coming soon"
-            accent="var(--c-mint)"
+            hint={(me?.wallet_balance_paise ?? 0) > 0 ? 'No daily cap' : 'Top up at /wallet'}
+            accent={(me?.wallet_balance_paise ?? 0) > 0 ? 'var(--c-mint)' : undefined}
+          />
+          <StatCard
+            label="FREE TODAY"
+            value={`${me?.free_cheatsheets_left ?? 0}/${me?.free_cheatsheets_per_day ?? 3}`}
+            sub="cheats"
+            hint="Resets at IST midnight"
+          />
+          <StatCard
+            label="FREE TODAY"
+            value={`${me?.free_books_left ?? 0}/${me?.free_books_per_day ?? 1}`}
+            sub="books"
+            hint="Resets at IST midnight"
           />
           <StatCard
             label="GENERATED"
             value={String(stats.total)}
             sub="all time"
             hint={`${stats.cheats} cheat · ${stats.books} book`}
-          />
-          <StatCard
-            label="TODAY"
-            value={String(stats.doneToday)}
-            sub="done"
-            hint={stats.doneToday > 0 ? 'On a roll' : 'Make your first today'}
-          />
-          <StatCard
-            label="FREE LEFT"
-            value={String((me?.free_cheatsheets_left ?? 0) + (me?.free_books_left ?? 0))}
-            hint={`${me?.free_cheatsheets_left ?? 0} cheat · ${me?.free_books_left ?? 0} book`}
           />
         </div>
 
@@ -230,8 +231,8 @@ function StatCard({
 function FreeQuotaCard({ me }: { me: Me | null }) {
   const cheatLeft = me?.free_cheatsheets_left ?? 0;
   const bookLeft = me?.free_books_left ?? 0;
-  const cheatTotal = 5;
-  const bookTotal = 2;
+  const cheatTotal = me?.free_cheatsheets_per_day ?? 3;
+  const bookTotal = me?.free_books_per_day ?? 1;
   const used = (cheatTotal - cheatLeft) + (bookTotal - bookLeft);
   const total = cheatTotal + bookTotal;
   const pct = Math.min(100, Math.round((used / total) * 100));
@@ -260,10 +261,10 @@ function FreeQuotaCard({ me }: { me: Me | null }) {
             letterSpacing: '.08em',
           }}
         >
-          FREE TIER · LEFT
+          FREE TODAY · LEFT
         </div>
         <Tag tone="accent" style={{ background: '#fff' }}>
-          Welcome bonus
+          Resets at IST midnight
         </Tag>
       </div>
       <div style={{ display: 'flex', gap: 18, marginBottom: 12 }}>
@@ -343,7 +344,7 @@ function FreeQuotaCard({ me }: { me: Me | null }) {
           opacity: 0.7,
         }}
       >
-        Pay only when you're past the free tier
+        ₹1 per 30-min cheat · ₹2 per 30-min book once past free tier
       </div>
     </div>
   );

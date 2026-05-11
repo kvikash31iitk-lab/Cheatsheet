@@ -244,15 +244,33 @@ function GenerateForm() {
                 {preview.video_id}
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {preview.duration_seconds <= 1800 ? (
-                  <Tag tone="mint">
-                    <Ic.check size={10} /> Within 30-min free limit
-                  </Tag>
-                ) : (
-                  <Tag tone="error">
-                    Over free limit (30 min) — wallet top-up needed
-                  </Tag>
-                )}
+                {(() => {
+                  const freeLeft =
+                    kind === 'cheatsheet'
+                      ? (me?.free_cheatsheets_left ?? 0)
+                      : (me?.free_books_left ?? 0);
+                  const cost = preview.cost_paise[kind];
+                  const walletPaise = me?.wallet_balance_paise ?? 0;
+                  if (freeLeft > 0) {
+                    return (
+                      <Tag tone="mint">
+                        <Ic.check size={10} /> Free · {freeLeft} {kind === 'cheatsheet' ? 'cheat' : 'book'}{freeLeft === 1 ? '' : 's'} left today
+                      </Tag>
+                    );
+                  }
+                  if (walletPaise >= cost) {
+                    return (
+                      <Tag tone="accent">
+                        ₹{(cost / 100).toFixed(0)} from wallet
+                      </Tag>
+                    );
+                  }
+                  return (
+                    <Tag tone="error">
+                      Need ₹{(cost / 100).toFixed(0)} — wallet has ₹{(walletPaise / 100).toFixed(2)}
+                    </Tag>
+                  );
+                })()}
                 <Tag tone="neutral">
                   ~{kind === 'cheatsheet' ? 30 : 120}s to generate
                 </Tag>
@@ -322,35 +340,82 @@ function GenerateForm() {
           </div>
         )}
 
-        {preview && preview.duration_seconds > 1800 && (
-          <div
-            style={{
-              background: 'var(--c-error-bg)',
-              color: 'var(--c-error)',
-              padding: 12,
-              borderRadius: 10,
-              fontSize: 13,
-              marginBottom: 16,
-            }}
-          >
-            Free tier supports videos up to 30 min. This one is{' '}
-            {Math.round(preview.duration_seconds / 60)} min. Wallet top-up coming
-            in Phase 2.
-          </div>
-        )}
+        {(() => {
+          if (!preview) return null;
+          const freeLeft =
+            kind === 'cheatsheet'
+              ? (me?.free_cheatsheets_left ?? 0)
+              : (me?.free_books_left ?? 0);
+          const cost = preview.cost_paise[kind];
+          const walletPaise = me?.wallet_balance_paise ?? 0;
+          const willCost = freeLeft === 0;
+          const cantAfford = willCost && walletPaise < cost;
+          if (cantAfford) {
+            return (
+              <div
+                style={{
+                  background: 'var(--c-error-bg)',
+                  color: 'var(--c-error)',
+                  padding: 12,
+                  borderRadius: 10,
+                  fontSize: 13,
+                  marginBottom: 16,
+                }}
+              >
+                Today's free {kind === 'cheatsheet' ? 'cheatsheets' : 'book notes'}{' '}
+                are used. This {Math.round(preview.duration_seconds / 60)}-min
+                video would cost <b>₹{(cost / 100).toFixed(0)}</b> from your
+                wallet (you have ₹{(walletPaise / 100).toFixed(2)}).{' '}
+                <a
+                  href="/wallet"
+                  style={{ color: 'inherit', textDecoration: 'underline' }}
+                >
+                  Top up
+                </a>{' '}
+                to continue.
+              </div>
+            );
+          }
+          if (willCost) {
+            return (
+              <div
+                style={{
+                  background: 'var(--c-accent-2)',
+                  color: 'var(--c-accent-ink)',
+                  padding: 12,
+                  borderRadius: 10,
+                  fontSize: 13,
+                  marginBottom: 16,
+                }}
+              >
+                Today's free {kind === 'cheatsheet' ? 'cheatsheets' : 'book notes'}{' '}
+                are used. This generation will debit{' '}
+                <b>₹{(cost / 100).toFixed(0)}</b> from your wallet (balance:
+                ₹{(walletPaise / 100).toFixed(2)}).
+              </div>
+            );
+          }
+          return null;
+        })()}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn
             variant="accent"
             size="lg"
             icon={<Ic.sparkle size={14} />}
-            disabled={
-              !valid ||
-              submitting ||
-              previewLoading ||
-              !!previewError ||
-              (preview ? preview.duration_seconds > 1800 : false)
-            }
+            disabled={(() => {
+              if (!valid || submitting || previewLoading || !!previewError) {
+                return true;
+              }
+              if (!preview) return true;
+              const freeLeft =
+                kind === 'cheatsheet'
+                  ? (me?.free_cheatsheets_left ?? 0)
+                  : (me?.free_books_left ?? 0);
+              const cost = preview.cost_paise[kind];
+              const walletPaise = me?.wallet_balance_paise ?? 0;
+              return freeLeft === 0 && walletPaise < cost;
+            })()}
             onClick={submit}
           >
             {submitting ? 'Starting…' : 'Generate now'}
