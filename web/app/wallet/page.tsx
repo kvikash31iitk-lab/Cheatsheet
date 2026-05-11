@@ -10,6 +10,7 @@ import {
   verifyWalletPayment,
   getMe,
   getTransactions,
+  redeemPromo,
   type Me,
   type Transaction,
 } from '@/lib/api';
@@ -31,6 +32,25 @@ export default function WalletPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [promoCode, setPromoCode] = useState('');
+  const [promoBusy, setPromoBusy] = useState(false);
+
+  async function redeem() {
+    if (!promoCode.trim()) return;
+    setPromoBusy(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const r = await redeemPromo(promoCode.trim());
+      setSuccess(`Code redeemed — ₹${(r.credited_paise / 100).toFixed(2)} credited.`);
+      setPromoCode('');
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPromoBusy(false);
+    }
+  }
 
   async function refresh() {
     try {
@@ -331,6 +351,128 @@ export default function WalletPage() {
                 </div>
               )}
             </div>
+
+            {/* Promo code */}
+            <div
+              style={{
+                background: 'var(--c-surface)',
+                border: '1px solid var(--c-line)',
+                borderRadius: 14,
+                padding: 20,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: 'var(--c-ink)',
+                  marginBottom: 4,
+                }}
+              >
+                Got a promo code?
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--c-ink-3)',
+                  marginBottom: 14,
+                }}
+              >
+                Redeems to your wallet. Each code can be used once per account.
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  placeholder="LAUNCH50"
+                  value={promoCode}
+                  onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                  style={{
+                    flex: 1,
+                    padding: '11px 14px',
+                    borderRadius: 10,
+                    border: '1px solid var(--c-line-2)',
+                    background: 'var(--c-surface-2)',
+                    fontSize: 13.5,
+                    fontFamily: 'var(--font-mono)',
+                    outline: 'none',
+                    textTransform: 'uppercase',
+                  }}
+                />
+                <Btn
+                  variant="outline"
+                  size="md"
+                  disabled={promoBusy || !promoCode.trim()}
+                  onClick={redeem}
+                >
+                  {promoBusy ? '…' : 'Redeem'}
+                </Btn>
+              </div>
+            </div>
+
+            {/* Referral */}
+            {me?.referral_code && (
+              <div
+                style={{
+                  background: 'var(--c-surface)',
+                  border: '1px solid var(--c-line)',
+                  borderRadius: 14,
+                  padding: 20,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: 'var(--c-ink)',
+                    marginBottom: 4,
+                  }}
+                >
+                  Invite a friend
+                </div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--c-ink-3)',
+                    marginBottom: 12,
+                  }}
+                >
+                  Share your code. When they sign up, you both get free credit.
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                  }}
+                >
+                  <code
+                    style={{
+                      flex: 1,
+                      padding: '11px 14px',
+                      borderRadius: 10,
+                      background: 'var(--c-surface-2)',
+                      border: '1px solid var(--c-line-2)',
+                      fontSize: 14,
+                      fontFamily: 'var(--font-mono)',
+                      letterSpacing: '.1em',
+                    }}
+                  >
+                    {me.referral_code}
+                  </code>
+                  <Btn
+                    variant="outline"
+                    size="md"
+                    onClick={() => {
+                      navigator.clipboard
+                        ?.writeText(me.referral_code ?? '')
+                        .catch(() => undefined);
+                      setSuccess('Code copied to clipboard');
+                    }}
+                  >
+                    Copy
+                  </Btn>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right col: ledger */}

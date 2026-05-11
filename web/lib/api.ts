@@ -50,7 +50,27 @@ export type Me = {
   free_cheatsheets_per_day: number;
   free_books_per_day: number;
   wallet_balance_paise: number;
+  referral_code: string | null;
+  bypass_paid: boolean;
+  cost_paise_per_30min: { cheatsheet: number; book: number };
+  min_topup_paise: number;
+  maintenance: { active: boolean; message: string };
+  banner: { id: string; title: string; body: string } | null;
 };
+
+export async function redeemPromo(code: string): Promise<{
+  ok: boolean;
+  credited_paise: number;
+  new_balance_paise: number;
+}> {
+  const r = await fetch('/api/promos/redeem', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  if (!r.ok) throw new Error((await r.text()) || `redeem failed: ${r.status}`);
+  return r.json();
+}
 
 export async function getMe(): Promise<Me> {
   const r = await fetch('/api/me', { cache: 'no-store' });

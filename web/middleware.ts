@@ -1,7 +1,21 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 
-const PROTECTED_PREFIXES = ['/generate', '/library', '/dashboard', '/wallet'];
+const PROTECTED_PREFIXES = [
+  '/generate',
+  '/library',
+  '/dashboard',
+  '/wallet',
+  '/admin',
+];
+
+function adminEmails(): string[] {
+  const raw = process.env.ADMIN_EMAILS ?? '';
+  return raw
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
 
 export default auth((req) => {
   const path = req.nextUrl.pathname;
@@ -24,6 +38,14 @@ export default auth((req) => {
     const url = new URL('/login', req.url);
     url.searchParams.set('next', path);
     return NextResponse.redirect(url);
+  }
+
+  // 3. /admin: signed in but not in the ADMIN_EMAILS list -> bounce to /dashboard.
+  if (path.startsWith('/admin') && req.auth) {
+    const email = req.auth.user?.email?.toLowerCase();
+    if (!email || !adminEmails().includes(email)) {
+      return NextResponse.redirect(new URL('/dashboard', req.url));
+    }
   }
 });
 
