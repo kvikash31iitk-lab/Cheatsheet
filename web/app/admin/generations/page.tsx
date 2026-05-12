@@ -106,7 +106,8 @@ export default function AdminGenerationsPage() {
                 <th style={{ padding: '8px 12px' }}>TITLE</th>
                 <th style={{ padding: '8px 12px' }}>KIND</th>
                 <th style={{ padding: '8px 12px' }}>STATUS</th>
-                <th style={{ padding: '8px 12px' }}>COST</th>
+                <th style={{ padding: '8px 12px' }}>CHARGED</th>
+                <th style={{ padding: '8px 12px' }}>OUR COST</th>
                 <th style={{ padding: '8px 12px' }}>ACTION</th>
               </tr>
             </thead>
@@ -170,6 +171,17 @@ export default function AdminGenerationsPage() {
                   >
                     {g.was_free ? 'free' : rupees(g.cost_paise)}
                   </td>
+                  <td
+                    style={{
+                      padding: '10px 12px',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 12,
+                      color: 'var(--c-ink-3)',
+                    }}
+                    title={`LLM ${rupees(g.llm_cost_paise)} · Whisper ${rupees(g.transcription_cost_paise)}`}
+                  >
+                    {rupees(g.llm_cost_paise + g.transcription_cost_paise)}
+                  </td>
                   <td style={{ padding: '10px 12px' }}>
                     {(g.status === 'error' || g.status === 'done') && (
                       <Btn
@@ -187,7 +199,7 @@ export default function AdminGenerationsPage() {
               {!items.length && (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     style={{
                       padding: '24px 12px',
                       textAlign: 'center',

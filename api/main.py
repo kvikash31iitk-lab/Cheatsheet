@@ -140,6 +140,32 @@ def _calc_cost_paise_for(
     return slabs * per_30min[kind]
 
 
+# What each provider/backend ACTUALLY costs us (paise). These power the cost
+# tracker on /admin/generations — not the user's billing (that's the slab rate).
+# USD→INR conversion baked at ~₹85/USD; tweak if FX moves materially.
+LLM_RATES_PAISE_PER_MTOK = {
+    "claude_code": {"in": 0, "out": 0},          # subsidized by Max subscription
+    "groq":        {"in": 0, "out": 0},          # free tier
+    "openai":      {"in": 1275, "out": 5100},    # gpt-4o-mini @ $0.15 / $0.60
+    "anthropic":   {"in": 25500, "out": 127500}, # sonnet @ $3 / $15
+}
+WHISPER_RATES_PAISE_PER_MIN = {
+    "local":  0,
+    "groq":   0,
+    "openai": 51,  # $0.006/min @ ₹85/$
+}
+
+
+def _llm_cost_paise(provider: str, tokens_in: int, tokens_out: int) -> int:
+    rates = LLM_RATES_PAISE_PER_MTOK.get(provider, {"in": 0, "out": 0})
+    return (tokens_in * rates["in"] + tokens_out * rates["out"]) // 1_000_000
+
+
+def _whisper_cost_paise(backend: str, duration_seconds: float) -> int:
+    rate = WHISPER_RATES_PAISE_PER_MIN.get(backend, 0)
+    return int(rate * (duration_seconds / 60))
+
+
 async def _daily_used(s: AsyncSession, user_id: str) -> tuple[int, int]:
     """Free-tier generations consumed today (cheatsheets, books)."""
     start = _ist_day_start_utc()
@@ -952,13 +978,21 @@ async def _run_job(job_id: str) -> None:
         if val:
             os.environ[env_key] = str(val)
 
-    # Look up the kind/url from DB (avoids race where user mutated something).
+    # Look up the kind/url/user from DB (avoids race where user mutated
+    # something). The user lookup also pulls the per-user prompt overrides.
     with SyncSessionLocal() as s:
         gen = s.get(Generation, job_id)
         if not gen:
             return
         kind = gen.kind
         url = gen.url
+        user_row = s.get(User, gen.user_id)
+        custom_prompt_cheat = (
+            user_row.custom_prompt_cheatsheet if user_row else None
+        )
+        custom_prompt_book = user_row.custom_prompt_book if user_row else None
+
+    cost_sink: dict[str, int] = {"tokens_in": 0, "tokens_out": 0}
 
     try:
         emit("Fetching video metadata", 0.05)
@@ -988,6 +1022,8 @@ async def _run_job(job_id: str) -> None:
                 title_hint=meta["title"],
                 duration_seconds=meta["duration"],
                 on_progress=lambda m: emit(m, max(progress_state["p"], 0.72)),
+                system_override=custom_prompt_cheat,
+                cost_sink=cost_sink,
             )
         else:
             md_text = await asyncio.to_thread(
@@ -997,6 +1033,8 @@ async def _run_job(job_id: str) -> None:
                 title_hint=meta["title"],
                 duration_seconds=meta["duration"],
                 on_progress=lambda m: emit(m, max(progress_state["p"], 0.72)),
+                system_override=custom_prompt_book,
+                cost_sink=cost_sink,
             )
 
         md_path = work / "output.md"
@@ -1018,6 +1056,12 @@ async def _run_job(job_id: str) -> None:
 
         # Mark done. Daily usage is derived from generations rows so there's
         # no per-user counter to bump here.
+        provider = str(app_settings.get_sync("authoring_provider") or "claude_code")
+        backend = str(app_settings.get_sync("whisper_backend") or "local")
+        tokens_in = int(cost_sink.get("tokens_in", 0))
+        tokens_out = int(cost_sink.get("tokens_out", 0))
+        llm_cost = _llm_cost_paise(provider, tokens_in, tokens_out)
+        transcription_cost = _whisper_cost_paise(backend, float(meta["duration"]))
         with SyncSessionLocal() as s:
             gen = s.get(Generation, job_id)
             if gen:
@@ -1027,6 +1071,10 @@ async def _run_job(job_id: str) -> None:
                 gen.markdown = md_text
                 gen.pdf_path = str(pdf_path)
                 gen.completed_at = datetime.now(timezone.utc)
+                gen.llm_tokens_in = tokens_in
+                gen.llm_tokens_out = tokens_out
+                gen.llm_cost_paise = llm_cost
+                gen.transcription_cost_paise = transcription_cost
                 s.commit()
 
     except Exception as exc:

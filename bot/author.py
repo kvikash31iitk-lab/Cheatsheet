@@ -199,7 +199,8 @@ def strip_wrappers(md: str) -> str:
 
 # --- providers ---------------------------------------------------------------
 
-def _author_groq(system: str, user: str, *, max_tokens: int = 8000) -> str:
+def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
+                 cost_sink: Optional[dict] = None) -> str:
     from groq import Groq
     client = Groq(api_key=GROQ_API_KEY)
     last_err = None
@@ -214,7 +215,16 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000) -> str:
                 temperature=0.3,
                 max_tokens=max_tokens,
             )
-            return resp.choices[0].message.content or ""
+            text = resp.choices[0].message.content or ""
+            if cost_sink is not None and getattr(resp, "usage", None):
+                cost_sink["tokens_in"] = (
+                    cost_sink.get("tokens_in", 0) + int(resp.usage.prompt_tokens or 0)
+                )
+                cost_sink["tokens_out"] = (
+                    cost_sink.get("tokens_out", 0)
+                    + int(resp.usage.completion_tokens or 0)
+                )
+            return text
         except Exception as exc:
             last_err = exc
             wait = 10 * attempt
@@ -223,7 +233,8 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000) -> str:
     raise RuntimeError(f"Groq authoring failed after 3 attempts: {last_err}")
 
 
-def _author_claude_code(system: str, user: str, *, max_tokens: int = 8000) -> str:
+def _author_claude_code(system: str, user: str, *, max_tokens: int = 8000,
+                        cost_sink: Optional[dict] = None) -> str:
     """Invoke the Claude Code CLI in headless print mode.
 
     Bills against the user's Max subscription, not the API. The CLI must be
@@ -252,6 +263,15 @@ def _author_claude_code(system: str, user: str, *, max_tokens: int = 8000) -> st
                 timeout=900,
             )
             if res.returncode == 0 and (res.stdout or "").strip():
+                # CLI doesn't report tokens; estimate from char counts so the
+                # admin dashboard at least sees a directional number.
+                if cost_sink is not None:
+                    cost_sink["tokens_in"] = (
+                        cost_sink.get("tokens_in", 0) + est_tokens(full_prompt)
+                    )
+                    cost_sink["tokens_out"] = (
+                        cost_sink.get("tokens_out", 0) + est_tokens(res.stdout)
+                    )
                 return res.stdout
             # Failure path — gather everything we have to surface upstream.
             stdout = (res.stdout or "").strip()
@@ -273,11 +293,14 @@ def _author_claude_code(system: str, user: str, *, max_tokens: int = 8000) -> st
                        f"Last error: {last_msg}")
 
 
-def _author(system: str, user: str, *, max_tokens: int = 8000) -> str:
+def _author(system: str, user: str, *, max_tokens: int = 8000,
+            cost_sink: Optional[dict] = None) -> str:
     if AUTHORING_PROVIDER == "groq":
-        return _author_groq(system, user, max_tokens=max_tokens)
+        return _author_groq(system, user, max_tokens=max_tokens, cost_sink=cost_sink)
     if AUTHORING_PROVIDER == "claude_code":
-        return _author_claude_code(system, user, max_tokens=max_tokens)
+        return _author_claude_code(
+            system, user, max_tokens=max_tokens, cost_sink=cost_sink
+        )
     raise NotImplementedError(
         f"AUTHORING_PROVIDER={AUTHORING_PROVIDER!r} not wired yet — switch to "
         "'groq' / 'claude_code' or extend bot/author.py"
@@ -340,8 +363,16 @@ def condense(transcript: str, on_progress: ProgressFn = None) -> str:
 
 def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None,
                       duration_seconds: Optional[float] = None,
-                      on_progress: ProgressFn = None) -> str:
-    """Return cheatsheet markdown text. Caller writes it to disk."""
+                      on_progress: ProgressFn = None,
+                      system_override: Optional[str] = None,
+                      cost_sink: Optional[dict] = None) -> str:
+    """Return cheatsheet markdown text. Caller writes it to disk.
+
+    ``system_override`` — when set, replaces the default CHEATSHEET_SYSTEM
+    prompt (used for per-user custom prompts from the admin portal).
+    ``cost_sink`` — if a dict, is populated with ``tokens_in``/``tokens_out``
+    so the caller can record per-generation cost.
+    """
     transcript = Path(transcript_path).read_text(encoding="utf-8")
     if _needs_condensation():
         body = condense(transcript, on_progress=on_progress)
@@ -360,15 +391,26 @@ def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None
     ] if p is not None)
     if on_progress:
         on_progress("Writing cheatsheet...")
-    raw = _author(CHEATSHEET_SYSTEM, user_msg, max_tokens=3500)
+    raw = _author(
+        system_override or CHEATSHEET_SYSTEM,
+        user_msg,
+        max_tokens=3500,
+        cost_sink=cost_sink,
+    )
     return strip_wrappers(raw)
 
 
 def author_book(transcript_path: Path, frames_index_path: Path, *,
                 title_hint: Optional[str] = None,
                 duration_seconds: Optional[float] = None,
-                on_progress: ProgressFn = None) -> str:
-    """Return illustrated-book markdown. Caller writes it and renders the PDF."""
+                on_progress: ProgressFn = None,
+                system_override: Optional[str] = None,
+                cost_sink: Optional[dict] = None) -> str:
+    """Return illustrated-book markdown. Caller writes it and renders the PDF.
+
+    Same ``system_override`` / ``cost_sink`` semantics as
+    :func:`author_cheatsheet`.
+    """
     transcript = Path(transcript_path).read_text(encoding="utf-8")
     if _needs_condensation():
         body = condense(transcript, on_progress=on_progress)
@@ -391,5 +433,10 @@ def author_book(transcript_path: Path, frames_index_path: Path, *,
     )
     if on_progress:
         on_progress("Writing illustrated book...")
-    raw = _author(BOOK_SYSTEM, user_msg, max_tokens=8000)
+    raw = _author(
+        system_override or BOOK_SYSTEM,
+        user_msg,
+        max_tokens=8000,
+        cost_sink=cost_sink,
+    )
     return strip_wrappers(raw)
