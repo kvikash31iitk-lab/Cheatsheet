@@ -282,3 +282,9 @@ Index("ix_audit_log_created", AuditLog.created_at.desc())
 Index("ix_audit_log_target", AuditLog.target_type, AuditLog.target_id)
 Index("ix_promo_redemptions_user", PromoRedemption.user_id)
 Index("ix_promo_redemptions_promo", PromoRedemption.promo_id)
+Index(
+    "ux_promo_redemptions_promo_user",
+    PromoRedemption.promo_id,
+    PromoRedemption.user_id,
+    unique=True,
+)

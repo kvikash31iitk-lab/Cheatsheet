@@ -26,7 +26,8 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update as sa_update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Make the existing bot modules importable.
@@ -229,12 +230,24 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
 ]
 
 
-async def _migrate_columns() -> None:
-    """Idempotent ALTER TABLE for columns we added after the initial schema.
+# Idempotent index additions. Each entry: (index_name, CREATE statement).
+# Wrapped in `IF NOT EXISTS` so re-runs are no-ops on both backends.
+_INDEX_MIGRATIONS: list[tuple[str, str]] = [
+    (
+        "ux_promo_redemptions_promo_user",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_promo_redemptions_promo_user "
+        "ON promo_redemptions (promo_id, user_id)",
+    ),
+]
 
-    Each ALTER runs in its **own** transaction so one failure (e.g. legacy
-    syntax) doesn't poison the rest — Postgres aborts the whole transaction
-    after the first error and rejects every subsequent statement otherwise.
+
+async def _migrate_columns() -> None:
+    """Idempotent ALTER TABLE / CREATE INDEX for schema additions made after
+    the initial release.
+
+    Each statement runs in its **own** transaction so one failure doesn't
+    poison the rest — Postgres aborts the whole transaction after the first
+    error and rejects every subsequent statement otherwise.
     """
     from sqlalchemy import inspect, text
 
@@ -266,12 +279,61 @@ async def _migrate_columns() -> None:
         except Exception as exc:
             print(f"[migrate] skip {table}.{col}: {exc}")
 
+    for name, sql in _INDEX_MIGRATIONS:
+        try:
+            async with async_engine.begin() as conn:
+                await conn.execute(text(sql))
+            print(f"[migrate] ensured index {name}")
+        except Exception as exc:
+            print(f"[migrate] skip index {name}: {exc}")
+
+
+async def _recover_stuck_jobs() -> None:
+    """Mark long-stuck queued/running rows as error and auto-refund the user.
+
+    Runs on every API boot. Any job left in ``queued``/``running`` for more
+    than 30 minutes is presumed orphaned (the previous process died mid-job),
+    so we flip it to ``error`` and credit back the paise we deducted up-front.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    async with AsyncSessionLocal() as s:
+        stuck = (
+            await s.execute(
+                select(Generation)
+                .where(Generation.status.in_(("queued", "running")))
+                .where(Generation.created_at < cutoff)
+            )
+        ).scalars().all()
+        if not stuck:
+            return
+        for g in stuck:
+            g.status = "error"
+            g.error_message = "Server restarted mid-job — auto-recovered"
+            g.completed_at = datetime.now(timezone.utc)
+            if g.cost_paise > 0 and not g.was_free:
+                user_row = await s.get(User, g.user_id)
+                if user_row:
+                    user_row.wallet_balance_paise += g.cost_paise
+                    s.add(
+                        Transaction(
+                            user_id=user_row.id,
+                            kind="refund",
+                            amount_paise=g.cost_paise,
+                            generation_id=g.id,
+                            status="success",
+                            note="Auto-refund: stuck job recovered on restart",
+                        )
+                    )
+        await s.commit()
+        print(f"[recovery] reset {len(stuck)} stuck job(s)", flush=True)
+
 
 @app.on_event("startup")
 async def startup() -> None:
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_columns()
+    await _recover_stuck_jobs()
     # Seed the anonymous user for dev so /api/generate works without auth.
     async with AsyncSessionLocal() as s:
         result = await s.execute(select(User).where(User.email == ANON_USER_EMAIL))
@@ -476,23 +538,21 @@ async def redeem_promo(
         raise HTTPException(400, "This code has expired")
     if p.max_redemptions and p.times_redeemed >= p.max_redemptions:
         raise HTTPException(400, "This code has reached its redemption limit")
-    already = (
-        await s.execute(
-            select(PromoRedemption)
-            .where(PromoRedemption.promo_id == p.id)
-            .where(PromoRedemption.user_id == user.id)
-        )
-    ).scalar_one_or_none()
-    if already:
-        raise HTTPException(400, "You have already redeemed this code")
-
-    user.wallet_balance_paise += p.credit_paise
-    p.times_redeemed += 1
+    # Race-safe insert: rely on the unique (promo_id, user_id) index to
+    # prevent double-redemption when two requests land simultaneously.
     s.add(
         PromoRedemption(
             promo_id=p.id, user_id=user.id, credit_paise=p.credit_paise
         )
     )
+    try:
+        await s.flush()
+    except IntegrityError:
+        await s.rollback()
+        raise HTTPException(400, "You have already redeemed this code")
+
+    user.wallet_balance_paise += p.credit_paise
+    p.times_redeemed += 1
     s.add(
         Transaction(
             user_id=user.id,
@@ -698,10 +758,27 @@ async def create_generation(
     )
     s.add(gen)
 
-    # Deduct + log spend transaction now (refunded automatically if the job
-    # later errors out — see _run_job).
+    # Atomic wallet decrement: a single SQL UPDATE with a balance precondition
+    # so two concurrent requests can't both pass an in-memory affordability
+    # check and overdraw. Returns the new balance, or None when the WHERE
+    # clause rejected the row (concurrent request already drained it).
     if cost_paise > 0:
-        user.wallet_balance_paise -= cost_paise
+        result = await s.execute(
+            sa_update(User)
+            .where(User.id == user.id)
+            .where(User.wallet_balance_paise >= cost_paise)
+            .values(wallet_balance_paise=User.wallet_balance_paise - cost_paise)
+            .returning(User.wallet_balance_paise)
+        )
+        new_balance = result.scalar_one_or_none()
+        if new_balance is None:
+            await s.rollback()
+            raise HTTPException(
+                402,
+                "Wallet was drained by a concurrent generation. "
+                "Top up and try again.",
+            )
+        user.wallet_balance_paise = new_balance  # keep ORM view in sync
         s.add(
             Transaction(
                 user_id=user.id,
