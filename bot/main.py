@@ -37,6 +37,7 @@ def main() -> None:
         .post_init(post_init)
         .build()
     )
+    app.add_handler(CommandHandler("start", handlers.cmd_start))
     app.add_handler(CommandHandler("cheat", handlers.cmd_cheat))
     app.add_handler(CommandHandler("book", handlers.cmd_book))
     app.add_handler(CommandHandler("refresh", handlers.cmd_refresh))

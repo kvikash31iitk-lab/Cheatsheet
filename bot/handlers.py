@@ -1,8 +1,10 @@
 """Telegram slash command handlers + whitelist enforcement."""
 from __future__ import annotations
 
+import os
 import re
 
+import httpx
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -10,6 +12,9 @@ from .config import WHITELISTED_GROUP_IDS
 from . import worker
 
 URL_RE = re.compile(r"https?://\S+")
+
+INTERNAL_API_BASE = os.environ.get("INTERNAL_API_BASE", "http://127.0.0.1:8000")
+INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
 
 
 def _whitelisted(chat_id: int) -> bool:
@@ -65,6 +70,55 @@ async def _enqueue(update: Update, fmt: str, refresh: bool = False) -> None:
 
 
 # === handlers ==============================================================
+
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle ``/start``. With a ``link_<token>`` deep-link argument, bind
+    this Telegram chat to the user's cheat.rivanair.in account so they
+    receive "your cheatsheet is ready" pings."""
+    msg = update.effective_message
+    chat = update.effective_chat
+    if msg is None or chat is None:
+        return
+
+    args = ctx.args or []
+    if args and args[0].startswith("link_"):
+        token = args[0][5:]  # strip "link_" prefix
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.post(
+                    f"{INTERNAL_API_BASE}/api/telegram/link",
+                    json={"token": token, "chat_id": str(chat.id)},
+                    headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+                    timeout=10.0,
+                )
+            if r.status_code == 200:
+                data = r.json()
+                who = data.get("email") or data.get("name") or "your account"
+                await msg.reply_text(
+                    f"✓ Linked to {who}.\n\n"
+                    "You'll get a ping here when each generation is ready. "
+                    "Manage from /wallet on the web app."
+                )
+            else:
+                detail = r.text[:200] if r.text else f"HTTP {r.status_code}"
+                await msg.reply_text(
+                    f"Couldn't link: {detail}\n\n"
+                    "The token may have expired (10-min window). "
+                    "Generate a fresh link from /wallet on the web app."
+                )
+        except Exception as exc:
+            await msg.reply_text(f"Couldn't reach the API: {exc}")
+        return
+
+    # Bare /start with no deep-link arg.
+    await msg.reply_text(
+        "Hi! I'm the Cheatsheet bot.\n\n"
+        "• Generate notes at https://cheat.rivanair.in\n"
+        "• Or in an authorised group: /cheat <url> or /book <url>\n"
+        "• To get notified here when your web generations finish, "
+        "open /wallet on the web app and tap 'Link Telegram'."
+    )
+
 
 async def cmd_cheat(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if await _drop(update):

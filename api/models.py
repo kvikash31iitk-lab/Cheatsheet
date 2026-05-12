@@ -70,6 +70,11 @@ class User(Base):
     referral_code: Mapped[Optional[str]] = mapped_column(String(16), unique=True)
     referred_by_code: Mapped[Optional[str]] = mapped_column(String(16))
 
+    # Telegram chat for "your cheatsheet is ready" push. Linked via deep-link
+    # flow: web app generates a signed token → user clicks t.me/Bot?start=<tok>
+    # → bot POSTs token + chat_id back to /api/telegram/link.
+    telegram_chat_id: Mapped[Optional[str]] = mapped_column(String(64))
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )

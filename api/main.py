@@ -227,6 +227,7 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("generations", "llm_tokens_out", "INTEGER NOT NULL DEFAULT 0"),
     ("generations", "llm_cost_paise", "INTEGER NOT NULL DEFAULT 0"),
     ("generations", "transcription_cost_paise", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "telegram_chat_id", "VARCHAR(64)"),
 ]
 
 
@@ -568,6 +569,131 @@ async def redeem_promo(
         "credited_paise": p.credit_paise,
         "new_balance_paise": user.wallet_balance_paise,
     }
+
+
+# --- Telegram link + notifications -----------------------------------------
+
+import base64
+import hashlib
+import hmac
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "")
+TELEGRAM_LINK_TTL_SECONDS = 600  # link expires 10 min after generation
+WEB_PUBLIC_URL = os.environ.get("WEB_PUBLIC_URL", "https://cheat.rivanair.in")
+
+
+def _sign_link_token(user_id: str, expires_at: int) -> str:
+    """Token = base64url(user_id|expires_at|hmac). HMAC uses INTERNAL_API_TOKEN
+    as the key so it can't be forged without server-side access."""
+    msg = f"{user_id}|{expires_at}".encode()
+    sig = hmac.new(INTERNAL_API_TOKEN.encode(), msg, hashlib.sha256).hexdigest()[:24]
+    raw = f"{user_id}|{expires_at}|{sig}".encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _verify_link_token(token: str) -> str | None:
+    """Returns user_id if valid + unexpired, else None."""
+    try:
+        padding = "=" * (-len(token) % 4)
+        raw = base64.urlsafe_b64decode(token + padding).decode()
+        user_id, exp_str, sig = raw.split("|")
+        expires_at = int(exp_str)
+    except Exception:
+        return None
+    if expires_at < int(datetime.now(timezone.utc).timestamp()):
+        return None
+    msg = f"{user_id}|{expires_at}".encode()
+    expected = hmac.new(
+        INTERNAL_API_TOKEN.encode(), msg, hashlib.sha256
+    ).hexdigest()[:24]
+    if not hmac.compare_digest(expected, sig):
+        return None
+    return user_id
+
+
+@app.get("/api/telegram/link-url")
+async def telegram_link_url(
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """Return a t.me deep-link the user can click to bind their Telegram chat
+    to this account. Signed and expires in 10 min."""
+    if not TELEGRAM_BOT_USERNAME:
+        raise HTTPException(503, "Telegram link not configured on server")
+    expires_at = int(datetime.now(timezone.utc).timestamp()) + TELEGRAM_LINK_TTL_SECONDS
+    token = _sign_link_token(user.id, expires_at)
+    url = f"https://t.me/{TELEGRAM_BOT_USERNAME}?start=link_{token}"
+    return {
+        "url": url,
+        "expires_in_seconds": TELEGRAM_LINK_TTL_SECONDS,
+        "currently_linked": bool(user.telegram_chat_id),
+    }
+
+
+class TelegramLinkRequest(BaseModel):
+    token: str
+    chat_id: str
+
+
+@app.post("/api/telegram/link")
+async def telegram_link(
+    req: TelegramLinkRequest,
+    s: AsyncSession = Depends(get_session),
+    x_internal_token: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
+    """Called by the bot when a user runs ``/start link_<token>``. Verifies
+    the signed token and binds the chat to the user."""
+    if not INTERNAL_API_TOKEN or x_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(401, "missing or invalid internal token")
+
+    raw_token = req.token
+    if raw_token.startswith("link_"):
+        raw_token = raw_token[5:]
+    user_id = _verify_link_token(raw_token)
+    if not user_id:
+        raise HTTPException(400, "Invalid or expired link token")
+
+    u = await s.get(User, user_id)
+    if not u:
+        raise HTTPException(404, "User not found")
+    u.telegram_chat_id = str(req.chat_id)
+    await s.commit()
+    return {"ok": True, "email": u.email, "name": u.name}
+
+
+@app.post("/api/telegram/unlink")
+async def telegram_unlink(
+    user: User = Depends(current_user),
+    s: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Let the user remove the Telegram link from the web app."""
+    user.telegram_chat_id = None
+    await s.commit()
+    return {"ok": True}
+
+
+def _send_telegram_message(chat_id: str, text: str) -> None:
+    """Fire-and-forget Telegram notification. Logs and swallows errors so the
+    notification can never break a generation."""
+    if not (TELEGRAM_BOT_TOKEN and chat_id):
+        return
+    import httpx as _httpx
+    try:
+        r = _httpx.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": False,
+            },
+            timeout=10.0,
+        )
+        if r.status_code != 200:
+            print(f"[telegram] notify failed: {r.status_code} {r.text[:200]}",
+                  flush=True)
+    except Exception as exc:
+        print(f"[telegram] notify exception: {exc}", flush=True)
 
 
 @app.get("/api/library")
@@ -1208,6 +1334,8 @@ async def _run_job(job_id: str) -> None:
         tokens_out = int(cost_sink.get("tokens_out", 0))
         llm_cost = _llm_cost_paise(provider, tokens_in, tokens_out)
         transcription_cost = _whisper_cost_paise(backend, float(meta["duration"]))
+        notify_chat_id: str | None = None
+        notify_title: str = ""
         with SyncSessionLocal() as s:
             gen = s.get(Generation, job_id)
             if gen:
@@ -1222,14 +1350,30 @@ async def _run_job(job_id: str) -> None:
                 gen.llm_cost_paise = llm_cost
                 gen.transcription_cost_paise = transcription_cost
                 s.commit()
+                user_row = s.get(User, gen.user_id)
+                notify_chat_id = (
+                    user_row.telegram_chat_id if user_row else None
+                )
+                notify_title = gen.title or "your video"
+
+        if notify_chat_id:
+            label = "Cheatsheet" if kind == "cheatsheet" else "Book Notes"
+            text = (
+                f"*{label} ready* ✓\n"
+                f"_{notify_title}_\n\n"
+                f"Open: {WEB_PUBLIC_URL}/library"
+            )
+            await asyncio.to_thread(_send_telegram_message, notify_chat_id, text)
 
     except Exception as exc:
         # Refund the wallet for paid jobs that fail mid-pipeline.
+        notify_chat_id = None
+        notify_err = f"{type(exc).__name__}: {exc}"
         with SyncSessionLocal() as s:
             gen = s.get(Generation, job_id)
             if gen:
                 gen.status = "error"
-                gen.error_message = f"{type(exc).__name__}: {exc}"
+                gen.error_message = notify_err
                 gen.completed_at = datetime.now(timezone.utc)
                 if gen.cost_paise and not gen.was_free:
                     user_row = s.get(User, gen.user_id)
@@ -1246,6 +1390,18 @@ async def _run_job(job_id: str) -> None:
                             )
                         )
                 s.commit()
+                user_row = s.get(User, gen.user_id)
+                notify_chat_id = (
+                    user_row.telegram_chat_id if user_row else None
+                )
+
+        if notify_chat_id:
+            short = notify_err[:200]
+            await asyncio.to_thread(
+                _send_telegram_message,
+                notify_chat_id,
+                f"*Generation failed* ✗\n`{short}`\n\nWallet auto-refunded if paid.",
+            )
 
 
 if __name__ == "__main__":

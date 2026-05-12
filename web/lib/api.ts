@@ -153,3 +153,21 @@ export async function getTransactions(): Promise<Transaction[]> {
   if (!r.ok) throw new Error(`transactions failed: ${r.status}`);
   return r.json();
 }
+
+export type TelegramLinkUrl = {
+  url: string;
+  expires_in_seconds: number;
+  currently_linked: boolean;
+};
+
+export async function getTelegramLinkUrl(): Promise<TelegramLinkUrl> {
+  const r = await fetch('/api/telegram/link-url', { cache: 'no-store' });
+  if (!r.ok) throw new Error((await r.text()) || `link-url failed: ${r.status}`);
+  return r.json();
+}
+
+export async function unlinkTelegram(): Promise<{ ok: boolean }> {
+  const r = await fetch('/api/telegram/unlink', { method: 'POST' });
+  if (!r.ok) throw new Error((await r.text()) || `unlink failed: ${r.status}`);
+  return r.json();
+}

@@ -11,6 +11,8 @@ import {
   getMe,
   getTransactions,
   redeemPromo,
+  getTelegramLinkUrl,
+  unlinkTelegram,
   type Me,
   type Transaction,
 } from '@/lib/api';
@@ -34,6 +36,48 @@ export default function WalletPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [promoCode, setPromoCode] = useState('');
   const [promoBusy, setPromoBusy] = useState(false);
+  const [tgLinked, setTgLinked] = useState<boolean | null>(null);
+  const [tgBusy, setTgBusy] = useState(false);
+
+  async function openTelegramLink() {
+    setTgBusy(true);
+    setError(null);
+    try {
+      const { url } = await getTelegramLinkUrl();
+      window.open(url, '_blank');
+      // Optimistically poll /api/me a few times to detect link.
+      for (let i = 0; i < 15; i++) {
+        await new Promise((res) => setTimeout(res, 2000));
+        const m = await getMe();
+        // Server doesn't expose telegram_chat_id on /api/me directly; we rely
+        // on the link-url endpoint to report "currently_linked" instead.
+        const lu = await getTelegramLinkUrl();
+        if (lu.currently_linked) {
+          setTgLinked(true);
+          setSuccess('Telegram linked — you will be notified on completion.');
+          return;
+        }
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTgBusy(false);
+    }
+  }
+
+  async function unlinkTg() {
+    setTgBusy(true);
+    setError(null);
+    try {
+      await unlinkTelegram();
+      setTgLinked(false);
+      setSuccess('Telegram unlinked.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTgBusy(false);
+    }
+  }
 
   async function redeem() {
     if (!promoCode.trim()) return;
@@ -57,6 +101,14 @@ export default function WalletPage() {
       const [m, t] = await Promise.all([getMe(), getTransactions()]);
       setMe(m);
       setTxs(t);
+      // Best-effort: read Telegram link status. 503 = bot username not set
+      // on the server (yet) — silently treat as unsupported.
+      try {
+        const lu = await getTelegramLinkUrl();
+        setTgLinked(lu.currently_linked);
+      } catch {
+        setTgLinked(null);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -407,6 +459,61 @@ export default function WalletPage() {
                 </Btn>
               </div>
             </div>
+
+            {/* Telegram link */}
+            {tgLinked !== null && (
+              <div
+                style={{
+                  background: 'var(--c-surface)',
+                  border: '1px solid var(--c-line)',
+                  borderRadius: 14,
+                  padding: 20,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: 'var(--c-ink)',
+                    marginBottom: 4,
+                  }}
+                >
+                  Telegram notifications
+                </div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--c-ink-3)',
+                    marginBottom: 12,
+                  }}
+                >
+                  Get a ping when each cheatsheet / book is ready —
+                  no need to keep this tab open.
+                </div>
+                {tgLinked ? (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <Tag tone="mint">linked</Tag>
+                    <Btn
+                      variant="outline"
+                      size="sm"
+                      disabled={tgBusy}
+                      onClick={unlinkTg}
+                    >
+                      {tgBusy ? '…' : 'Unlink'}
+                    </Btn>
+                  </div>
+                ) : (
+                  <Btn
+                    variant="primary"
+                    size="md"
+                    disabled={tgBusy}
+                    onClick={openTelegramLink}
+                  >
+                    {tgBusy ? 'Linking…' : 'Link Telegram'}
+                  </Btn>
+                )}
+              </div>
+            )}
 
             {/* Referral */}
             {me?.referral_code && (
