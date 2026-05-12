@@ -185,11 +185,13 @@ app.add_middleware(
 
 
 _MIGRATIONS: list[tuple[str, str, str]] = [
-    # (table, column, sql type) — applied via ALTER TABLE if the column is missing.
+    # (table, column, sql type). Boolean defaults use the placeholder
+    # ``__BOOL_FALSE__`` which is swapped per-dialect at apply time
+    # (`0` for SQLite, `FALSE` for Postgres) so the ALTER works on both.
     ("users", "daily_cheatsheets_override", "INTEGER"),
     ("users", "daily_books_override", "INTEGER"),
-    ("users", "bypass_paid", "BOOLEAN NOT NULL DEFAULT 0"),
-    ("users", "is_banned", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("users", "bypass_paid", "BOOLEAN NOT NULL DEFAULT __BOOL_FALSE__"),
+    ("users", "is_banned", "BOOLEAN NOT NULL DEFAULT __BOOL_FALSE__"),
     ("users", "custom_prompt_cheatsheet", "TEXT"),
     ("users", "custom_prompt_book", "TEXT"),
     ("users", "referral_code", "VARCHAR(16)"),
@@ -204,6 +206,9 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
 async def _migrate_columns(conn: Any) -> None:
     """Idempotent ALTER TABLE for columns we added after the initial schema."""
     from sqlalchemy import inspect, text
+
+    dialect = conn.dialect.name  # "sqlite" or "postgresql"
+    bool_false = "FALSE" if dialect == "postgresql" else "0"
 
     def _check(sync_conn: Any) -> list[tuple[str, str, str]]:
         insp = inspect(sync_conn)
@@ -221,10 +226,10 @@ async def _migrate_columns(conn: Any) -> None:
 
     missing = await conn.run_sync(_check)
     for table, col, spec in missing:
-        # Postgres accepts BOOLEAN literal; SQLite accepts the same. The
-        # `NOT NULL DEFAULT 0` syntax works for both backends.
+        spec = spec.replace("__BOOL_FALSE__", bool_false)
         try:
             await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {spec}"))
+            print(f"[migrate] added {table}.{col}")
         except Exception as exc:
             print(f"[migrate] skip {table}.{col}: {exc}")
 
