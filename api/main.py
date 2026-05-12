@@ -203,11 +203,16 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
 ]
 
 
-async def _migrate_columns(conn: Any) -> None:
-    """Idempotent ALTER TABLE for columns we added after the initial schema."""
+async def _migrate_columns() -> None:
+    """Idempotent ALTER TABLE for columns we added after the initial schema.
+
+    Each ALTER runs in its **own** transaction so one failure (e.g. legacy
+    syntax) doesn't poison the rest — Postgres aborts the whole transaction
+    after the first error and rejects every subsequent statement otherwise.
+    """
     from sqlalchemy import inspect, text
 
-    dialect = conn.dialect.name  # "sqlite" or "postgresql"
+    dialect = async_engine.dialect.name  # "sqlite" or "postgresql"
     bool_false = "FALSE" if dialect == "postgresql" else "0"
 
     def _check(sync_conn: Any) -> list[tuple[str, str, str]]:
@@ -219,16 +224,18 @@ async def _migrate_columns(conn: Any) -> None:
                     existing[table] = {c["name"] for c in insp.get_columns(table)}
                 except Exception:
                     existing[table] = set()
-        missing = [
+        return [
             (t, c, s) for (t, c, s) in _MIGRATIONS if c not in existing.get(t, set())
         ]
-        return missing
 
-    missing = await conn.run_sync(_check)
+    async with async_engine.connect() as conn:
+        missing = await conn.run_sync(_check)
+
     for table, col, spec in missing:
         spec = spec.replace("__BOOL_FALSE__", bool_false)
         try:
-            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {spec}"))
+            async with async_engine.begin() as conn:
+                await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {spec}"))
             print(f"[migrate] added {table}.{col}")
         except Exception as exc:
             print(f"[migrate] skip {table}.{col}: {exc}")
@@ -238,7 +245,7 @@ async def _migrate_columns(conn: Any) -> None:
 async def startup() -> None:
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await _migrate_columns(conn)
+    await _migrate_columns()
     # Seed the anonymous user for dev so /api/generate works without auth.
     async with AsyncSessionLocal() as s:
         result = await s.execute(select(User).where(User.email == ANON_USER_EMAIL))
