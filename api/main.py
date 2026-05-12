@@ -673,6 +673,14 @@ async def create_generation(
     user: User = Depends(current_user),
     s: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
+    """Accept a job in <50ms and return the id immediately.
+
+    All slow work — metadata fetch, block-rule check, cost calc, atomic wallet
+    debit — is deferred to the background worker (``_run_job``). The frontend
+    polls ``/api/jobs/{id}`` for status; if pricing or block-rule fails, the
+    job lands in ``error`` state with a helpful message instead of blocking
+    the user on a spinning POST.
+    """
     # Maintenance mode — admins are allowed through.
     if not (user.is_admin or is_admin_email(user.email)):
         if bool(await app_settings.get(s, "maintenance_mode")):
@@ -696,56 +704,6 @@ async def create_generation(
                 f"Rate limit: max {hourly_cap} generations per hour. Try later.",
             )
 
-    # Resolve duration up-front so we can price + decide free vs paid.
-    cached = _PREVIEW_CACHE.get(req.url)
-    if cached:
-        duration = float(cached.get("duration_seconds") or 0)
-        title = cached.get("title")
-        channel = cached.get("channel")
-    else:
-        try:
-            meta = await asyncio.to_thread(fetch_metadata, req.url)
-        except Exception as exc:
-            raise HTTPException(400, f"Could not read URL: {exc}")
-        duration = float(meta["duration"])
-        title = meta.get("title")
-        channel = meta.get("channel") or meta.get("uploader") or ""
-        _PREVIEW_CACHE[req.url] = {
-            "video_id": meta["id"],
-            "title": title,
-            "duration_seconds": meta["duration"],
-            "channel": channel,
-            "thumbnail_url": f"https://i.ytimg.com/vi/{meta['id']}/hqdefault.jpg",
-        }
-
-    await _check_block_rules(s, title, channel)
-
-    free_cheats, free_books = await _free_limits_for(s, user)
-    cheats_today, books_today = await _daily_used(s, user.id)
-    if req.kind == "cheatsheet":
-        within_free = cheats_today < free_cheats
-    else:
-        within_free = books_today < free_books
-
-    cost_paise = 0
-    if user.bypass_paid:
-        was_free = True
-    elif within_free:
-        was_free = True
-    else:
-        table = await _cost_table(s)
-        cost_paise = _calc_cost_paise_for(duration, req.kind, table)
-        if user.wallet_balance_paise < cost_paise:
-            mins = math.ceil(duration / 60)
-            raise HTTPException(
-                402,
-                f"Today's free {req.kind}s are used. "
-                f"This {mins}-min video would cost ₹{cost_paise / 100:.0f} "
-                f"but your wallet has ₹{user.wallet_balance_paise / 100:.2f}. "
-                f"Top up to continue.",
-            )
-        was_free = False
-
     gen = Generation(
         id=uuid.uuid4().hex,
         user_id=user.id,
@@ -753,43 +711,10 @@ async def create_generation(
         url=req.url,
         status="queued",
         progress=0.0,
-        was_free=was_free,
-        cost_paise=cost_paise,
+        was_free=False,   # placeholder — re-evaluated inside _run_job
+        cost_paise=0,     # placeholder — atomic debit happens in _run_job
     )
     s.add(gen)
-
-    # Atomic wallet decrement: a single SQL UPDATE with a balance precondition
-    # so two concurrent requests can't both pass an in-memory affordability
-    # check and overdraw. Returns the new balance, or None when the WHERE
-    # clause rejected the row (concurrent request already drained it).
-    if cost_paise > 0:
-        result = await s.execute(
-            sa_update(User)
-            .where(User.id == user.id)
-            .where(User.wallet_balance_paise >= cost_paise)
-            .values(wallet_balance_paise=User.wallet_balance_paise - cost_paise)
-            .returning(User.wallet_balance_paise)
-        )
-        new_balance = result.scalar_one_or_none()
-        if new_balance is None:
-            await s.rollback()
-            raise HTTPException(
-                402,
-                "Wallet was drained by a concurrent generation. "
-                "Top up and try again.",
-            )
-        user.wallet_balance_paise = new_balance  # keep ORM view in sync
-        s.add(
-            Transaction(
-                user_id=user.id,
-                kind="spend",
-                amount_paise=-cost_paise,
-                generation_id=gen.id,
-                status="success",
-                note=f"{req.kind} · {math.ceil(duration / 60)}min",
-            )
-        )
-
     await s.commit()
     await s.refresh(gen)
 
@@ -1002,6 +927,135 @@ def _update_sync(job_id: str, **fields: Any) -> None:
         s.commit()
 
 
+def _check_block_rules_sync(
+    s: Any, title: str | None, channel: str | None
+) -> None:
+    """Sync equivalent of `_check_block_rules` for the worker thread.
+
+    Raises ``ValueError`` instead of ``HTTPException`` since this runs after
+    the request has already returned 200. The exception bubbles up to the
+    ``_run_job`` ``except`` block which marks the row as ``error``.
+    """
+    rules = s.execute(select(BlockRule)).scalars().all()
+    title_l = (title or "").lower()
+    channel_l = (channel or "").lower()
+    for r in rules:
+        pat = (r.pattern or "").lower().strip()
+        if not pat:
+            continue
+        if r.kind == "channel" and channel_l and pat == channel_l:
+            raise ValueError(f"Channel is blocked: {r.reason or 'policy'}")
+        if r.kind == "keyword" and pat in title_l:
+            raise ValueError(
+                f"Title matches a blocked keyword: {r.reason or 'policy'}"
+            )
+
+
+def _daily_used_sync(s: Any, user_id: str) -> tuple[int, int]:
+    """Sync equivalent of `_daily_used`."""
+    start = _ist_day_start_utc()
+    result = s.execute(
+        select(Generation.kind, func.count())
+        .where(Generation.user_id == user_id)
+        .where(Generation.created_at >= start)
+        .where(Generation.was_free.is_(True))
+        .where(Generation.status != "error")
+        .group_by(Generation.kind)
+    )
+    counts = {kind: int(c) for kind, c in result.all()}
+    return counts.get("cheatsheet", 0), counts.get("book", 0)
+
+
+def _free_limits_for_sync(user_row: User) -> tuple[int, int]:
+    """Sync equivalent of `_free_limits_for`, reading from the cached
+    settings module instead of an async DB session."""
+    cheats = (
+        user_row.daily_cheatsheets_override
+        if user_row.daily_cheatsheets_override is not None
+        else int(app_settings.get_sync("free_cheatsheets_per_day"))
+    )
+    books = (
+        user_row.daily_books_override
+        if user_row.daily_books_override is not None
+        else int(app_settings.get_sync("free_books_per_day"))
+    )
+    return cheats, books
+
+
+def _cost_table_sync() -> dict[str, int]:
+    return {
+        "cheatsheet": int(app_settings.get_sync("cost_paise_per_30min_cheatsheet")),
+        "book": int(app_settings.get_sync("cost_paise_per_30min_book")),
+    }
+
+
+def _price_and_charge(job_id: str, kind: str, duration_seconds: float,
+                     title: str | None, channel: str | None) -> None:
+    """Run after metadata fetch. Applies block rules, computes cost, and
+    performs the atomic wallet debit. On failure, raises an exception so
+    `_run_job`'s except block marks the row as error and refunds anything
+    we charged (which, on insufficient balance, is nothing)."""
+    with SyncSessionLocal() as s:
+        _check_block_rules_sync(s, title, channel)
+
+        user_row = s.get(User, _user_id_for_job(s, job_id))
+        if user_row is None:
+            raise ValueError("user not found")
+
+        free_cheats, free_books = _free_limits_for_sync(user_row)
+        cheats_today, books_today = _daily_used_sync(s, user_row.id)
+        if kind == "cheatsheet":
+            within_free = cheats_today < free_cheats
+        else:
+            within_free = books_today < free_books
+
+        if user_row.bypass_paid or within_free:
+            cost_paise = 0
+            was_free = True
+        else:
+            table = _cost_table_sync()
+            cost_paise = _calc_cost_paise_for(duration_seconds, kind, table)
+            # Atomic decrement with balance precondition.
+            result = s.execute(
+                sa_update(User)
+                .where(User.id == user_row.id)
+                .where(User.wallet_balance_paise >= cost_paise)
+                .values(
+                    wallet_balance_paise=User.wallet_balance_paise - cost_paise
+                )
+                .returning(User.wallet_balance_paise)
+            )
+            new_balance = result.scalar_one_or_none()
+            if new_balance is None:
+                raise ValueError(
+                    f"Insufficient wallet balance. "
+                    f"This {kind} would cost ₹{cost_paise / 100:.0f}; "
+                    f"top up at /wallet."
+                )
+            was_free = False
+            s.add(
+                Transaction(
+                    user_id=user_row.id,
+                    kind="spend",
+                    amount_paise=-cost_paise,
+                    generation_id=job_id,
+                    status="success",
+                    note=f"{kind} · {math.ceil(duration_seconds / 60)}min",
+                )
+            )
+
+        gen = s.get(Generation, job_id)
+        if gen:
+            gen.cost_paise = cost_paise
+            gen.was_free = was_free
+        s.commit()
+
+
+def _user_id_for_job(s: Any, job_id: str) -> str | None:
+    gen = s.get(Generation, job_id)
+    return gen.user_id if gen else None
+
+
 async def _run_job(job_id: str) -> None:
     progress_state = {"p": 0.05, "step": "Starting"}
 
@@ -1074,12 +1128,27 @@ async def _run_job(job_id: str) -> None:
     try:
         emit("Fetching video metadata", 0.05)
         meta = await asyncio.to_thread(fetch_metadata, url)
+        channel = meta.get("channel") or meta.get("uploader") or ""
         _update_sync(
             job_id,
             video_id=meta["id"],
             title=meta["title"],
             duration_seconds=meta["duration"],
+            channel=channel,
             thumbnail_url=f"https://i.ytimg.com/vi/{meta['id']}/hqdefault.jpg",
+        )
+
+        # Block rules + cost calc + atomic wallet debit. Raises ValueError if
+        # the user can't afford or the video is blocked — caught below, marks
+        # the row error with the message we set here.
+        emit("Reserving wallet credit", 0.08)
+        await asyncio.to_thread(
+            _price_and_charge,
+            job_id,
+            kind,
+            float(meta["duration"]),
+            meta.get("title"),
+            channel,
         )
 
         extract_frames = kind == "book"
