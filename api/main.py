@@ -580,7 +580,7 @@ import hmac
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "")
 TELEGRAM_LINK_TTL_SECONDS = 600  # link expires 10 min after generation
-WEB_PUBLIC_URL = os.environ.get("WEB_PUBLIC_URL", "https://cheat.rivanair.in")
+WEB_PUBLIC_URL = os.environ.get("WEB_PUBLIC_URL", "https://cheetsheet.tech")
 
 
 def _sign_link_token(user_id: str, expires_at: int) -> str:

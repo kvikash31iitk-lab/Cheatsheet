@@ -8,6 +8,16 @@ const nextConfig = {
       { source: '/api/:path*', destination: `${API_BASE}/api/:path*` },
     ];
   },
+  experimental: {
+    serverActions: {
+      allowedOrigins: [
+        'cheetsheet.tech',
+        'cheetsheet.tech.',
+        'www.cheetsheet.tech',
+        'cheat.rivanair.in',
+      ],
+    },
+  },
 };
 
 module.exports = nextConfig;

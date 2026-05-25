@@ -73,7 +73,7 @@ async def _enqueue(update: Update, fmt: str, refresh: bool = False) -> None:
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle ``/start``. With a ``link_<token>`` deep-link argument, bind
-    this Telegram chat to the user's cheat.rivanair.in account so they
+    this Telegram chat to the user's cheetsheet.tech account so they
     receive "your cheatsheet is ready" pings."""
     msg = update.effective_message
     chat = update.effective_chat
@@ -113,7 +113,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     # Bare /start with no deep-link arg.
     await msg.reply_text(
         "Hi! I'm the Cheatsheet bot.\n\n"
-        "• Generate notes at https://cheat.rivanair.in\n"
+        "• Generate notes at https://cheetsheet.tech\n"
         "• Or in an authorised group: /cheat <url> or /book <url>\n"
         "• To get notified here when your web generations finish, "
         "open /wallet on the web app and tap 'Link Telegram'."

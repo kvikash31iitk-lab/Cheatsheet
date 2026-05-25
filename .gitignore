@@ -31,6 +31,3 @@ Thumbs.db
 
 # Claude Code session metadata
 .claude/
-.auth_secret
-.dbpass
-.internal_token

@@ -9,6 +9,7 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
     Google({
       clientId: process.env.AUTH_GOOGLE_ID,
       clientSecret: process.env.AUTH_GOOGLE_SECRET,
+      checks: ['state'],
     }),
   ],
   pages: { signIn: '/login' },
@@ -35,7 +36,6 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
           return false;
         }
         const data = (await r.json()) as { id: string };
-        // Stash on the user object — picked up by the jwt callback below.
         (user as { id?: string }).id = data.id;
         return true;
       } catch (e) {
