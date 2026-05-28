@@ -1,7 +1,7 @@
-import { signIn, auth } from '@/auth';
+import { auth } from '@/auth';
 import { redirect } from 'next/navigation';
-import { Btn, CSLogo } from '@/components/ui';
-import { Ic } from '@/components/icons';
+import { CSLogo } from '@/components/ui';
+import { GoogleSignInButton } from './GoogleSignInButton';
 
 export default async function LoginPage({
   searchParams,
@@ -12,11 +12,6 @@ export default async function LoginPage({
   const session = await auth();
   const nextUrl = searchParams?.next ?? '/generate';
   if (session?.user) redirect(nextUrl);
-
-  async function googleSignIn() {
-    'use server';
-    await signIn('google', { redirectTo: nextUrl });
-  }
 
   return (
     <main
@@ -53,17 +48,7 @@ export default async function LoginPage({
             Sign in to continue to your library. 5 cheatsheets free, no card.
           </p>
 
-          <form action={googleSignIn}>
-            <Btn
-              variant="secondary"
-              size="lg"
-              full
-              icon={<Ic.google size={16} />}
-              type="submit"
-            >
-              Continue with Google
-            </Btn>
-          </form>
+          <GoogleSignInButton callbackUrl={nextUrl} />
 
           <p
             style={{
