@@ -9,7 +9,7 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
     Google({
       clientId: process.env.AUTH_GOOGLE_ID,
       clientSecret: process.env.AUTH_GOOGLE_SECRET,
-      checks: ['state'],
+      checks: [],  // both PKCE and state disabled — workaround for Auth.js v5 cookie-decode failures in prod
     }),
   ],
   pages: { signIn: '/login' },
