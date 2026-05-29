@@ -83,10 +83,15 @@ except ImportError:
 
 # --- pipeline imports (after PATH/env setup) -------------------------------
 
-from scripts.transcribe_with_frames import fetch_metadata, run_pipeline  # noqa: E402
+from scripts.transcribe_with_frames import (  # noqa: E402
+    extract_video_id,
+    fetch_metadata,
+    run_pipeline,
+)
 from scripts.build_cheatsheet import build as build_cheatsheet  # noqa: E402
 from scripts.build_illustrated_book import build as build_book  # noqa: E402
 from bot.author import author_book, author_cheatsheet  # noqa: E402
+from bot import cache as bot_cache  # noqa: E402
 
 from api.db import (  # noqa: E402
     AsyncSessionLocal,
@@ -1341,13 +1346,63 @@ async def _run_job(job_id: str) -> None:
         )
 
         extract_frames = kind == "book"
-        result = await asyncio.to_thread(
-            run_pipeline,
-            url,
-            work,
-            extract_frames=extract_frames,
-            on_progress=on_pipeline,
-        )
+
+        # ---- resumable pipeline -------------------------------------------
+        # The expensive steps (yt-dlp download + ffmpeg frame extraction +
+        # Whisper transcription) only depend on the video, so we cache them
+        # by YouTube video ID under bot.cache. A re-submission of the same
+        # URL after a deploy-restart / network blip / etc. skips straight to
+        # authoring and saves ~80% of wall time. The Telegram bot path
+        # (bot/worker.py) has done this for ages; the API path had to
+        # re-extract everything on every retry, which is what made restarts
+        # so painful.
+        try:
+            video_id = extract_video_id(url)
+        except ValueError:
+            video_id = None
+
+        result: dict[str, Any] | None = None
+        if video_id:
+            need_transcript = not bot_cache.has_transcript(video_id)
+            need_frames = extract_frames and not bot_cache.has_frames(video_id)
+            if not need_transcript and not need_frames:
+                emit("Loaded transcript + frames from cache", 0.70)
+                slot = bot_cache.slot(video_id)
+                twf = slot / "transcript_with_frames.txt"
+                result = {
+                    "transcript_txt": slot / "transcript.txt",
+                    "transcript_json": slot / "transcript.json",
+                    "transcript_with_frames": twf if twf.exists() else slot / "transcript.txt",
+                    "frames_dir": (slot / "frames") if extract_frames else None,
+                    "frames_index": (slot / "frames.json") if extract_frames else None,
+                }
+
+        if result is None:
+            result = await asyncio.to_thread(
+                run_pipeline,
+                url,
+                work,
+                extract_frames=extract_frames,
+                on_progress=on_pipeline,
+            )
+            # Persist for future re-runs. Non-fatal if it fails (e.g. disk
+            # full) — the current job already has its outputs in work/.
+            if video_id:
+                try:
+                    await asyncio.to_thread(
+                        bot_cache.adopt_pipeline_outputs,
+                        video_id,
+                        # Augment result with title/duration so cache meta
+                        # is populated (run_pipeline itself doesn't return
+                        # them; we got them from fetch_metadata earlier).
+                        {
+                            **result,
+                            "title": meta.get("title", ""),
+                            "duration_seconds": float(meta.get("duration", 0.0)),
+                        },
+                    )
+                except Exception as exc:
+                    print(f"[cache] adopt failed (non-fatal): {exc}", flush=True)
 
         emit("Authoring notes", 0.72)
         if kind == "cheatsheet":
