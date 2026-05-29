@@ -222,12 +222,30 @@ def parse_blocks(md: str):
 # --- flowable factories -----------------------------------------------------
 
 def make_image_flowable(alt: str, path: str) -> list:
-    """Render a markdown image with auto-fit width and italic caption."""
+    """Render a markdown image with auto-fit width and italic caption.
+
+    Path resolution is forgiving on purpose: the BOOK_SYSTEM prompt asks the
+    LLM to write `frames/<name>.jpg`, but in practice the LLM sometimes
+    drops the `frames/` prefix and writes the bare filename, and the caller
+    may pass IMAGE_BASE as either the slot dir or the frames dir itself.
+    We try a handful of candidates so a markdown/image_base combo that
+    "looks right" still embeds the frame instead of falling to a placeholder.
+    """
     p = Path(path)
-    if not p.is_absolute():
-        p = (IMAGE_BASE / path).resolve()
-    if not p.exists():
+    if p.is_absolute() and p.exists():
+        chosen = p
+    else:
+        rel = Path(path)
+        bare = rel.name  # "frame_00-00-00.jpg" regardless of how it was written
+        candidates = [
+            IMAGE_BASE / rel,                # IMAGE_BASE=slot/, path="frames/X.jpg" → slot/frames/X.jpg
+            IMAGE_BASE / bare,               # IMAGE_BASE=slot/frames/, path="frames/X.jpg" → slot/frames/X.jpg
+            IMAGE_BASE / "frames" / bare,    # IMAGE_BASE=slot/, path="X.jpg" → slot/frames/X.jpg
+        ]
+        chosen = next((c for c in candidates if c.exists()), None)
+    if chosen is None or not chosen.exists():
         return [Paragraph(f"<i>[missing image: {path}]</i>", BODY)]
+    p = chosen.resolve()
     try:
         with PILImage.open(p) as im:
             iw, ih = im.size
