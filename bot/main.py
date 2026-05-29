@@ -5,7 +5,13 @@ import asyncio
 import logging
 import sys
 
-from telegram.ext import Application, CommandHandler
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 from . import handlers, worker
 from .config import TELEGRAM_BOT_TOKEN, WHITELISTED_GROUP_IDS, validate
@@ -42,6 +48,18 @@ def main() -> None:
     app.add_handler(CommandHandler("book", handlers.cmd_book))
     app.add_handler(CommandHandler("refresh", handlers.cmd_refresh))
     app.add_handler(CommandHandler("status", handlers.cmd_status))
+
+    # Inline-keyboard flow: a bare YouTube URL message (no slash command)
+    # triggers a reply with [Cheatsheet] [Book Notes] [Refresh] buttons.
+    # Registered AFTER the slash CommandHandlers so /cheat <url> stays the
+    # power-user path; this catches plain pasted links.
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.Regex(handlers.YOUTUBE_RE),
+        handlers.on_youtube_link,
+    ))
+    app.add_handler(CallbackQueryHandler(
+        handlers.on_choice_callback, pattern=r"^gen:"
+    ))
 
     print("[bot] polling for updates...")
     app.run_polling(drop_pending_updates=True)
