@@ -233,6 +233,24 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
     raise RuntimeError(f"Groq authoring failed after 3 attempts: {last_err}")
 
 
+class ClaudeCodeAuthError(RuntimeError):
+    """Raised when claude CLI fails specifically with an auth error (HTTP 401
+    / invalid credentials). Distinct so the caller can choose to fall back to
+    a different provider instead of failing the whole job."""
+
+
+def _is_claude_auth_error(stdout: str, stderr: str) -> bool:
+    """Heuristic: does this CLI failure look like an auth error rather than a
+    rate-limit / network / model issue? Cheap string match — the CLI's auth
+    failure message is very stable."""
+    blob = f"{stdout} {stderr}".lower()
+    return (
+        ("401" in blob and ("authenticate" in blob or "credentials" in blob))
+        or "invalid_api_key" in blob
+        or "invalid authentication" in blob
+    )
+
+
 def _author_claude_code(system: str, user: str, *, max_tokens: int = 8000,
                         cost_sink: Optional[dict] = None) -> str:
     """Invoke the Claude Code CLI in headless print mode.
@@ -245,6 +263,11 @@ def _author_claude_code(system: str, user: str, *, max_tokens: int = 8000,
     second waits 600s (10 min) — long enough to clear most Max-plan rate
     windows. Each attempt captures BOTH stdout and stderr so the surfaced
     error reveals whether it was a rate limit, auth issue, etc.
+
+    Auth errors short-circuit the retry loop and raise ``ClaudeCodeAuthError``
+    on the FIRST attempt — no point waiting 11 minutes for the OAuth token
+    to un-expire. The caller (``_author``) catches this and may fall back
+    to Groq.
     """
     import subprocess
     full_prompt = f"{system}\n\n---\n\n{user}"
@@ -276,8 +299,17 @@ def _author_claude_code(system: str, user: str, *, max_tokens: int = 8000,
             # Failure path — gather everything we have to surface upstream.
             stdout = (res.stdout or "").strip()
             stderr = (res.stderr or "").strip()
+            if _is_claude_auth_error(stdout, stderr):
+                # Fast-fail: retries won't help a dead OAuth token.
+                print(f"[author] claude CLI auth error (no retry): "
+                      f"stdout={stdout[:200]!r}", flush=True)
+                raise ClaudeCodeAuthError(
+                    f"Claude CLI auth failed: {stdout[:200]}"
+                )
             last_msg = (f"exit={res.returncode} "
                         f"stdout={stdout[:300]!r} stderr={stderr[:300]!r}")
+        except ClaudeCodeAuthError:
+            raise  # bubble up immediately, skip retry loop
         except subprocess.TimeoutExpired:
             last_msg = "timed out after 900s"
         except Exception as exc:
@@ -295,12 +327,40 @@ def _author_claude_code(system: str, user: str, *, max_tokens: int = 8000,
 
 def _author(system: str, user: str, *, max_tokens: int = 8000,
             cost_sink: Optional[dict] = None) -> str:
+    """Dispatch to the configured authoring provider.
+
+    For ``claude_code``: if the CLI raises ``ClaudeCodeAuthError`` (OAuth
+    token expired or refresh broken) AND ``GROQ_API_KEY`` is set, we
+    silently fall back to Groq Llama. The generation still succeeds, just
+    with lower-quality output for that one run. The fallback usage is
+    recorded in ``cost_sink`` (keys ``fallback_used`` and
+    ``fallback_reason``) so the caller can surface it to admins/logs.
+
+    Why fall back rather than fail: the typical failure mode is a 7-ish-day
+    OAuth token expiry on the bot host (see [project-cheatsheet-auth-workaround]).
+    A degraded result beats a dead service while a human re-runs ``claude
+    /login``. Set ``GROQ_API_KEY=''`` (or omit it) to opt out of fallback.
+    """
     if AUTHORING_PROVIDER == "groq":
         return _author_groq(system, user, max_tokens=max_tokens, cost_sink=cost_sink)
     if AUTHORING_PROVIDER == "claude_code":
-        return _author_claude_code(
-            system, user, max_tokens=max_tokens, cost_sink=cost_sink
-        )
+        try:
+            return _author_claude_code(
+                system, user, max_tokens=max_tokens, cost_sink=cost_sink
+            )
+        except ClaudeCodeAuthError as exc:
+            if GROQ_API_KEY:
+                print(
+                    f"[author] claude auth dead; falling back to groq: {exc}",
+                    flush=True,
+                )
+                if cost_sink is not None:
+                    cost_sink["fallback_used"] = "groq"
+                    cost_sink["fallback_reason"] = "claude_code_auth_error"
+                return _author_groq(
+                    system, user, max_tokens=max_tokens, cost_sink=cost_sink
+                )
+            raise  # no GROQ_API_KEY configured — let the error bubble
     raise NotImplementedError(
         f"AUTHORING_PROVIDER={AUTHORING_PROVIDER!r} not wired yet — switch to "
         "'groq' / 'claude_code' or extend bot/author.py"
