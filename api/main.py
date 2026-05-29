@@ -1317,12 +1317,20 @@ async def _run_job(job_id: str) -> None:
         if kind == "cheatsheet":
             await asyncio.to_thread(build_cheatsheet, md_path, pdf_path, meta["title"])
         else:
+            # image_base must be the PARENT of the frames/ dir, because the
+            # BOOK_SYSTEM prompt forces the LLM to write `![..](frames/<name>.jpg)`
+            # and make_image_flowable resolves to IMAGE_BASE / path. Passing the
+            # frames dir itself produced "frames/frames/<name>.jpg" lookups and
+            # `[missing image: ...]` placeholders in every book PDF — caught
+            # 2026-05-29 from a user-reported PDF. bot/worker.py already does
+            # the right thing (`cache.slot(video_id)`); only the API path was
+            # off-by-one.
             await asyncio.to_thread(
                 build_book,
                 md_path,
                 pdf_path,
                 meta["title"],
-                result["frames_dir"],
+                Path(result["frames_dir"]).parent,
                 None,
             )
 
