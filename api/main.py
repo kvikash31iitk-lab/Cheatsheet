@@ -289,44 +289,104 @@ async def _migrate_columns() -> None:
             print(f"[migrate] skip index {name}: {exc}")
 
 
-async def _recover_stuck_jobs() -> None:
-    """Mark long-stuck queued/running rows as error and auto-refund the user.
+# Tracks job IDs whose background `_run_job` coroutine is alive in THIS python
+# process. Added on `_run_job` entry, removed in its `finally`. Any DB row in
+# ``running``/``queued`` whose ID is NOT in this set has lost its task (server
+# restart, BackgroundTasks scheduling miss, etc.) and is a zombie that should
+# be flipped to ``error``. Without this we used to leave rows stuck at e.g.
+# 72% "Writing illustrated book..." indefinitely whenever a deploy restarted
+# the API mid-job — the polling browser sees the same stale state forever.
+_in_flight_jobs: set[str] = set()
 
-    Runs on every API boot. Any job left in ``queued``/``running`` for more
-    than 30 minutes is presumed orphaned (the previous process died mid-job),
-    so we flip it to ``error`` and credit back the paise we deducted up-front.
+
+async def _mark_stuck(s: AsyncSession, g: Any, *, reason: str) -> None:
+    """Flip a generation row to ``error`` and refund the wallet if paid.
+    Caller owns the session and commits."""
+    g.status = "error"
+    g.error_message = reason
+    g.completed_at = datetime.now(timezone.utc)
+    if g.cost_paise > 0 and not g.was_free:
+        user_row = await s.get(User, g.user_id)
+        if user_row:
+            user_row.wallet_balance_paise += g.cost_paise
+            s.add(
+                Transaction(
+                    user_id=user_row.id,
+                    kind="refund",
+                    amount_paise=g.cost_paise,
+                    generation_id=g.id,
+                    status="success",
+                    note=f"Auto-refund: {reason}",
+                )
+            )
+
+
+async def _recover_stuck_jobs() -> None:
+    """Startup recovery: flip ALL queued/running rows to error.
+
+    By definition, on startup no background tasks are running yet, so every
+    such row is a leftover from the previous process. No cutoff — we'd rather
+    surface a clean error to the user than leave the row dangling. Refunds
+    are issued automatically for paid jobs.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
     async with AsyncSessionLocal() as s:
         stuck = (
             await s.execute(
-                select(Generation)
-                .where(Generation.status.in_(("queued", "running")))
-                .where(Generation.created_at < cutoff)
+                select(Generation).where(Generation.status.in_(("queued", "running")))
             )
         ).scalars().all()
         if not stuck:
             return
         for g in stuck:
-            g.status = "error"
-            g.error_message = "Server restarted mid-job — auto-recovered"
-            g.completed_at = datetime.now(timezone.utc)
-            if g.cost_paise > 0 and not g.was_free:
-                user_row = await s.get(User, g.user_id)
-                if user_row:
-                    user_row.wallet_balance_paise += g.cost_paise
-                    s.add(
-                        Transaction(
-                            user_id=user_row.id,
-                            kind="refund",
-                            amount_paise=g.cost_paise,
-                            generation_id=g.id,
-                            status="success",
-                            note="Auto-refund: stuck job recovered on restart",
-                        )
-                    )
+            await _mark_stuck(
+                s, g, reason="Server restarted mid-job — re-submit to retry"
+            )
         await s.commit()
-        print(f"[recovery] reset {len(stuck)} stuck job(s)", flush=True)
+        print(f"[recovery] startup: reset {len(stuck)} stuck job(s)", flush=True)
+
+
+async def _periodic_orphan_sweep() -> None:
+    """Every 5 min, mark `running`/`queued` rows whose `_run_job` task is not
+    alive in this process. Catches the case where a job's coroutine dies
+    (uncaught exception in a low-level lib, OOM kill of a subprocess that
+    propagated up, etc.) without taking the whole API down — without this
+    the row would sit at status='running' until the next full restart.
+
+    Grace window: 60s. New jobs need a moment between the /api/generate
+    row-insert and the background task adding itself to _in_flight_jobs; we
+    don't want to scoop them up before they've had a chance to register.
+    """
+    GRACE_SEC = 60
+    INTERVAL_SEC = 300
+    while True:
+        try:
+            await asyncio.sleep(INTERVAL_SEC)
+            cutoff = datetime.now(timezone.utc) - timedelta(seconds=GRACE_SEC)
+            async with AsyncSessionLocal() as s:
+                candidates = (
+                    await s.execute(
+                        select(Generation)
+                        .where(Generation.status.in_(("queued", "running")))
+                        .where(Generation.created_at < cutoff)
+                    )
+                ).scalars().all()
+                orphans = [g for g in candidates if g.id not in _in_flight_jobs]
+                if not orphans:
+                    continue
+                for g in orphans:
+                    await _mark_stuck(
+                        s, g,
+                        reason="Background task died — re-submit to retry",
+                    )
+                await s.commit()
+                print(
+                    f"[recovery] periodic: reset {len(orphans)} orphan job(s)",
+                    flush=True,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover — never let the loop die
+            print(f"[recovery] periodic sweep error: {exc}", flush=True)
 
 
 @app.on_event("startup")
@@ -335,6 +395,8 @@ async def startup() -> None:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_columns()
     await _recover_stuck_jobs()
+    # Periodic orphan sweep — catches in-process task deaths between restarts.
+    asyncio.create_task(_periodic_orphan_sweep())
     # Seed the anonymous user for dev so /api/generate works without auth.
     async with AsyncSessionLocal() as s:
         result = await s.execute(select(User).where(User.email == ANON_USER_EMAIL))
@@ -1183,6 +1245,7 @@ def _user_id_for_job(s: Any, job_id: str) -> str | None:
 
 
 async def _run_job(job_id: str) -> None:
+    _in_flight_jobs.add(job_id)
     progress_state = {"p": 0.05, "step": "Starting"}
 
     def emit(step: str, p: float | None = None) -> None:
@@ -1410,6 +1473,12 @@ async def _run_job(job_id: str) -> None:
                 notify_chat_id,
                 f"*Generation failed* ✗\n`{short}`\n\nWallet auto-refunded if paid.",
             )
+    finally:
+        # Always deregister from the live-task set so the periodic orphan
+        # sweep knows this job's coroutine is done. Discard (not remove) so
+        # we don't blow up if the entry was already gone (e.g., early
+        # exception before we reached the try body).
+        _in_flight_jobs.discard(job_id)
 
 
 if __name__ == "__main__":
