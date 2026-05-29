@@ -119,6 +119,14 @@ EOF
 }
 
 write_full_conf() {
+  # NOTE 2026-05-29: the production cheetsheet.tech nginx config has diverged from
+  # this template — it adds www→canonical redirects, an old-domain redirect, and a
+  # critical `if ($http_host ~ "\.$")` trailing-dot normalisation that keeps OAuth
+  # PKCE working when users hit cheetsheet.tech. (with dot) instead of the bare
+  # hostname. See nginx/cheatsheet.conf in this repo for the canonical version.
+  # If you re-run this script on the live VPS, the manual additions will be
+  # clobbered and OAuth login will silently break on dotted-host visits — copy
+  # nginx/cheatsheet.conf onto $NGINX_CONF afterward to restore.
   cat > "$NGINX_CONF" <<EOF
 server {
     listen 80;
@@ -137,6 +145,9 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
 
     client_max_body_size 50M;
+
+    # Trailing-dot FQDN -> canonical (browsers scope cookies to literal Host header).
+    if (\$http_host ~ "\\.\$") { return 301 https://$DOMAIN\$request_uri; }
 
     location / {
         proxy_pass http://127.0.0.1:3000;
