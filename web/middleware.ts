@@ -53,9 +53,19 @@ export const config = {
   matcher: [
     /*
      * Run on everything except:
-     *  - _next/static, _next/image (Next internals)
-     *  - favicon.ico, robots.txt, etc.
+     *  - auth/*       — Auth.js's own handler routes. CRITICAL: this
+     *                   exclusion is the entire reason OAuth works at all.
+     *                   Without it, the middleware (Edge runtime) and the
+     *                   /auth/[...nextauth]/route.ts handler (Node runtime)
+     *                   BOTH process auth requests, each setting their own
+     *                   PKCE/state/csrf cookies derived with different
+     *                   runtime crypto. The cookies stomp each other and
+     *                   decryption fails with "pkceCodeVerifier value could
+     *                   not be parsed" on callback. See git log for the
+     *                   2026-05-29 debug session.
+     *  - _next/static, _next/image — Next internals
+     *  - favicon.ico, robots.txt   — static assets
      */
-    '/((?!_next/static|_next/image|favicon.ico|robots.txt).*)',
+    '/((?!auth/|_next/static|_next/image|favicon.ico|robots.txt).*)',
   ],
 };
