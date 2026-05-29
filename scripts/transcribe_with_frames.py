@@ -48,9 +48,18 @@ if sys.platform == "win32":
 # ============================================================================
 SCENE_THRESHOLD = 0.30
 FALLBACK_INTERVAL_S = 60
-FRAME_RESOLUTION = 720
+# Max width in pixels for an extracted frame. The scale filter caps at this
+# value via min(iw, FRAME_RESOLUTION) so we never *upscale* a low-res source
+# (which doesn't add real detail and just blurs). For 1080p YouTube tutorials
+# this gives a sharp 1280-wide frame that comfortably exceeds 200 DPI when
+# ReportLab embeds it at ~5 inches on A4.
+FRAME_RESOLUTION = 1280
 DEDUPE_HAMMING_THRESHOLD = 6
-JPEG_QUALITY = 4
+# ffmpeg `-q:v` for MJPEG: 1=visually lossless, 31=worst. 2 is the standard
+# "transparent quality" choice — no visible artifacts on text/UI screenshots
+# while keeping file size ~2x smaller than q=1. Was 4 (clearly lossy on code
+# editors / slide text).
+JPEG_QUALITY = 2
 
 CHUNK_SECONDS = 8 * 60
 INTER_CALL_DELAY = 15.0
@@ -189,7 +198,7 @@ def extract_scene_frames(video: Path, duration: float, frames_dir: Path,
         cmd = [
             "ffmpeg", "-hide_banner", "-y", "-i", str(video),
             "-vf", (f"select='gt(scene,{SCENE_THRESHOLD})',showinfo,"
-                    f"scale={FRAME_RESOLUTION}:-2"),
+                    f"scale='min(iw,{FRAME_RESOLUTION})':-2:flags=lanczos"),
             "-vsync", "vfr", "-q:v", str(JPEG_QUALITY),
             str(raw_dir / "scene_%05d.jpg"),
         ]
@@ -216,7 +225,7 @@ def extract_scene_frames(video: Path, duration: float, frames_dir: Path,
         fps = 1.0 / FALLBACK_INTERVAL_S
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(video),
-            "-vf", f"fps={fps},scale={FRAME_RESOLUTION}:-2",
+            "-vf", f"fps={fps},scale='min(iw,{FRAME_RESOLUTION})':-2:flags=lanczos",
             "-q:v", str(JPEG_QUALITY), str(raw_dir / "grid_%05d.jpg"),
         ]
         subprocess.run(cmd)
