@@ -233,22 +233,58 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
     raise RuntimeError(f"Groq authoring failed after 3 attempts: {last_err}")
 
 
-class ClaudeCodeAuthError(RuntimeError):
-    """Raised when claude CLI fails specifically with an auth error (HTTP 401
-    / invalid credentials). Distinct so the caller can choose to fall back to
-    a different provider instead of failing the whole job."""
+class ClaudeCodeUnrecoverableError(RuntimeError):
+    """Raised when claude CLI fails in a way that retrying inside the 11-minute
+    backoff window won't help — auth expired, quota hit, account suspended.
+    Distinct so ``_author`` can immediately fall back to Groq instead of
+    burning ~11 minutes on doomed retries."""
 
 
-def _is_claude_auth_error(stdout: str, stderr: str) -> bool:
-    """Heuristic: does this CLI failure look like an auth error rather than a
-    rate-limit / network / model issue? Cheap string match — the CLI's auth
-    failure message is very stable."""
+# Kept as an alias for backwards compatibility with any external code that
+# imported the old name. Internal callers should use the new one.
+ClaudeCodeAuthError = ClaudeCodeUnrecoverableError
+
+
+def _should_fallback_from_claude(stdout: str, stderr: str) -> bool:
+    """Heuristic: does this CLI failure look like a 'won't recover in 11 min'
+    error, where retrying with backoff is hopeless and we should fail fast +
+    fall back to Groq instead?
+
+    Covers two categories:
+      - **Auth errors** (HTTP 401, invalid credentials, missing token).
+        Retrying won't fix a dead OAuth token; only a human re-auth will.
+      - **Quota / rate-limit errors** (e.g. "You've hit your limit ·
+        resets 10:50pm (UTC)" on the Max plan). The reset is hours away;
+        the user's job needs an answer now, so the Groq backstop is better
+        than 11 min of doomed retries followed by a hard fail.
+
+    Genuine transient errors (network blip, brief 5xx, timeout) are
+    deliberately NOT caught here — the existing 60s+600s backoff loop is
+    the right behaviour for those.
+    """
     blob = f"{stdout} {stderr}".lower()
-    return (
+    # Auth-style failures
+    if (
         ("401" in blob and ("authenticate" in blob or "credentials" in blob))
         or "invalid_api_key" in blob
         or "invalid authentication" in blob
-    )
+    ):
+        return True
+    # Quota / usage-cap failures. The Max plan's message is very stable:
+    # "You've hit your limit · resets HH:MMpm (UTC)". Match on the most
+    # specific phrases first, then more general fallbacks.
+    if "hit your limit" in blob or "usage limit" in blob:
+        return True
+    if "rate limit" in blob and ("reset" in blob or "exceeded" in blob):
+        return True
+    if "quota" in blob and "exceeded" in blob:
+        return True
+    return False
+
+
+# Kept for callers that imported the old narrow predicate. New code should
+# use _should_fallback_from_claude.
+_is_claude_auth_error = _should_fallback_from_claude
 
 
 def _author_claude_code(system: str, user: str, *, max_tokens: int = 8000,
@@ -299,16 +335,18 @@ def _author_claude_code(system: str, user: str, *, max_tokens: int = 8000,
             # Failure path — gather everything we have to surface upstream.
             stdout = (res.stdout or "").strip()
             stderr = (res.stderr or "").strip()
-            if _is_claude_auth_error(stdout, stderr):
-                # Fast-fail: retries won't help a dead OAuth token.
-                print(f"[author] claude CLI auth error (no retry): "
+            if _should_fallback_from_claude(stdout, stderr):
+                # Fast-fail: retries inside the next 11 min won't help an
+                # expired OAuth token or a rate-limit window that resets
+                # hours away. Caller should fall back to Groq.
+                print(f"[author] claude CLI unrecoverable (no retry): "
                       f"stdout={stdout[:200]!r}", flush=True)
-                raise ClaudeCodeAuthError(
-                    f"Claude CLI auth failed: {stdout[:200]}"
+                raise ClaudeCodeUnrecoverableError(
+                    f"Claude CLI unrecoverable: {stdout[:200]}"
                 )
             last_msg = (f"exit={res.returncode} "
                         f"stdout={stdout[:300]!r} stderr={stderr[:300]!r}")
-        except ClaudeCodeAuthError:
+        except ClaudeCodeUnrecoverableError:
             raise  # bubble up immediately, skip retry loop
         except subprocess.TimeoutExpired:
             last_msg = "timed out after 900s"
@@ -348,15 +386,15 @@ def _author(system: str, user: str, *, max_tokens: int = 8000,
             return _author_claude_code(
                 system, user, max_tokens=max_tokens, cost_sink=cost_sink
             )
-        except ClaudeCodeAuthError as exc:
+        except ClaudeCodeUnrecoverableError as exc:
             if GROQ_API_KEY:
                 print(
-                    f"[author] claude auth dead; falling back to groq: {exc}",
+                    f"[author] claude unrecoverable; falling back to groq: {exc}",
                     flush=True,
                 )
                 if cost_sink is not None:
                     cost_sink["fallback_used"] = "groq"
-                    cost_sink["fallback_reason"] = "claude_code_auth_error"
+                    cost_sink["fallback_reason"] = "claude_code_unrecoverable"
                 return _author_groq(
                     system, user, max_tokens=max_tokens, cost_sink=cost_sink
                 )
