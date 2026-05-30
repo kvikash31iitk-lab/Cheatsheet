@@ -106,12 +106,12 @@ async def _enqueue(update: Update, fmt: str, refresh: bool = False) -> None:
     url = _extract_url(text)
     if not url:
         await msg.reply_text(
-            f"Usage: /{fmt} <youtube-url>", quote=True)
+            f"Usage: /{fmt} <youtube-url>", do_quote=True)
         return
     position = await _enqueue_url(update, fmt, url, refresh)
     if position > 1:
         await msg.reply_text(
-            f"Queued (position {position}).", quote=True)
+            f"Queued (position {position}).", do_quote=True)
 
 
 # === handlers ==============================================================
@@ -255,7 +255,7 @@ async def on_youtube_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         ],
     ])
     await msg.reply_text(
-        "Which format?", reply_markup=keyboard, quote=True)
+        "Which format?", reply_markup=keyboard, do_quote=True)
 
 
 async def on_choice_callback(update: Update,
