@@ -53,8 +53,15 @@ def main() -> None:
     # triggers a reply with [Cheatsheet] [Book Notes] [Refresh] buttons.
     # Registered AFTER the slash CommandHandlers so /cheat <url> stays the
     # power-user path; this catches plain pasted links.
+    # NOTE: We DO NOT pre-filter on filters.Regex(YOUTUBE_RE) here — the
+    # YouTube-URL check is done inside on_youtube_link itself. That way
+    # every non-command text message hits the handler (cheap), the
+    # handler logs what it saw, and we never silently drop an update
+    # because of an off-by-one in the filter regex. Without this we
+    # spent a deploy cycle debugging "the bot doesn't reply to bare
+    # URLs" without any logs to show what it was actually receiving.
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Regex(handlers.YOUTUBE_RE),
+        filters.TEXT & ~filters.COMMAND,
         handlers.on_youtube_link,
     ))
     app.add_handler(CallbackQueryHandler(

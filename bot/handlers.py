@@ -204,27 +204,43 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 # === inline-keyboard flow ===================================================
 
 async def on_youtube_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Triggered by any non-command message whose text contains a YouTube URL
-    (filter is configured in bot/main.py). Replies with three inline buttons
-    so the user can pick a format without typing a slash command.
+    """Triggered by any non-command text message in a whitelisted chat.
+    We do the YouTube-URL regex match inside the handler (not as a
+    MessageHandler filter) so that even non-matching messages produce a
+    debug-log line — that makes it possible to tell, after the fact,
+    whether (a) the message wasn't received, (b) was received but didn't
+    look like a YouTube URL, or (c) was processed normally. Cheap and
+    avoids the class of bugs where a filter silently swallows updates.
 
-    The video id is encoded into each button's ``callback_data`` so the bot
-    can survive a restart between the URL being posted and the user tapping
-    a button — there's no server-side state to lose.
+    Replies with three inline buttons so the user can pick a format
+    without typing a slash command. video id is encoded into each
+    button's ``callback_data`` so the bot can survive a restart between
+    the URL being posted and the user tapping a button — there's no
+    server-side state to lose.
     """
     if await _drop(update):
         return
     msg = update.effective_message
     if msg is None or not msg.text:
         return
-    m = YOUTUBE_RE.search(msg.text)
+    text = msg.text
+    print(
+        f"[on_youtube_link] chat={msg.chat_id} text={text[:120]!r}",
+        flush=True,
+    )
+    m = YOUTUBE_RE.search(text)
     if not m:
+        print("[on_youtube_link] no YouTube URL in message — ignoring",
+              flush=True)
         return
     url = m.group(0)
     id_match = _VIDEO_ID_RE.search(url)
     if not id_match:
-        return  # regex matched the URL shape but not the id — bail silently
+        print(f"[on_youtube_link] URL matched but no video id: {url!r}",
+              flush=True)
+        return
     vid = id_match.group(1)
+    print(f"[on_youtube_link] matched url={url!r} vid={vid!r}", flush=True)
 
     keyboard = InlineKeyboardMarkup([
         [
