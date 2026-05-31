@@ -427,6 +427,13 @@ def _extract_summary_block(md: str) -> tuple[str | None, str]:
     return summary, cleaned
 
 
+# Puppeteer config shipped in the repo — passes ``--no-sandbox`` so mmdc's
+# bundled Chromium starts when our VPS runs the bot as root (crbug.com/638180).
+# When the file is missing (older checkout / non-standard layout) we just skip
+# the ``-p`` flag and let mmdc use its defaults — fine on non-root systems.
+_MMDC_PUPPETEER_CONFIG = Path(__file__).resolve().parent / "mmdc-puppeteer.json"
+
+
 def _render_mermaid_blocks(md: str, out_dir: Path) -> str:
     """Replace ``` ```mermaid ``` `` fences with ``![caption](path.png)`` after
     rendering each block to a PNG via the `mmdc` CLI.
@@ -458,10 +465,13 @@ def _render_mermaid_blocks(md: str, out_dir: Path) -> str:
         in_file = out_dir / f"_mermaid_{idx}.mmd"
         out_file = out_dir / f"_mermaid_{idx}.png"
         in_file.write_text(src, encoding="utf-8")
+        cmd = [mmdc, "-i", str(in_file), "-o", str(out_file),
+               "-b", "white", "-w", "1400", "-H", "900"]
+        if _MMDC_PUPPETEER_CONFIG.exists():
+            cmd.extend(["-p", str(_MMDC_PUPPETEER_CONFIG)])
         try:
             subprocess.run(
-                [mmdc, "-i", str(in_file), "-o", str(out_file),
-                 "-b", "white", "-w", "1400", "-H", "900"],
+                cmd,
                 capture_output=True, text=True, timeout=90, check=True,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:

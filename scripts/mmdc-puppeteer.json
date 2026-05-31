@@ -1,0 +1,4 @@
+{
+  "_comment": "Puppeteer config passed to mmdc via the `-p` flag. `--no-sandbox` is required on the VPS where the service runs as root — Chromium refuses to start as root without it (crbug.com/638180). On a non-root system the flag is a harmless no-op (just disables the sandbox, fine for our use of rendering known-safe Mermaid input to PNG).",
+  "args": ["--no-sandbox", "--disable-setuid-sandbox"]
+}

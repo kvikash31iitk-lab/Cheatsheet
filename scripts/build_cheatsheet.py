@@ -198,6 +198,10 @@ def _extract_summary_block(md: str) -> tuple[str | None, str]:
     return m.group(1).strip(), md[:m.start()] + md[m.end():]
 
 
+# Puppeteer config — see build_illustrated_book.py for the rationale.
+_MMDC_PUPPETEER_CONFIG = Path(__file__).resolve().parent / "mmdc-puppeteer.json"
+
+
 def _render_mermaid_blocks(md: str, out_dir: Path) -> str:
     """Render `` ```mermaid``` `` fences to PNGs via `mmdc`, swap fence for
     image ref. No-op if no fences found or `mmdc` is missing."""
@@ -220,10 +224,13 @@ def _render_mermaid_blocks(md: str, out_dir: Path) -> str:
         in_file = out_dir / f"_mermaid_{idx}.mmd"
         out_file = out_dir / f"_mermaid_{idx}.png"
         in_file.write_text(src, encoding="utf-8")
+        cmd = [mmdc, "-i", str(in_file), "-o", str(out_file),
+               "-b", "white", "-w", "1200", "-H", "750"]
+        if _MMDC_PUPPETEER_CONFIG.exists():
+            cmd.extend(["-p", str(_MMDC_PUPPETEER_CONFIG)])
         try:
             subprocess.run(
-                [mmdc, "-i", str(in_file), "-o", str(out_file),
-                 "-b", "white", "-w", "1200", "-H", "750"],
+                cmd,
                 capture_output=True, text=True, timeout=90, check=True,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
