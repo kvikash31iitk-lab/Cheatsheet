@@ -180,7 +180,9 @@ The transcript chunk follows. Output bullets only.
 # When a snippet exists for both kinds, the text differs slightly so the LLM
 # adapts the formality to the document shape.
 
-_SNIPPET_SUMMARY = """SUMMARY CARD — At the VERY TOP of the document, BEFORE the `#` title line, insert an HTML-comment-delimited block exactly like this:
+_SNIPPET_SUMMARY = """SUMMARY CARD — Add an HTML-comment-delimited block at the start of the document. **This block IS part of the required output — emit it even though the base prompt asks for "no preamble". The renderer parses these HTML comments as machine-readable metadata, not as prose preamble.**
+
+Place it AT THE VERY TOP, BEFORE the `#` title line. Exact shape:
 
 <!--SUMMARY-->
 - **TL;DR:** <one sentence — what this is, in plain English>
@@ -192,7 +194,9 @@ _SNIPPET_SUMMARY = """SUMMARY CARD — At the VERY TOP of the document, BEFORE t
 - **Read time:** ~N min
 <!--/SUMMARY-->
 
-The PDF renderer extracts this block and prints it as a cover-page summary card; you do NOT need to repeat the same info in the body."""
+# <title — the existing skeleton continues here>
+
+The renderer extracts this block and prints it as a styled summary card; you do NOT need to repeat the same info inside the body."""
 
 _SNIPPET_TLDR_CHEAT = """TLDR CALLOUTS — At the START of each numbered `## N. ...` section, add a one-line takeaway as a callout:
 
@@ -239,7 +243,9 @@ flowchart TD
   B -->|No| D[Path 2]
 ```
 
-Placement: just before the Glossary (or at the very end if no Glossary). Keep node labels SHORT (≤4 words each) — long labels truncate in the rendered image. If the topic is purely narrative and has no decision points, output the mindmap only and skip the flowchart. The PDF renderer converts each fenced block to an embedded diagram image."""
+Placement: just before the Glossary (or at the very end if no Glossary). Emit the fenced blocks DIRECTLY — **do NOT add a `## Diagrams` (or similar) section heading above them.** The renderer auto-labels each diagram with its own caption ("Concept mindmap" / "Process flowchart"), and a standalone heading visually orphans on the previous page when the diagram pushes to a new one.
+
+Keep node labels SHORT (≤4 words each) — long labels truncate in the rendered image. If the topic is purely narrative and has no decision points, output the mindmap only and skip the flowchart. The PDF renderer converts each fenced block to an embedded diagram image."""
 
 CHEATSHEET_FEATURE_SNIPPETS: dict[str, str] = {
     "summary": _SNIPPET_SUMMARY,
@@ -292,8 +298,22 @@ INTER_CALL_DELAY_S = 8     # space requests so we stay under TPM windows
 
 # --- post-processing ---------------------------------------------------------
 
+_SUMMARY_BLOCK_RE = re.compile(
+    r"<!--\s*SUMMARY\s*-->.*?<!--\s*/SUMMARY\s*-->",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
 def strip_wrappers(md: str) -> str:
-    """Remove preamble lines and outer code fences the model sometimes adds."""
+    """Remove preamble lines and outer code fences the model sometimes adds.
+
+    The preamble-strip ("delete everything before the first ``#``") is great
+    for catching the "Here is the cheatsheet:" boilerplate models like to
+    add, but it also nukes the opt-in `<!--SUMMARY-->` block when the model
+    correctly places it above the title (per the SUMMARY snippet in
+    author.py). We pull that block out FIRST, run the preamble strip
+    normally, then re-prepend it so the PDF builder can still find it.
+    """
     md = md.strip()
     # Strip outer ```markdown ... ``` fence
     if md.startswith("```"):
@@ -303,13 +323,22 @@ def strip_wrappers(md: str) -> str:
         if md.endswith("```"):
             md = md[:-3]
         md = md.strip()
+    # Preserve the SUMMARY block across the preamble strip below.
+    summary_match = _SUMMARY_BLOCK_RE.search(md)
+    summary_block = ""
+    if summary_match:
+        summary_block = summary_match.group(0)
+        md = md[:summary_match.start()] + md[summary_match.end():]
     # Strip "Here is the..." preamble before the first heading
     lines = md.splitlines()
     for i, line in enumerate(lines):
         if line.startswith("#"):
             md = "\n".join(lines[i:])
             break
-    return md.replace("→", "->").strip() + "\n"
+    md = md.replace("→", "->").strip() + "\n"
+    if summary_block:
+        md = summary_block + "\n\n" + md
+    return md
 
 
 # --- providers ---------------------------------------------------------------
