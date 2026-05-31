@@ -110,6 +110,46 @@ if ! sudo -u "$BOT_USER" -i bash -c 'command -v claude' >/dev/null 2>&1; then
   fi
 fi
 
+# --- 5b. Mermaid CLI for the diagram PDF feature --------------------------
+# `mmdc` renders mermaid code-fence blocks (mindmaps + flowcharts) to PNG
+# so the PDF builders can embed them. Puppeteer's post-install pulls
+# Chromium into ~/.cache/puppeteer/ — so it MUST run as $BOT_USER (the
+# systemd units run as $BOT_USER, and Puppeteer looks up Chrome under
+# $HOME). Installing as root with `npm install -g` would land Chrome in
+# /root/.cache/puppeteer/ and mmdc would fail with "Could not find Chrome"
+# at runtime. (Burned a deploy cycle on this 2026-05-31 — leaving the note.)
+#
+# Chromium also pulls in a handful of shared libs that aren't part of the
+# base Ubuntu image (libnss3, libgbm1, etc.). Install those first so the
+# Chromium post-install download isn't dead-on-arrival.
+echo "==> installing Chromium shared libs (mmdc's bundled Chrome needs these)..."
+apt-get install -y -qq \
+  libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+  libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+  libgbm1 libpango-1.0-0 libcairo2 libasound2t64 2>/dev/null || \
+  apt-get install -y -qq \
+  libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+  libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+  libgbm1 libpango-1.0-0 libcairo2 libasound2  # fallback name on 22.04
+
+# The "is it installed?" check is the Chrome cache, NOT `command -v mmdc`:
+# a previous deploy may have installed mmdc system-wide as root (putting
+# Chrome in /root/.cache/puppeteer/), in which case mmdc IS on PATH for
+# everyone but botuser can't read root's home and Puppeteer fails to find
+# Chrome at runtime. The per-user cache dir is the actual marker of
+# "ready to render."
+if [[ ! -d "/home/$BOT_USER/.cache/puppeteer/chrome" ]]; then
+  echo "==> installing @mermaid-js/mermaid-cli via npm (per-user, for $BOT_USER)..."
+  sudo -u "$BOT_USER" -i bash -c 'npm install -g @mermaid-js/mermaid-cli'
+  # Verify Chrome actually landed. Surface a clear error here rather than
+  # have the first user-triggered render fail 6 hours from now.
+  if [[ ! -d "/home/$BOT_USER/.cache/puppeteer/chrome" ]]; then
+    echo "  WARN: Chrome cache STILL missing at /home/$BOT_USER/.cache/puppeteer/"
+    echo "  WARN: mmdc will fail at render time. Recover manually with:"
+    echo "    sudo -u $BOT_USER -i bash -c 'npx puppeteer browsers install chrome'"
+  fi
+fi
+
 # --- 6. The /watch skill (transcribe pipeline depends on it) --------------
 
 WATCH_DIR="/home/$BOT_USER/.claude/skills/watch"
@@ -131,7 +171,10 @@ TELEGRAM_BOT_TOKEN=
 WHITELISTED_GROUP_IDS=
 GROQ_API_KEY=
 AUTHORING_PROVIDER=claude_code
-AUTHORING_MODEL=llama-3.1-8b-instant
+# 70b-versatile has a 131K context window — needed for real transcripts.
+# The older 8b-instant default (6K TPM cap on the free tier) silently
+# fails on anything longer than ~15 minutes of audio with a 413.
+AUTHORING_MODEL=llama-3.3-70b-versatile
 WHISPER_BACKEND=groq
 DAILY_CAP_CHEATSHEETS=0
 DAILY_CAP_BOOKS=0
