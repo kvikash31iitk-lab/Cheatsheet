@@ -22,7 +22,10 @@ Usage:
 """
 from __future__ import annotations
 
+import io
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -74,6 +77,11 @@ RULE = colors.HexColor("#D5DAE0")
 PAGE_TINT = colors.HexColor("#FAFAF7")
 
 # Callout palette — left bar + light tint
+# Added in v3: `tldr` (forecast/preview at chapter start) and `q` (Q&A in the
+# self-test appendix). Picked deliberately distinct hues so the visual rhythm
+# of preview → content → recap stays legible: teal for forecast, orange for
+# in-section tips, blue for end-of-chapter revise, purple for the Q&A
+# appendix. Existing callouts are unchanged.
 CALLOUTS = {
     "def":     {"label": "DEFINITION", "bar": colors.HexColor("#3A6EA5"), "tint": colors.HexColor("#EAF1F8")},
     "example": {"label": "EXAMPLE",    "bar": colors.HexColor("#2E7D52"), "tint": colors.HexColor("#E8F2EC")},
@@ -81,6 +89,8 @@ CALLOUTS = {
     "warning": {"label": "WATCH OUT",  "bar": colors.HexColor("#B23A48"), "tint": colors.HexColor("#F8E7E9")},
     "note":    {"label": "NOTE",       "bar": colors.HexColor("#5A6172"), "tint": colors.HexColor("#F0F0EE")},
     "revise":  {"label": "REVISE IN 60 SECONDS", "bar": colors.HexColor("#3A6EA5"), "tint": colors.HexColor("#F4F1E6")},
+    "tldr":    {"label": "TL;DR",      "bar": colors.HexColor("#0D7377"), "tint": colors.HexColor("#E0F2F1")},
+    "q":       {"label": "QUESTION",   "bar": colors.HexColor("#7A4F8A"), "tint": colors.HexColor("#F1E8F5")},
 }
 
 
@@ -371,7 +381,228 @@ def make_ol(items):
     return out
 
 
+# === opt-in feature support ================================================
+# Everything below is gated by the ``features`` list passed to ``build()``.
+# When a feature flag is absent the helpers are simply not called and the
+# rendered PDF matches the pre-features output byte-for-byte. See
+# bot/cache.py::FEATURE_ORDER for the canonical flag list.
+
+# Summary card: extracted from a ``<!--SUMMARY-->...<!--/SUMMARY-->`` block
+# the LLM writes at the top of the markdown. We pull it out before the main
+# parser runs and render it as its own page right after the cover.
+SUMMARY_BLOCK_RE = re.compile(
+    r"<!--\s*SUMMARY\s*-->(.*?)<!--\s*/SUMMARY\s*-->",
+    re.DOTALL | re.IGNORECASE,
+)
+
+# Mermaid code fences. We match the whole fence (incl. backticks) so the
+# replacement can swap it for an `![Diagram](path)` image ref that the
+# existing image flowable handles.
+MERMAID_FENCE_RE = re.compile(
+    r"^```mermaid\s*\n(.*?)^```\s*$",
+    re.DOTALL | re.MULTILINE,
+)
+
+# Chapter titles for the index page. Matches the same shape the existing
+# parser uses to detect chapters (`## Chapter N — title` / `Chapter N - title`).
+CHAPTER_HEADING_RE = re.compile(
+    r"^##\s+(Chapter\s+\d+\s*[-—:.]\s*.+)$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _extract_summary_block(md: str) -> tuple[str | None, str]:
+    """Pull the `<!--SUMMARY-->` block out of the markdown.
+
+    Returns ``(summary_md, cleaned_md)``. ``summary_md`` is ``None`` if no
+    block was present — in that case the caller skips rendering a summary
+    page. Multiple blocks: only the first is honoured; the rest are left
+    in place (will show as raw HTML comments → invisible in the PDF).
+    """
+    m = SUMMARY_BLOCK_RE.search(md)
+    if not m:
+        return None, md
+    summary = m.group(1).strip()
+    cleaned = md[:m.start()] + md[m.end():]
+    return summary, cleaned
+
+
+def _render_mermaid_blocks(md: str, out_dir: Path) -> str:
+    """Replace ``` ```mermaid ``` `` fences with ``![caption](path.png)`` after
+    rendering each block to a PNG via the `mmdc` CLI.
+
+    Graceful degradation:
+      - If `mmdc` is not on PATH, every mermaid block is stripped (the PDF
+        still builds, just without diagrams). A warning is logged.
+      - If a specific block fails to render (bad syntax / Chromium crash),
+        that one block is stripped; the rest still render.
+    Either way, the PDF build is never killed by a diagram problem.
+    """
+    if not MERMAID_FENCE_RE.search(md):
+        return md  # no diagrams in this document — nothing to do
+    mmdc = shutil.which("mmdc")
+    if not mmdc:
+        print("[mermaid] WARN: `mmdc` not on PATH; stripping mermaid blocks.",
+              flush=True)
+        return MERMAID_FENCE_RE.sub("", md)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    counter = {"n": 0}
+
+    def _repl(m: re.Match) -> str:
+        counter["n"] += 1
+        idx = counter["n"]
+        src = m.group(1).strip()
+        if not src:
+            return ""
+        in_file = out_dir / f"_mermaid_{idx}.mmd"
+        out_file = out_dir / f"_mermaid_{idx}.png"
+        in_file.write_text(src, encoding="utf-8")
+        try:
+            subprocess.run(
+                [mmdc, "-i", str(in_file), "-o", str(out_file),
+                 "-b", "white", "-w", "1400", "-H", "900"],
+                capture_output=True, text=True, timeout=90, check=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            stderr = getattr(exc, "stderr", "") or ""
+            print(f"[mermaid] block {idx} render failed; dropping. "
+                  f"stderr={stderr[:200]!r}", flush=True)
+            return ""
+        # Pick a caption from the first non-empty line so the figure has
+        # *some* labelling even though the LLM doesn't write one.
+        first = next((l.strip() for l in src.splitlines() if l.strip()), "")
+        if first.lower().startswith("mindmap"):
+            caption = "Concept mindmap"
+        elif first.lower().startswith("flowchart") or first.lower().startswith("graph"):
+            caption = "Process flowchart"
+        elif first.lower().startswith("sequencediagram"):
+            caption = "Sequence diagram"
+        else:
+            caption = "Diagram"
+        # IMAGE_RE expects an absolute path or a path resolvable against
+        # IMAGE_BASE; absolute is unambiguous here.
+        return f"\n\n![{caption}]({out_file.resolve().as_posix()})\n\n"
+
+    return MERMAID_FENCE_RE.sub(_repl, md)
+
+
+def _extract_chapter_titles(md: str) -> list[str]:
+    """Return the list of chapter heading strings in document order."""
+    return [m.strip() for m in CHAPTER_HEADING_RE.findall(md)]
+
+
+def _make_qr_image_reader(url: str, *, box: int = 8, border: int = 2):
+    """Render a QR code PNG for ``url`` and return an in-memory
+    ``ImageReader`` ReportLab can draw. Returns ``None`` if the ``qrcode``
+    lib isn't installed (graceful no-op so the build never breaks)."""
+    try:
+        import qrcode  # type: ignore
+        from reportlab.lib.utils import ImageReader
+    except ImportError:
+        print("[qr] WARN: `qrcode` lib not installed; skipping QR code.",
+              flush=True)
+        return None
+    qr = qrcode.QRCode(box_size=box, border=border)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="#1A1F36", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return ImageReader(buf)
+
+
+# --- new flowable factories -------------------------------------------------
+
+def make_summary_card(summary_md: str) -> list:
+    """Render the extracted SUMMARY block as a styled card.
+
+    The LLM writes free-form markdown inside the block; we re-parse it with
+    the same `parse_blocks` so bullets, bold, etc. all behave naturally,
+    then wrap the whole thing in a tinted Table for a "card" look.
+    """
+    inner_styles_body = ParagraphStyle(
+        "SumBody", parent=BODY, fontSize=11.5, leading=16,
+        textColor=INK, spaceAfter=4, alignment=TA_LEFT,
+    )
+    inner_bullet = ParagraphStyle(
+        "SumBullet", parent=inner_styles_body, leftIndent=14,
+        firstLineIndent=-12, spaceAfter=3,
+    )
+    label = Paragraph(
+        "AT A GLANCE",
+        ParagraphStyle("SumLabel", parent=CO_LABEL,
+                       textColor=colors.white, fontSize=9, leading=12),
+    )
+    body_flowables: list = []
+    for k, p in parse_blocks(summary_md):
+        if k == "p":
+            body_flowables.append(Paragraph(inline(p), inner_styles_body))
+        elif k == "ul":
+            for it in p:
+                body_flowables.append(Paragraph(
+                    f'<font color="{ACCENT_HEX}"><b>&#9642;</b></font>'
+                    f'&nbsp;&nbsp;{inline(it)}', inner_bullet))
+        elif k == "ol":
+            for i, it in enumerate(p, 1):
+                body_flowables.append(Paragraph(
+                    f'<b><font color="{ACCENT_HEX}">{i}.</font></b>'
+                    f'&nbsp;&nbsp;{inline(it)}', inner_bullet))
+        # quotes / tables / etc. inside a summary card don't really make
+        # sense; if the LLM emits one we just skip it rather than over-engineer
+
+    rows = [[label]] + [[fl] for fl in body_flowables]
+    card = Table(rows, colWidths=[BODY_W - 0.4 * cm])
+    card.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#F7F9FC")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+        ("TOPPADDING", (0, 0), (-1, 0), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
+        ("TOPPADDING", (0, 1), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 10),
+        ("BOX", (0, 0), (-1, -1), 0.5, RULE),
+    ]))
+    return [Spacer(1, 6), KeepTogether(card), Spacer(1, 12)]
+
+
+def make_chapter_index(chapters: list[str]) -> list:
+    """Render a simple chapter listing (no page numbers; ReportLab doesn't
+    expose them at flow time without a TableOfContents pass and that's more
+    complexity than this feature deserves)."""
+    if not chapters:
+        return []
+    out: list = [
+        PageBreak(),
+        Paragraph("CONTENTS", CHAP_LABEL),
+        Paragraph("Chapter Index", H1),
+        Spacer(1, 8),
+    ]
+    item_style = ParagraphStyle(
+        "ChapIdx", parent=BODY, fontSize=12, leading=18, spaceAfter=6,
+        alignment=TA_LEFT, leftIndent=4,
+    )
+    for ch in chapters:
+        out.append(Paragraph(
+            f'<font color="{HIGHLIGHT_HEX}">&#9642;</font>&nbsp;&nbsp;'
+            f'{inline(ch)}',
+            item_style,
+        ))
+    return out
+
+
 # --- page templates ---------------------------------------------------------
+
+# Set by ``build()`` when the ``chapters`` feature is on AND a source_url
+# was passed in. The cover_page draw callback reads these as globals because
+# ReportLab's PageTemplate callback signature is fixed at (canv, doc) and
+# can't accept arbitrary extras. Resetting to defaults at the top of build()
+# keeps successive runs in the same Python process clean.
+SHOW_QR: bool = False
+SOURCE_URL: str | None = None
+
 
 def cover_page(canv, doc):
     canv.saveState()
@@ -384,6 +615,21 @@ def cover_page(canv, doc):
     canv.setFillColor(MUTED)
     canv.setFont("Helvetica-Oblique", 9)
     canv.drawCentredString(PAGE_W / 2, 0.9 * cm, COVER_FOOTER)
+
+    # Optional QR code linking back to the source video — opt-in via the
+    # ``chapters`` feature. Placed in the top-right corner where it doesn't
+    # fight with the centred title block below the top accent bar.
+    if SHOW_QR and SOURCE_URL:
+        qr = _make_qr_image_reader(SOURCE_URL)
+        if qr is not None:
+            size = 2.4 * cm
+            x = PAGE_W - 2.2 * cm - size
+            y = PAGE_H - 1.8 * cm - size - 0.4 * cm
+            canv.drawImage(qr, x, y, width=size, height=size, mask="auto")
+            canv.setFillColor(MUTED)
+            canv.setFont("Helvetica", 7)
+            canv.drawCentredString(x + size / 2, y - 0.32 * cm,
+                                   "scan for the source video")
     canv.restoreState()
 
 
@@ -462,9 +708,25 @@ def render_cover_page(story, title, subtitle):
     story.append(PageBreak())
 
 
-def render(md: str):
+def render(md: str, *, summary_md: str | None = None,
+           chapter_titles: list[str] | None = None):
+    """Build the flowable list. New (opt-in) kwargs:
+
+    * ``summary_md`` — if non-None, inserted as a styled card on its own
+      page right after the cover (and before any chapter index).
+    * ``chapter_titles`` — if a non-empty list, inserted as a Chapter Index
+      page right after the summary card (or after the cover if no summary).
+    """
     story: list = []
     render_cover_page(story, TITLE, SUBTITLE)
+
+    if summary_md:
+        story.append(Paragraph("OVERVIEW", CHAP_LABEL))
+        story.append(Paragraph("Summary at a glance", H1))
+        story.extend(make_summary_card(summary_md))
+
+    if chapter_titles:
+        story.extend(make_chapter_index(chapter_titles))
 
     blocks = list(parse_blocks(md))
     n, idx = len(blocks), 0
@@ -480,9 +742,23 @@ def render(md: str):
 
 def build(src: Path | None = None, out: Path | None = None,
           title: str | None = None, image_base: Path | None = None,
-          subtitle: str | None = None) -> Path:
-    """Render the illustrated book. Override SRC/OUT/TITLE/IMAGE_BASE per call."""
-    global IMAGE_BASE, TITLE, SUBTITLE
+          subtitle: str | None = None,
+          features: list[str] | None = None,
+          source_url: str | None = None) -> Path:
+    """Render the illustrated book.
+
+    ``features`` — opt-in PDF enhancements. None / [] reproduces the
+    pre-features PDF byte-for-byte. Supported flags:
+      - ``summary``  → extract `<!--SUMMARY-->` block, render as a cover card
+      - ``mermaid``  → render `` ```mermaid``` `` code fences via `mmdc` to PNG
+      - ``chapters`` → add Chapter Index page + QR code on cover (uses ``source_url``)
+      - ``tldr`` / ``qna`` → handled inside the existing markdown parser via
+        the two new callout types (no plumbing needed here)
+
+    ``source_url`` — the YouTube URL. Only used by the QR-code half of the
+    ``chapters`` feature.
+    """
+    global IMAGE_BASE, TITLE, SUBTITLE, SHOW_QR, SOURCE_URL
     src = Path(src) if src else SRC
     out = Path(out) if out else OUT
     if title:
@@ -491,9 +767,32 @@ def build(src: Path | None = None, out: Path | None = None,
         SUBTITLE = subtitle
     if image_base:
         IMAGE_BASE = Path(image_base)
+    feats = set(features or ())
+
+    # Cover-page QR is opt-in via the `chapters` feature. Reset on every
+    # build() so a feature-enabled run followed by a no-feature run in the
+    # same process doesn't leak state.
+    SHOW_QR = bool(source_url) and "chapters" in feats
+    SOURCE_URL = source_url
 
     md = src.read_text(encoding="utf-8")
-    story = render(md)
+
+    # --- preprocess for features -------------------------------------------
+    summary_md: str | None = None
+    if "summary" in feats:
+        summary_md, md = _extract_summary_block(md)
+
+    if "mermaid" in feats:
+        # Render mermaid blocks BEFORE chapter extraction so the LLM hasn't
+        # buried a chapter heading inside a fenced block by mistake. Diagrams
+        # are written next to the output PDF in a sibling _diagrams/ dir.
+        md = _render_mermaid_blocks(md, out.parent / "_diagrams")
+
+    chapter_titles: list[str] | None = None
+    if "chapters" in feats:
+        chapter_titles = _extract_chapter_titles(md)
+
+    story = render(md, summary_md=summary_md, chapter_titles=chapter_titles)
 
     doc = BaseDocTemplate(
         str(out), pagesize=A4,

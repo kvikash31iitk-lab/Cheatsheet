@@ -27,7 +27,83 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 from .config import WHITELISTED_GROUP_IDS
-from . import worker
+from . import cache, worker
+
+
+# === feature-toggle encoding ===============================================
+# The opt-in PDF features are exposed in the bot as a second-step inline
+# keyboard. Telegram caps callback_data at 64 bytes, so we encode the
+# selection as a bitmask (one bit per feature in cache.FEATURE_ORDER) and
+# pack it into the callback string as a hex digit. With 5 features we fit
+# easily — worst-case callback_data ends up around 25 bytes.
+#
+# Wire format (all prefixed with `gen:` so the existing CallbackQueryHandler
+# pattern still catches them):
+#   gen:cheat:<vid>                — open toggle screen for cheat
+#   gen:book:<vid>                 — open toggle screen for book
+#   gen:rcheat:<vid>               — open toggle screen for cheat + refresh
+#   gen:rbook:<vid>                — open toggle screen for book + refresh
+#   gen:tog:<fmt>:<vid>:<mask>:<b> — flip bit <b> in <mask>
+#   gen:go:<fmt>:<vid>:<mask>      — submit with the decoded features
+#
+# <fmt> is a 1-2 char code so the callback data stays under 64B:
+#   c = cheat, cr = cheat+refresh, b = book, br = book+refresh
+_FMT_CODE: dict[tuple[str, bool], str] = {
+    ("cheat", False): "c",
+    ("cheat", True):  "cr",
+    ("book",  False): "b",
+    ("book",  True):  "br",
+}
+_CODE_FMT: dict[str, tuple[str, bool]] = {v: k for k, v in _FMT_CODE.items()}
+
+# Short labels for the toggle buttons — must stay short so the keyboard
+# fits Telegram's narrow rendering on mobile (target ≤16 chars total
+# including the ✅/⬜ icon).
+_FEATURE_LABELS: dict[str, str] = {
+    "summary":  "Summary",
+    "tldr":     "TL;DRs",
+    "qna":      "Self-Test",
+    "mermaid":  "Diagrams",
+    "chapters": "Index+QR",
+}
+
+
+def _features_from_mask(mask: int) -> list[str]:
+    """Decode a bitmask into the canonical feature list."""
+    return [f for i, f in enumerate(cache.FEATURE_ORDER) if mask & (1 << i)]
+
+
+def _toggle_keyboard(fmt_code: str, vid: str, mask: int) -> InlineKeyboardMarkup:
+    """Render the feature-toggle keyboard. Each feature gets a ✅/⬜ button
+    that flips its bit; a final "Generate" button submits the current mask.
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for bit, feat in enumerate(cache.FEATURE_ORDER):
+        on = bool(mask & (1 << bit))
+        icon = "✅" if on else "⬜"
+        label = _FEATURE_LABELS.get(feat, feat)
+        row.append(InlineKeyboardButton(
+            f"{icon} {label}",
+            callback_data=f"gen:tog:{fmt_code}:{vid}:{mask:x}:{bit}",
+        ))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+
+    n_on = bin(mask).count("1")
+    if n_on == 0:
+        gen_label = "🚀 Generate (no extras)"
+    elif n_on == 1:
+        gen_label = "🚀 Generate (1 extra)"
+    else:
+        gen_label = f"🚀 Generate ({n_on} extras)"
+    rows.append([InlineKeyboardButton(
+        gen_label,
+        callback_data=f"gen:go:{fmt_code}:{vid}:{mask:x}",
+    )])
+    return InlineKeyboardMarkup(rows)
 
 URL_RE = re.compile(r"https?://\S+")
 
@@ -76,10 +152,16 @@ async def _drop(update: Update) -> bool:
 
 
 async def _enqueue_url(update: Update, fmt: str, url: str,
-                       refresh: bool) -> int:
+                       refresh: bool,
+                       features: list[str] | None = None) -> int:
     """Build a Job for ``url``/``fmt`` and put it on the worker queue.
     Returns the 1-based queue position. Shared by every entry point
-    (slash commands AND the inline-keyboard callback)."""
+    (slash commands AND the inline-keyboard callback).
+
+    ``features`` — opt-in PDF enhancements. None / [] = legacy PDF (the
+    default for slash commands, since those have no toggle UI). The inline
+    multi-step button flow passes a populated list.
+    """
     user = update.effective_user
     chat = update.effective_chat
     job = worker.Job(
@@ -89,6 +171,7 @@ async def _enqueue_url(update: Update, fmt: str, url: str,
         url=url,
         fmt=fmt,
         refresh=refresh,
+        features=list(features) if features else [],
     )
     return await worker.queue.put(job)
 
@@ -261,13 +344,19 @@ async def on_youtube_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 async def on_choice_callback(update: Update,
                              ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle taps on the inline-keyboard buttons we emit from
-    :func:`on_youtube_link`. callback_data shape: ``gen:<action>:<video_id>``.
+    :func:`on_youtube_link`. Dispatches by action prefix on a ``gen:``-
+    prefixed callback_data — see the wire-format comment above
+    ``_FMT_CODE`` for the full schema.
 
-    Actions:
-      cheat / book   — enqueue that format, fresh from cache
-      refresh        — re-prompt the user for format, but mark the job to
-                       bust the cache (turns into rcheat/rbook)
-      rcheat / rbook — same as cheat/book but refresh=True
+    Three logical flows:
+
+    1. **Format pick** (``cheat`` / ``book`` / ``refresh`` / ``rcheat`` /
+       ``rbook``) — opens the feature-toggle screen (or, for plain
+       ``refresh``, the cheat-vs-book sub-prompt first).
+    2. **Toggle a bit** (``tog``) — flips a single feature bit and re-
+       renders the same keyboard with the new state.
+    3. **Submit** (``go``) — decodes the bitmask into a feature list and
+       enqueues the job.
     """
     q = update.callback_query
     if q is None or q.message is None:
@@ -276,17 +365,85 @@ async def on_choice_callback(update: Update,
         await q.answer("Not authorised here.", show_alert=False)
         return
     data = q.data or ""
-    try:
-        _prefix, action, vid = data.split(":", 2)
-    except ValueError:
+    parts = data.split(":")
+    if len(parts) < 3 or parts[0] != "gen":
         await q.answer()
         return
-    if _prefix != "gen" or not vid:
-        await q.answer()
-        return
-    url = f"https://youtu.be/{vid}"
+    action = parts[1]
 
+    # --- action: tog (flip a feature bit) -----------------------------------
+    if action == "tog":
+        # gen:tog:<fmt_code>:<vid>:<mask_hex>:<bit>
+        if len(parts) != 6:
+            await q.answer(); return
+        _, _, fmt_code, vid, mask_hex, bit_str = parts
+        if fmt_code not in _CODE_FMT or not vid:
+            await q.answer(); return
+        try:
+            mask = int(mask_hex, 16)
+            bit = int(bit_str)
+        except ValueError:
+            await q.answer(); return
+        if not (0 <= bit < len(cache.FEATURE_ORDER)):
+            await q.answer(); return
+        new_mask = mask ^ (1 << bit)
+        try:
+            await q.edit_message_reply_markup(
+                reply_markup=_toggle_keyboard(fmt_code, vid, new_mask))
+        except Exception:
+            # Same markup / message too old / network — drop quietly so a
+            # double-tap doesn't surface a scary error.
+            pass
+        await q.answer()
+        return
+
+    # --- action: go (submit) ------------------------------------------------
+    if action == "go":
+        # gen:go:<fmt_code>:<vid>:<mask_hex>
+        if len(parts) != 5:
+            await q.answer(); return
+        _, _, fmt_code, vid, mask_hex = parts
+        pick = _CODE_FMT.get(fmt_code)
+        if pick is None or not vid:
+            await q.answer(); return
+        fmt, refresh = pick
+        try:
+            mask = int(mask_hex, 16)
+        except ValueError:
+            await q.answer(); return
+        url = f"https://youtu.be/{vid}"
+        features = _features_from_mask(mask)
+
+        position = await _enqueue_url(update, fmt, url, refresh, features=features)
+        await q.answer(
+            f"Queued · {fmt}{' · refresh' if refresh else ''}"
+            + (f" · {len(features)} extras" if features else ""))
+
+        # Replace the keyboard with a one-line confirmation so the chat
+        # history reads naturally and the buttons can't be re-tapped.
+        label = "Cheatsheet" if fmt == "cheat" else "Book Notes"
+        suffix = " (rebuild)" if refresh else ""
+        body = f"→ {label}{suffix}"
+        if features:
+            extras = ", ".join(_FEATURE_LABELS.get(f, f).lower() for f in features)
+            body += f"\nExtras: {extras}"
+        if position > 1:
+            body += f"\nQueue position: {position}"
+        try:
+            await q.edit_message_text(body)
+        except Exception:
+            pass
+        return
+
+    # --- action: refresh sub-prompt -----------------------------------------
+    # Reaches here only for the bare "↻ Refresh" button that asks the user
+    # which kind of rebuild they want before opening the toggle screen.
     if action == "refresh":
+        if len(parts) != 3:
+            await q.answer(); return
+        vid = parts[2]
+        if not vid:
+            await q.answer(); return
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
@@ -302,6 +459,9 @@ async def on_choice_callback(update: Update,
             "Force fresh rebuild — which format?", reply_markup=keyboard)
         return
 
+    # --- action: cheat / book / rcheat / rbook (open toggle screen) ---------
+    # Decode (fmt, refresh) from the action verb, then render the feature
+    # toggle keyboard with an empty mask (all features off — the default).
     fmt_map = {
         "cheat":  ("cheat", False),
         "book":   ("book",  False),
@@ -312,21 +472,26 @@ async def on_choice_callback(update: Update,
     if pick is None:
         await q.answer("Unknown choice", show_alert=False)
         return
+    if len(parts) != 3:
+        await q.answer(); return
+    vid = parts[2]
+    if not vid:
+        await q.answer(); return
     fmt, refresh = pick
+    fmt_code = _FMT_CODE[(fmt, refresh)]
 
-    position = await _enqueue_url(update, fmt, url, refresh)
-    await q.answer(f"Queued · {fmt}{' · refresh' if refresh else ''}")
-
-    # Wipe the keyboard from the prompt and replace it with a record of
-    # what was chosen — so the chat history reads naturally and the buttons
-    # can't be tapped a second time.
     label = "Cheatsheet" if fmt == "cheat" else "Book Notes"
     suffix = " (rebuild)" if refresh else ""
-    body = f"→ {label}{suffix}"
-    if position > 1:
-        body += f"\nQueue position: {position}"
+    prompt = (
+        f"<b>{label}{suffix}</b> — pick any extras then tap Generate.\n"
+        "All extras start OFF (default = the bare PDF)."
+    )
+    await q.answer()
     try:
-        await q.edit_message_text(body)
+        await q.edit_message_text(
+            prompt,
+            reply_markup=_toggle_keyboard(fmt_code, vid, 0),
+            parse_mode="HTML",
+        )
     except Exception:
-        # Same content / unchanged markup / message too old — ignore.
         pass

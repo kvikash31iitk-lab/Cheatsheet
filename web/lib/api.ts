@@ -1,5 +1,17 @@
 export type JobKind = 'cheatsheet' | 'book';
 
+// Opt-in PDF enhancements selected on the generate form. Each flag drives a
+// piece of the prompt + a piece of the PDF builder — see bot/cache.py and
+// bot/author.py for the full taxonomy. Keep this union in sync with
+// FEATURE_ORDER on the backend; extra/unknown values are silently dropped
+// server-side so this is safe to extend.
+export type FeatureFlag =
+  | 'summary'    // cover-page summary card
+  | 'tldr'       // `> [!tldr]` callouts at the start of each section
+  | 'qna'        // `## Self-Test` appendix with `> [!q]` Q&A callouts
+  | 'mermaid'    // mindmap + flowchart pages (rendered via mmdc)
+  | 'chapters';  // chapter index page (book) / QR code (both)
+
 export type JobStatus =
   | { state: 'queued'; position?: number }
   | { state: 'running'; step: string; progress: number }
@@ -18,16 +30,21 @@ export type Job = {
   id: string;
   kind: JobKind;
   url: string;
+  features?: FeatureFlag[];
   created_at: string;
   status: JobStatus;
   meta?: JobMeta;
 };
 
-export async function createJob(url: string, kind: JobKind): Promise<{ id: string }> {
+export async function createJob(
+  url: string,
+  kind: JobKind,
+  features: FeatureFlag[] = [],
+): Promise<{ id: string }> {
   const r = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ url, kind }),
+    body: JSON.stringify({ url, kind, features }),
   });
   if (!r.ok) throw new Error(`generate failed: ${r.status} ${await r.text()}`);
   return r.json();

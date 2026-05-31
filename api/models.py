@@ -150,6 +150,13 @@ class Generation(Base):
     markdown: Mapped[Optional[str]] = mapped_column(Text)
     error_message: Mapped[Optional[str]] = mapped_column(Text)
 
+    # Opt-in PDF enhancements selected at submit time. JSON-encoded list of
+    # short flag strings — currently one of: "summary", "tldr", "qna",
+    # "mermaid", "chapters". NULL / "[]" / missing = no enhancements (the
+    # legacy / default PDF). Cache key includes a hash of this so the same
+    # URL with different feature sets stores as separate PDFs.
+    features: Mapped[Optional[str]] = mapped_column(Text)
+
     # Billing
     cost_paise: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     was_free: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

@@ -5,7 +5,22 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { AppBar } from '@/components/app-bar';
 import { Btn, Tag } from '@/components/ui';
 import { Ic } from '@/components/icons';
-import { createJob, getPreview, getMe, type JobKind, type Preview, type Me } from '@/lib/api';
+import { createJob, getPreview, getMe, type JobKind, type Preview, type Me, type FeatureFlag } from '@/lib/api';
+
+// Tile metadata for the optional-features section. Order matches the
+// backend's FEATURE_ORDER so the UI reads top-to-bottom in the same shape
+// the cache key hashes. Keep flag values literal so TypeScript narrows.
+const FEATURE_TILES: ReadonlyArray<{
+  flag: FeatureFlag;
+  title: string;
+  sub: string;
+}> = [
+  { flag: 'summary', title: 'Summary card',     sub: 'Cover-page TL;DR + 3 takeaways + difficulty.' },
+  { flag: 'tldr',    title: 'Section TL;DRs',   sub: 'A one-line preview at the start of each section.' },
+  { flag: 'qna',     title: 'Self-Test',        sub: '5–8 review Q&A appended at the end.' },
+  { flag: 'mermaid', title: 'Mindmap & flow',   sub: 'Auto-generated diagram pages from the topic.' },
+  { flag: 'chapters',title: 'Index + QR',       sub: 'Chapter index page and a QR back to the video.' },
+];
 
 const YT_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)[\w-]{11}/;
 
@@ -41,6 +56,18 @@ function GenerateForm() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
+  // Opt-in PDF features. All OFF by default — user explicitly enables
+  // what they want per generation. State stored as a Set internally for
+  // O(1) lookups and ordering-independent equality; serialized to an
+  // array when submitting so the JSON wire format stays simple.
+  const [features, setFeatures] = useState<Set<FeatureFlag>>(new Set());
+  const toggleFeature = (flag: FeatureFlag) =>
+    setFeatures((prev) => {
+      const next = new Set(prev);
+      if (next.has(flag)) next.delete(flag);
+      else next.add(flag);
+      return next;
+    });
 
   useEffect(() => {
     getMe().then(setMe).catch(() => {});
@@ -86,7 +113,7 @@ function GenerateForm() {
     setSubmitting(true);
     setError(null);
     try {
-      const { id } = await createJob(url, kind);
+      const { id } = await createJob(url, kind, Array.from(features));
       router.push(`/generate/${id}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -325,6 +352,33 @@ function GenerateForm() {
           />
         </div>
 
+        {/* Optional PDF features — all start OFF (no extra Claude tokens,
+            no new failure modes). Each toggle adds one piece of content to
+            the resulting PDF; cache key includes the feature set, so the
+            same URL with different toggles caches separately. */}
+        <label
+          style={{
+            fontSize: 12.5,
+            fontWeight: 500,
+            color: 'var(--c-ink-2)',
+            marginBottom: 8,
+            display: 'block',
+          }}
+        >
+          Optional features <span style={{ color: 'var(--c-ink-3)', fontWeight: 400 }}>(all off by default)</span>
+        </label>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 28 }}>
+          {FEATURE_TILES.map((t) => (
+            <FeatureTile
+              key={t.flag}
+              enabled={features.has(t.flag)}
+              onToggle={() => toggleFeature(t.flag)}
+              title={t.title}
+              sub={t.sub}
+            />
+          ))}
+        </div>
+
         {error && (
           <div
             style={{
@@ -433,6 +487,88 @@ function formatDuration(s: number): string {
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
+
+function FeatureTile({
+  enabled,
+  onToggle,
+  title,
+  sub,
+}: {
+  enabled: boolean;
+  onToggle: () => void;
+  title: string;
+  sub: string;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      aria-pressed={enabled}
+      style={{
+        padding: '12px 14px',
+        borderRadius: 10,
+        border: `1.5px solid ${enabled ? 'var(--c-accent)' : 'var(--c-line-2)'}`,
+        background: enabled ? 'var(--c-accent-2)' : 'var(--c-surface)',
+        textAlign: 'left',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 10,
+      }}
+    >
+      {/* Switch-style indicator — mirrors KindCard's circle but rectangular
+          so toggles read as on/off and selections read as picks. */}
+      <div
+        style={{
+          marginTop: 2,
+          flex: 'none',
+          width: 26,
+          height: 16,
+          borderRadius: 8,
+          background: enabled ? 'var(--c-accent)' : 'var(--c-line-2)',
+          position: 'relative',
+          transition: 'background 120ms',
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            top: 2,
+            left: enabled ? 12 : 2,
+            width: 12,
+            height: 12,
+            borderRadius: '50%',
+            background: '#fff',
+            transition: 'left 120ms',
+          }}
+        />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 13.5,
+            fontWeight: 600,
+            color: enabled ? 'var(--c-accent-ink)' : 'var(--c-ink)',
+            marginBottom: 2,
+          }}
+        >
+          {title}
+        </div>
+        <div
+          style={{
+            fontSize: 11.5,
+            color: enabled ? 'var(--c-accent-ink)' : 'var(--c-ink-3)',
+            lineHeight: 1.4,
+            opacity: enabled ? 0.85 : 1,
+          }}
+        >
+          {sub}
+        </div>
+      </div>
+    </button>
+  );
+}
+
 
 function KindCard({
   selected,

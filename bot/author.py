@@ -170,6 +170,121 @@ The transcript chunk follows. Output bullets only.
 """
 
 
+# === opt-in feature snippets ================================================
+# Each entry below is appended to the base system prompt ONLY when the user
+# toggled that feature on. The PDF builder parses the resulting markdown and
+# renders the new bits — see scripts/build_illustrated_book.py and
+# scripts/build_cheatsheet.py.
+#
+# Keep each snippet small (token budget) and self-contained (no cross-refs).
+# When a snippet exists for both kinds, the text differs slightly so the LLM
+# adapts the formality to the document shape.
+
+_SNIPPET_SUMMARY = """SUMMARY CARD — At the VERY TOP of the document, BEFORE the `#` title line, insert an HTML-comment-delimited block exactly like this:
+
+<!--SUMMARY-->
+- **TL;DR:** <one sentence — what this is, in plain English>
+- **3 takeaways:**
+  1. <first key insight, ~10 words>
+  2. <second key insight, ~10 words>
+  3. <third key insight, ~10 words>
+- **Difficulty:** Beginner | Intermediate | Advanced
+- **Read time:** ~N min
+<!--/SUMMARY-->
+
+The PDF renderer extracts this block and prints it as a cover-page summary card; you do NOT need to repeat the same info in the body."""
+
+_SNIPPET_TLDR_CHEAT = """TLDR CALLOUTS — At the START of each numbered `## N. ...` section, add a one-line takeaway as a callout:
+
+> [!tldr]
+> <one sentence — the key takeaway of this section>
+
+These help readers skim. Don't pad. If the section's title already says it all, skip the callout for that section."""
+
+_SNIPPET_TLDR_BOOK = """TLDR CALLOUTS — At the START of each `## Chapter N — ...` section (before the "Why this chapter matters" subsection), add a one-line takeaway as a callout:
+
+> [!tldr]
+> <one sentence — the chapter's key insight>
+
+These complement (don't replace) the existing `> [!revise]` recap at the end of each chapter — the `[!tldr]` is a forecast, the `[!revise]` is a recap."""
+
+_SNIPPET_QNA = """SELF-TEST APPENDIX — At the VERY END of the document (after the Glossary if one exists), add this section:
+
+## Self-Test
+
+> [!q] <Question 1 — tests understanding, not rote recall>
+> A: <One-paragraph answer that explains, not just states>
+
+> [!q] <Question 2>
+> A: <answer>
+
+(Aim for 5-8 questions covering the main concepts. Each Q&A is one `> [!q]` callout. Frame questions like "Why does X work?" / "When would you use Y?" / "How does X differ from Y?" — not "What does X stand for?")"""
+
+_SNIPPET_MERMAID = """DIAGRAM CODE — Add ONE mindmap and (if the topic has a clear process) ONE flowchart as fenced code blocks with the `mermaid` language tag:
+
+```mermaid
+mindmap
+  root((<central topic, 1-3 words>))
+    <Theme A>
+      <sub-point>
+      <sub-point>
+    <Theme B>
+      <sub-point>
+```
+
+```mermaid
+flowchart TD
+  A[Start] --> B{Decision}
+  B -->|Yes| C[Path 1]
+  B -->|No| D[Path 2]
+```
+
+Placement: just before the Glossary (or at the very end if no Glossary). Keep node labels SHORT (≤4 words each) — long labels truncate in the rendered image. If the topic is purely narrative and has no decision points, output the mindmap only and skip the flowchart. The PDF renderer converts each fenced block to an embedded diagram image."""
+
+CHEATSHEET_FEATURE_SNIPPETS: dict[str, str] = {
+    "summary": _SNIPPET_SUMMARY,
+    "tldr":    _SNIPPET_TLDR_CHEAT,
+    "qna":     _SNIPPET_QNA,
+    "mermaid": _SNIPPET_MERMAID,
+    "chapters": "",   # PDF-only; renderer scans existing headings + adds QR
+}
+
+BOOK_FEATURE_SNIPPETS: dict[str, str] = {
+    "summary": _SNIPPET_SUMMARY,
+    "tldr":    _SNIPPET_TLDR_BOOK,
+    "qna":     _SNIPPET_QNA,
+    "mermaid": _SNIPPET_MERMAID,
+    "chapters": "",   # PDF-only; renderer scans `## Chapter N` + adds QR
+}
+
+
+def _compose_system_prompt(
+    base: str,
+    snippets: dict[str, str],
+    features: list[str] | None,
+) -> str:
+    """Append opt-in feature instructions to the base system prompt.
+
+    Snippets are concatenated in the order they appear in ``features`` (the
+    caller should pass an already-canonicalised list from
+    ``cache.normalize_features`` so ordering is stable across submissions).
+    Empty snippets are skipped — that's how PDF-only features like
+    ``chapters`` declare "I don't need anything from the LLM".
+    """
+    if not features:
+        return base
+    extras = [s for f in features if (s := snippets.get(f))]
+    if not extras:
+        return base
+    return (
+        f"{base}\n\n"
+        "---\n\n"
+        "ADDITIONAL OPT-IN OUTPUTS — the user requested the following "
+        "extras. Include each in the markdown exactly as instructed:\n\n"
+        + "\n\n".join(extras)
+    )
+
+
 CHUNK_RE = re.compile(r"^##\s+Chunk\s+\d+", re.MULTILINE)
 TPM_LIMIT_TOKENS = 10000   # safe budget per request on Groq free tier
 INTER_CALL_DELAY_S = 8     # space requests so we stay under TPM windows
@@ -463,13 +578,19 @@ def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None
                       duration_seconds: Optional[float] = None,
                       on_progress: ProgressFn = None,
                       system_override: Optional[str] = None,
-                      cost_sink: Optional[dict] = None) -> str:
+                      cost_sink: Optional[dict] = None,
+                      features: Optional[list[str]] = None) -> str:
     """Return cheatsheet markdown text. Caller writes it to disk.
 
     ``system_override`` — when set, replaces the default CHEATSHEET_SYSTEM
-    prompt (used for per-user custom prompts from the admin portal).
+    prompt (used for per-user custom prompts from the admin portal). When
+    overridden, ``features`` snippets are NOT appended — the override is
+    treated as the complete instruction.
     ``cost_sink`` — if a dict, is populated with ``tokens_in``/``tokens_out``
     so the caller can record per-generation cost.
+    ``features`` — opt-in PDF enhancements (see ``CHEATSHEET_FEATURE_SNIPPETS``).
+    Each requested feature appends its instructional snippet to the base
+    prompt so the model emits the extra markdown the renderer expects.
     """
     transcript = Path(transcript_path).read_text(encoding="utf-8")
     if _needs_condensation():
@@ -489,10 +610,20 @@ def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None
     ] if p is not None)
     if on_progress:
         on_progress("Writing cheatsheet...")
+    base_prompt = system_override or CHEATSHEET_SYSTEM
+    # Don't decorate user-supplied overrides — they're treated as complete.
+    full_prompt = (
+        base_prompt if system_override
+        else _compose_system_prompt(base_prompt, CHEATSHEET_FEATURE_SNIPPETS, features)
+    )
+    # If features asked for extra content (summary card, Q&A appendix,
+    # mermaid blocks), give the model some headroom — the existing 3500-tok
+    # default is sized for a bare cheatsheet and clips the extras otherwise.
+    max_out = 3500 + (1500 if features else 0)
     raw = _author(
-        system_override or CHEATSHEET_SYSTEM,
+        full_prompt,
         user_msg,
-        max_tokens=3500,
+        max_tokens=max_out,
         cost_sink=cost_sink,
     )
     return strip_wrappers(raw)
@@ -503,10 +634,11 @@ def author_book(transcript_path: Path, frames_index_path: Path, *,
                 duration_seconds: Optional[float] = None,
                 on_progress: ProgressFn = None,
                 system_override: Optional[str] = None,
-                cost_sink: Optional[dict] = None) -> str:
+                cost_sink: Optional[dict] = None,
+                features: Optional[list[str]] = None) -> str:
     """Return illustrated-book markdown. Caller writes it and renders the PDF.
 
-    Same ``system_override`` / ``cost_sink`` semantics as
+    Same ``system_override`` / ``cost_sink`` / ``features`` semantics as
     :func:`author_cheatsheet`.
     """
     transcript = Path(transcript_path).read_text(encoding="utf-8")
@@ -531,10 +663,19 @@ def author_book(transcript_path: Path, frames_index_path: Path, *,
     )
     if on_progress:
         on_progress("Writing illustrated book...")
+    base_prompt = system_override or BOOK_SYSTEM
+    full_prompt = (
+        base_prompt if system_override
+        else _compose_system_prompt(base_prompt, BOOK_FEATURE_SNIPPETS, features)
+    )
+    # Books already get a generous 8K — bump by 2K when features are on so
+    # the Q&A appendix + mermaid + summary block don't run out of room on
+    # longer chapters.
+    max_out = 8000 + (2000 if features else 0)
     raw = _author(
-        system_override or BOOK_SYSTEM,
+        full_prompt,
         user_msg,
-        max_tokens=8000,
+        max_tokens=max_out,
         cost_sink=cost_sink,
     )
     return strip_wrappers(raw)

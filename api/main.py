@@ -14,6 +14,7 @@ endpoints live on ``api.admin`` and are mounted below.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import os
 import sys
@@ -135,6 +136,14 @@ def _ist_day_start_utc() -> datetime:
     return ist_day_start - timedelta(hours=5, minutes=30)
 
 
+# Canonical feature taxonomy lives in bot.cache so every entry point (web,
+# bot, build scripts) reads from the same source. ``_normalize_features`` is
+# re-exported as a private alias to avoid touching the existing call sites
+# below.
+FEATURE_ORDER = bot_cache.FEATURE_ORDER
+_normalize_features = bot_cache.normalize_features
+
+
 def _calc_cost_paise_for(
     duration_seconds: float, kind: str, per_30min: dict[str, int]
 ) -> int:
@@ -233,6 +242,12 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("generations", "llm_cost_paise", "INTEGER NOT NULL DEFAULT 0"),
     ("generations", "transcription_cost_paise", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "telegram_chat_id", "VARCHAR(64)"),
+    # Opt-in PDF enhancements selected at submit time. JSON-encoded list of
+    # short flag strings (e.g. ["summary","tldr","qna","mermaid","chapters"]).
+    # NULL / "[]" / missing = no enhancements (legacy / current default). The
+    # cache key includes a hash of this so the same URL with different feature
+    # sets stores as separate PDFs.
+    ("generations", "features", "TEXT"),
 ]
 
 
@@ -781,6 +796,13 @@ async def library(
 class CreateRequest(BaseModel):
     url: str = Field(..., min_length=10)
     kind: Literal["cheatsheet", "book"]
+    # Opt-in PDF enhancements. Each string is a short flag; unknown values
+    # are silently dropped server-side (forward-compat with newer clients).
+    # Empty list = the legacy/default PDF (no enhancements). See author.py
+    # and the build_* scripts for what each flag does.
+    features: list[Literal[
+        "summary", "tldr", "qna", "mermaid", "chapters"
+    ]] = Field(default_factory=list)
 
 
 class PreviewRequest(BaseModel):
@@ -897,6 +919,11 @@ async def create_generation(
                 f"Rate limit: max {hourly_cap} generations per hour. Try later.",
             )
 
+    # Normalize features: dedupe, drop unknowns, keep canonical order. We
+    # store the canonical list as JSON text so the cache hash is stable across
+    # clients that submit features in different orders.
+    norm_features = _normalize_features(req.features)
+
     gen = Generation(
         id=uuid.uuid4().hex,
         user_id=user.id,
@@ -906,6 +933,7 @@ async def create_generation(
         progress=0.0,
         was_free=False,   # placeholder — re-evaluated inside _run_job
         cost_paise=0,     # placeholder — atomic debit happens in _run_job
+        features=json.dumps(norm_features) if norm_features else None,
     )
     s.add(gen)
     await s.commit()
@@ -1076,10 +1104,20 @@ async def get_pdf(
 
 def _serialize(gen: Generation) -> dict[str, Any]:
     """Shape a Generation row into the JSON the frontend expects."""
+    # Decode features once; safe-default to [] for legacy rows / corrupt JSON.
+    feats: list[str] = []
+    if gen.features:
+        try:
+            raw = json.loads(gen.features)
+            if isinstance(raw, list):
+                feats = [str(x) for x in raw]
+        except (ValueError, TypeError):
+            pass
     base = {
         "id": gen.id,
         "kind": gen.kind,
         "url": gen.url,
+        "features": feats,
         "created_at": gen.created_at.isoformat() if gen.created_at else None,
         "meta": {
             "video_id": gen.video_id or "",
@@ -1311,6 +1349,17 @@ async def _run_job(job_id: str) -> None:
             return
         kind = gen.kind
         url = gen.url
+        # Parse opt-in features. NULL / empty / corrupt JSON = legacy PDF.
+        # We re-normalize after json.loads in case the row predates the
+        # canonicalising logic (older rows could have been hand-edited).
+        features: list[str] = []
+        if gen.features:
+            try:
+                raw = json.loads(gen.features)
+                if isinstance(raw, list):
+                    features = _normalize_features([str(x) for x in raw])
+            except (ValueError, TypeError):
+                pass
         user_row = s.get(User, gen.user_id)
         custom_prompt_cheat = (
             user_row.custom_prompt_cheatsheet if user_row else None
@@ -1414,6 +1463,7 @@ async def _run_job(job_id: str) -> None:
                 on_progress=lambda m: emit(m, max(progress_state["p"], 0.72)),
                 system_override=custom_prompt_cheat,
                 cost_sink=cost_sink,
+                features=features,
             )
         else:
             md_text = await asyncio.to_thread(
@@ -1425,6 +1475,7 @@ async def _run_job(job_id: str) -> None:
                 on_progress=lambda m: emit(m, max(progress_state["p"], 0.72)),
                 system_override=custom_prompt_book,
                 cost_sink=cost_sink,
+                features=features,
             )
 
         md_path = work / "output.md"
@@ -1433,7 +1484,14 @@ async def _run_job(job_id: str) -> None:
         emit("Rendering PDF", 0.92)
         pdf_path = work / "output.pdf"
         if kind == "cheatsheet":
-            await asyncio.to_thread(build_cheatsheet, md_path, pdf_path, meta["title"])
+            await asyncio.to_thread(
+                build_cheatsheet,
+                md_path,
+                pdf_path,
+                meta["title"],
+                features=features,
+                source_url=url,
+            )
         else:
             # image_base must be the PARENT of the frames/ dir, because the
             # BOOK_SYSTEM prompt forces the LLM to write `![..](frames/<name>.jpg)`
@@ -1450,6 +1508,8 @@ async def _run_job(job_id: str) -> None:
                 meta["title"],
                 Path(result["frames_dir"]).parent,
                 None,
+                features=features,
+                source_url=url,
             )
 
         # Mark done. Daily usage is derived from generations rows so there's

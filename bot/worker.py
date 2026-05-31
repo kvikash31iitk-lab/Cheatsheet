@@ -40,6 +40,12 @@ class Job:
     url: str
     fmt: str  # "cheat" or "book"
     refresh: bool = False
+    # Opt-in PDF enhancements selected before submission. Each entry is a
+    # short flag from ``cache.FEATURE_ORDER`` (e.g. "summary", "tldr",
+    # "qna", "mermaid", "chapters"). Empty list = legacy PDF (no extras).
+    # Drives both the author prompt and the PDF builder's behaviour, and is
+    # hashed into the cache key so different selections don't collide.
+    features: list[str] = field(default_factory=list)
     enqueued_at: float = field(default_factory=time.time)
 
 
@@ -103,9 +109,16 @@ async def run_job(bot: Bot, job: Job) -> None:
         if job.refresh:
             cache.invalidate(video_id)
 
-        # 3. Cache hit shortcut
-        cached_pdf = (cache.cheatsheet_pdf_path(video_id) if job.fmt == "cheat"
-                      else cache.book_pdf_path(video_id))
+        # Normalise once so cache hashing + author/builder all see the same
+        # canonical list (and missing/unknown flags don't accidentally fork
+        # the cache key).
+        features = cache.normalize_features(job.features)
+
+        # 3. Cache hit shortcut — feature-keyed so a previous run with a
+        # different toggle set doesn't accidentally serve the wrong PDF.
+        cached_pdf = (cache.cheatsheet_pdf_path(video_id, features)
+                      if job.fmt == "cheat"
+                      else cache.book_pdf_path(video_id, features))
         if cached_pdf.exists():
             await editor.update("Cached PDF found, sending...", force=True)
             await bot.send_document(job.chat_id, document=open(cached_pdf, "rb"),
@@ -166,19 +179,22 @@ async def run_job(bot: Bot, job: Job) -> None:
                 title_hint=title_hint,
                 duration_seconds=duration_s,
                 on_progress=author_cb,
+                features=features,
             )
-            md_path = slot / "cheatsheet.md"
+            md_path = cache.cheatsheet_md_path(video_id, features)
             md_path.write_text(md, encoding="utf-8")
             cache.update_meta(video_id, cheatsheet_at=time.time())
 
             # 6. Render PDF
             await editor.update("Rendering PDF...", force=True)
             from build_cheatsheet import build as build_cheat
-            pdf_path = slot / "cheatsheet.pdf"
+            pdf_path = cache.cheatsheet_pdf_path(video_id, features)
             await asyncio.to_thread(
                 build_cheat,
                 src=md_path, out=pdf_path,
                 title=(title_hint or "Cheatsheet"),
+                features=features,
+                source_url=job.url,
             )
         else:  # book
             await editor.update("Condensing transcript...", force=True)
@@ -190,20 +206,23 @@ async def run_job(bot: Bot, job: Job) -> None:
                 title_hint=title_hint,
                 duration_seconds=duration_s,
                 on_progress=author_cb,
+                features=features,
             )
-            md_path = slot / "book.md"
+            md_path = cache.book_md_path(video_id, features)
             md_path.write_text(md, encoding="utf-8")
             cache.update_meta(video_id, book_at=time.time())
 
             # 6. Render PDF
             await editor.update("Rendering PDF...", force=True)
             from build_illustrated_book import build as build_book
-            pdf_path = slot / "book.pdf"
+            pdf_path = cache.book_pdf_path(video_id, features)
             await asyncio.to_thread(
                 build_book,
                 src=md_path, out=pdf_path,
                 title=(title_hint or "Notes"),
                 image_base=cache.slot(video_id),
+                features=features,
+                source_url=job.url,
             )
 
         # 7. Send the PDF
