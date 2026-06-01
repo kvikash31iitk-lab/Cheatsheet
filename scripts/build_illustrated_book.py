@@ -89,7 +89,7 @@ CALLOUTS = {
     "warning": {"label": "WATCH OUT",  "bar": colors.HexColor("#B23A48"), "tint": colors.HexColor("#F8E7E9")},
     "note":    {"label": "NOTE",       "bar": colors.HexColor("#5A6172"), "tint": colors.HexColor("#F0F0EE")},
     "revise":  {"label": "REVISE IN 60 SECONDS", "bar": colors.HexColor("#3A6EA5"), "tint": colors.HexColor("#F4F1E6")},
-    "tldr":    {"label": "TL;DR",      "bar": colors.HexColor("#0D7377"), "tint": colors.HexColor("#E0F2F1")},
+    "tldr":    {"label": "WHY IN NEWS", "bar": colors.HexColor("#0D7377"), "tint": colors.HexColor("#E0F2F1")},
     "q":       {"label": "QUESTION",   "bar": colors.HexColor("#7A4F8A"), "tint": colors.HexColor("#F1E8F5")},
 }
 
@@ -132,7 +132,7 @@ CO_LABEL = ParagraphStyle("CoLabel", parent=ss["Normal"], fontName="Helvetica-Bo
                           fontSize=8.5, leading=11, textColor=colors.white,
                           spaceAfter=4, alignment=TA_LEFT)
 CO_BODY = ParagraphStyle("CoBody", parent=BODY, fontSize=10.5, leading=15,
-                         spaceAfter=4, alignment=TA_LEFT)
+                         spaceAfter=4, alignment=TA_JUSTIFY)
 
 
 # --- inline formatting ------------------------------------------------------
@@ -278,7 +278,10 @@ def make_image_flowable(alt: str, path: str) -> list:
 def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
     spec = CALLOUTS.get(kind, CALLOUTS["note"])
     label = spec["label"]
-    if title:
+    # Preserve "DEFINITION - Federalism" patterns but skip the dash when the
+    # author's title duplicates the default label (e.g. [!tldr] "Why in news"
+    # with default label "WHY IN NEWS").
+    if title and title.strip().lower() != label.strip().lower():
         label = f"{label} - {title}"
 
     body_paras = []
