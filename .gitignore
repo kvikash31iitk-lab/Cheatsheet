@@ -10,6 +10,13 @@ web_work/
 cache/
 output/
 
+# UPSC pipeline scratch — downloaded PYQ PDFs, OCR intermediates, etc.
+# Keep the planning artifacts in .upsc_work/ tracked, but not the cache.
+.upsc_work/pyq_cache/
+.upsc_work/preview/
+.upsc_work/pages/
+.upsc_work/__pycache__/
+
 # Web frontend
 web/node_modules/
 web/.next/
