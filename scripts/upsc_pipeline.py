@@ -219,13 +219,16 @@ def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Artic
     """LLM pass that segments + drops + tags. Returns at most max_articles."""
     # Newspaper text can run 50-100K chars. Llama-3.1-8b's free tier wants
     # ~5K tokens per request, so chunk by ~15K chars and merge results.
-    # 6K chars/chunk → ~2K input tokens; with 2K output cap stays under
-    # llama-3.1-8b-instant's ~6K TPM headroom even when bursting requests.
-    chunks = _chunk_text(extracted_text, target_chars=6_000)
+    # Groq's per-request size limit on the free tier is 6000 tokens TOTAL
+    # (input + max_tokens reservation). Newspaper text tokenises at ~1 token
+    # per 3 chars (not 4 like English prose), so 3000-char chunks give us
+    # ~1000 input tokens + 1500 output reservation + ~500 system = ~3000
+    # total, well under the cap with a comfortable buffer.
+    chunks = _chunk_text(extracted_text, target_chars=3_000)
     pool: list[Article] = []
     for i, chunk in enumerate(chunks):
         print(f"  classify chunk {i+1}/{len(chunks)} ({len(chunk):,} chars)")
-        raw = _pipeline_chat(CLASSIFY_SYSTEM, chunk, max_tokens=2000, temperature=0.2)
+        raw = _pipeline_chat(CLASSIFY_SYSTEM, chunk, max_tokens=1500, temperature=0.2)
         rows = _safe_json_array(raw)
         for r in rows:
             try:
@@ -365,7 +368,7 @@ def stage_author(articles: list[Article], *, start_num: int = 1) -> None:
         # Pull PYQs from the verified corpus
         art.pyqs = find_pyqs(art.static_topics, limit=3)
         prompt = _format_author_prompt(art, n)
-        raw = _pipeline_chat(AUTHOR_SYSTEM, prompt, max_tokens=2500, temperature=0.3)
+        raw = _pipeline_chat(AUTHOR_SYSTEM, prompt, max_tokens=1500, temperature=0.3)
         art.markdown = raw.strip()
         time.sleep(2.5)  # polite spacing for Groq's free-tier TPM bucket
 
