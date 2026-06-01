@@ -18,6 +18,7 @@ const NAV: NavItem[] = [
   { href: '/admin/settings', label: 'Settings', icon: <Ic.cog size={14} /> },
   { href: '/admin/users', label: 'Users', icon: <Ic.user size={14} /> },
   { href: '/admin/generations', label: 'Generations', icon: <Ic.list size={14} /> },
+  { href: '/admin/upsc', label: 'UPSC digest', icon: <Ic.list size={14} /> },
   { href: '/admin/broadcasts', label: 'Broadcasts', icon: <Ic.bell size={14} /> },
   { href: '/admin/promos', label: 'Promo codes', icon: <Ic.coin size={14} /> },
   { href: '/admin/blocks', label: 'Block rules', icon: <Ic.shield size={14} /> },

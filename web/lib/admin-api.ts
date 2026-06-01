@@ -296,4 +296,84 @@ export const adminApi = {
 
   // failed payments
   failedPayments: () => req<AdminPayment[]>('/api/admin/payments/failed'),
+
+  // UPSC digest issues
+  listUpscIssues: (limit = 30, offset = 0) =>
+    req<{ issues: UpscIssue[]; limit: number; offset: number }>(
+      `/api/admin/upsc/issues?limit=${limit}&offset=${offset}`,
+    ),
+  getUpscIssue: (id: string) =>
+    req<UpscIssue & { markdown: string | null }>(
+      `/api/admin/upsc/issues/${id}`,
+    ),
+  uploadUpscIssue: (form: FormData) =>
+    req<UpscIssue>('/api/admin/upsc/upload', {
+      method: 'POST',
+      body: form,
+    }),
+  patchUpscIssue: (
+    id: string,
+    patch: {
+      title?: string;
+      style?: UpscStyle;
+      markdown?: string;
+      source?: string;
+    },
+  ) =>
+    req<UpscIssue & { markdown: string | null }>(`/api/admin/upsc/issues/${id}`, {
+      method: 'PATCH',
+      json: patch,
+    }),
+  reauthorUpscIssue: (id: string) =>
+    req<UpscIssue>(`/api/admin/upsc/issues/${id}/reauthor`, { method: 'POST' }),
+  publishUpscIssue: (id: string) =>
+    req<UpscIssue>(`/api/admin/upsc/issues/${id}/publish`, { method: 'POST' }),
+  unpublishUpscIssue: (id: string) =>
+    req<UpscIssue>(`/api/admin/upsc/issues/${id}/unpublish`, { method: 'POST' }),
+  deleteUpscIssue: (id: string) =>
+    req<{ deleted: string }>(`/api/admin/upsc/issues/${id}`, {
+      method: 'DELETE',
+    }),
+  reseedPyq: (years: string, stages: Array<'prelims' | 'mains'>) =>
+    req<{ queued: string }>('/api/admin/upsc/pyq/reseed', {
+      method: 'POST',
+      json: { years, stages },
+    }),
+};
+
+// UPSC types --------------------------------------------------------------
+
+export type UpscStyle =
+  | 'academic'
+  | 'dense'
+  | 'dense_tight'
+  | 'coaching'
+  | 'magazine';
+
+export type UpscStatus =
+  | 'uploaded'
+  | 'extracting'
+  | 'authoring'
+  | 'rendering'
+  | 'preview'
+  | 'published'
+  | 'error';
+
+export type UpscIssue = {
+  id: string;
+  issue_date: string;
+  source: string;
+  title: string;
+  style: UpscStyle;
+  status: UpscStatus;
+  error_message: string | null;
+  article_count: number;
+  summary: string | null;
+  has_output_pdf: boolean;
+  has_cover_thumb: boolean;
+  created_at: string | null;
+  published_at: string | null;
+  llm_tokens_in: number;
+  llm_tokens_out: number;
+  llm_cost_paise: number;
 };
