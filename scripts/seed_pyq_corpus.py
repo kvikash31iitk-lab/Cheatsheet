@@ -178,14 +178,35 @@ OCR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 OCR_DPI = 150  # 150 dpi A4 = ~1240x1754, safely under Groq's image size cap
 
 
+def _wait_for_429(exc: Exception, *, default_wait: float) -> float:
+    """Parse Groq's 'Please try again in X.Xs' hint and return seconds to wait.
+
+    The Groq SDK surfaces 429 as a string in the message; parse defensively
+    and fall back to ``default_wait`` if the hint is missing.
+    """
+    import re
+    msg = str(exc)
+    m = re.search(r"try again in ([\d.]+)\s*s", msg, re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1)) + 0.5  # tiny buffer
+        except ValueError:
+            pass
+    return default_wait
+
+
 def ocr_page(pix) -> str:
-    """OCR a single rendered PDF page via Groq Llama 4 Scout (vision)."""
+    """OCR a single rendered PDF page via Groq Llama 4 Scout (vision).
+
+    Retries 6 times. On 429s, parses the 'try again in Xs' hint and waits
+    that long. On other errors, exponential backoff.
+    """
     import base64
     from groq import Groq
     b64 = base64.b64encode(pix.tobytes("png")).decode()
     client = Groq(api_key=GROQ_API_KEY)
     last_err: Optional[Exception] = None
-    for attempt in range(1, 4):
+    for attempt in range(1, 7):
         try:
             resp = client.chat.completions.create(
                 model=OCR_MODEL,
@@ -206,10 +227,10 @@ def ocr_page(pix) -> str:
             return (resp.choices[0].message.content or "").strip()
         except Exception as exc:
             last_err = exc
-            wait = 5 * attempt
-            print(f"      OCR attempt {attempt}/3 failed: {exc}; waiting {wait}s")
+            wait = _wait_for_429(exc, default_wait=5 * attempt)
+            print(f"      OCR attempt {attempt}/6 failed: waiting {wait:.1f}s — {str(exc)[:140]}")
             time.sleep(wait)
-    raise RuntimeError(f"OCR failed after 3 attempts: {last_err}")
+    raise RuntimeError(f"OCR failed after 6 attempts: {last_err}")
 
 
 def extract_text(pdf_path: Path, *, ocr_threshold: int = 100,
@@ -242,11 +263,11 @@ def extract_text(pdf_path: Path, *, ocr_threshold: int = 100,
 
 def _groq_chat(system: str, user: str, *, max_tokens: int = 8000,
                temperature: float = 0.1) -> str:
-    """Single Groq Llama call. Retries 3x with backoff."""
+    """Single Groq Llama call. Retries 6x; honours 'try again in Xs' on 429."""
     from groq import Groq
     client = Groq(api_key=GROQ_API_KEY)
     last_err: Optional[Exception] = None
-    for attempt in range(1, 4):
+    for attempt in range(1, 7):
         try:
             resp = client.chat.completions.create(
                 model=AUTHORING_MODEL,
@@ -260,10 +281,10 @@ def _groq_chat(system: str, user: str, *, max_tokens: int = 8000,
             return resp.choices[0].message.content or ""
         except Exception as exc:
             last_err = exc
-            wait = 10 * attempt
-            print(f"    groq attempt {attempt}/3 failed: {exc}; waiting {wait}s")
+            wait = _wait_for_429(exc, default_wait=10 * attempt)
+            print(f"    groq attempt {attempt}/6 failed: waiting {wait:.1f}s — {str(exc)[:140]}")
             time.sleep(wait)
-    raise RuntimeError(f"Groq failed after 3 attempts: {last_err}")
+    raise RuntimeError(f"Groq failed after 6 attempts: {last_err}")
 
 
 EXTRACT_SYSTEM_PRELIMS = """You receive OCR-extracted text from a UPSC Prelims General Studies Paper-I.
