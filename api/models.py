@@ -4,17 +4,22 @@ Schema is small enough to keep in one file:
 
     User           one row per signed-in user
     Generation     one row per /api/generate job
+    UpscIssue      one row per UPSC Cheetsheet daily digest (admin-uploaded
+                   newspaper PDF -> exam-targeted summary PDF)
+    Pyq            verified UPSC past-year question corpus, used as the only
+                   citation source for digest authoring (no LLM fabrication)
 
 Money is stored in **paise** (1 INR = 100 paise) as integers — never floats.
 """
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -284,6 +289,97 @@ class BlockRule(Base):
     created_by: Mapped[Optional[str]] = mapped_column(String(320))
 
 
+class UpscIssue(Base):
+    """One row per UPSC Cheetsheet daily digest.
+
+    Admin uploads a newspaper PDF; a background pipeline extracts articles,
+    classifies them as exam-relevant, authors a UPSC-format markdown, and
+    renders the dense_tight PDF. Admin previews + clicks Publish to make it
+    visible at ``/upsc/<issue_date>``.
+    """
+
+    __tablename__ = "upsc_issues"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+
+    # The slug component of the public URL — one digest per (date, source) is
+    # the natural unique key, but on day one we anchor to date alone since the
+    # admin only uploads one paper per day. Source kept as a free-form string
+    # so we can support Hindu / ToI / PIB later without a schema change.
+    issue_date: Mapped[date] = mapped_column(Date, unique=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # One of the renderer style appliers (academic | dense | dense_tight |
+    # coaching | magazine). dense_tight is the locked default.
+    style: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="dense_tight"
+    )
+
+    # Pipeline state machine:
+    #   uploaded -> extracting -> authoring -> rendering -> preview -> published
+    # Any stage can fail and land us in `error`.
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="uploaded"
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+
+    input_pdf_path: Mapped[str] = mapped_column(Text, nullable=False)
+    output_pdf_path: Mapped[Optional[str]] = mapped_column(Text)
+    cover_thumb_path: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Authored markdown (the v2 schema), admin-editable in the preview screen
+    # before publish.
+    markdown: Mapped[Optional[str]] = mapped_column(Text)
+    # 2-line plain-text summary, shown on the public landing page card.
+    summary: Mapped[Optional[str]] = mapped_column(Text)
+
+    article_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Cost tracking — same convention as Generation.
+    llm_tokens_in: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    llm_tokens_out: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    llm_cost_paise: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class Pyq(Base):
+    """A verified UPSC previous-year question.
+
+    Seeded once from upsc.gov.in archive PDFs. The authoring pipeline calls
+    ``find_pyqs(static_topics)`` to retrieve real citations — fabricated PYQs
+    in published digests would torch user trust on day one, so the LLM is
+    never allowed to invent here.
+    """
+
+    __tablename__ = "pyq"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    exam_stage: Mapped[str] = mapped_column(String(16), nullable=False)  # prelims | mains
+    # GS-1 | GS-2 | GS-3 | GS-4 | essay | CSAT | optional-<subject>
+    paper: Mapped[str] = mapped_column(String(32), nullable=False)
+    section: Mapped[Optional[str]] = mapped_column(String(8))  # A | B (Mains)
+    question_num: Mapped[Optional[int]] = mapped_column(Integer)
+
+    question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    marks: Mapped[Optional[int]] = mapped_column(Integer)  # 10 | 12 | 15 | 20 | 25 | 250 (essay)
+
+    # JSON-encoded list of syllabus tags assigned at seed time. Used as the
+    # primary index for `find_pyqs(static_topics)` lookup.
+    static_topics: Mapped[Optional[str]] = mapped_column(Text)
+    source_url: Mapped[Optional[str]] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+
+
 # Indexes
 Index("ix_generations_user_created", Generation.user_id, Generation.created_at.desc())
 Index("ix_generations_status", Generation.status)
@@ -300,3 +396,7 @@ Index(
     PromoRedemption.user_id,
     unique=True,
 )
+Index("ix_upsc_issues_date", UpscIssue.issue_date.desc())
+Index("ix_upsc_issues_status", UpscIssue.status)
+Index("ix_pyq_year_paper", Pyq.year, Pyq.paper)
+Index("ix_pyq_exam_stage", Pyq.exam_stage)
