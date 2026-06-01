@@ -56,8 +56,15 @@ from api import models  # noqa: E402  -- registers all tables
 from api.models import Pyq  # noqa: E402
 from bot.config import GROQ_API_KEY, AUTHORING_MODEL  # noqa: E402
 
-CACHE_DIR = PROJECT_ROOT / ".upsc_work" / "pyq_cache"
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_DIR = PROJECT_ROOT / "web_work" / "upsc_pyq_cache"
+try:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+except PermissionError:
+    # Importing this module shouldn't fail just because we can't pre-create
+    # the cache dir. The CLI / pipeline will surface a clearer error later
+    # when it actually tries to write a PDF. On a botuser-owned web_work/
+    # this should never trigger.
+    pass
 
 USER_AGENT = "CheetsheetUPSC/1.0 (+https://cheetsheet.tech) - caching scraper"
 
@@ -155,6 +162,7 @@ def _http_get_text(url: str, timeout: int = 30) -> str:
 
 def download_pdf(url: str) -> Path:
     """Download a PDF if not already cached. Returns local path."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
     fname = re.sub(r"[^A-Za-z0-9._-]+", "_", url.rsplit("/", 1)[-1])
     if not fname.lower().endswith(".pdf"):
         fname += ".pdf"
