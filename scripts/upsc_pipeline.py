@@ -62,12 +62,46 @@ from bot.config import GROQ_API_KEY  # noqa: E402
 from scripts.seed_pyq_corpus import (  # noqa: E402
     extract_text as _seed_extract_text,
     ocr_page,
-    _groq_chat,
     _safe_json_array,
     _strip_fence,
+    _wait_for_429,
 )
 from scripts import build_illustrated_book as B  # noqa: E402
 from scripts.digest_styles import STYLES  # noqa: E402
+
+# Pin classify + author to llama-3.1-8b-instant. The 70B model has tight
+# TPM on the Groq free tier (~6K TPM); 8b-instant has ~30K TPM, plenty for
+# our structured JSON / per-article extraction. Quality difference is
+# unnoticeable for these tasks.
+PIPELINE_LLM = "llama-3.1-8b-instant"
+
+
+def _pipeline_chat(system: str, user: str, *, max_tokens: int = 2500,
+                   temperature: float = 0.2) -> str:
+    """Groq call pinned to ``PIPELINE_LLM`` (faster + higher TPM than 70B).
+    Same retry / 429-hint logic as seed_pyq_corpus._groq_chat."""
+    from groq import Groq
+    from bot.config import GROQ_API_KEY
+    client = Groq(api_key=GROQ_API_KEY)
+    last_err = None
+    for attempt in range(1, 7):
+        try:
+            resp = client.chat.completions.create(
+                model=PIPELINE_LLM,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return resp.choices[0].message.content or ""
+        except Exception as exc:
+            last_err = exc
+            wait = _wait_for_429(exc, default_wait=10 * attempt)
+            print(f"    pipeline-llm attempt {attempt}/6 failed: waiting {wait:.1f}s — {str(exc)[:140]}")
+            time.sleep(wait)
+    raise RuntimeError(f"pipeline LLM failed after 6 attempts: {last_err}")
 
 WORK_ROOT = PROJECT_ROOT / "web_work" / "upsc"
 WORK_ROOT.mkdir(parents=True, exist_ok=True)
@@ -185,11 +219,13 @@ def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Artic
     """LLM pass that segments + drops + tags. Returns at most max_articles."""
     # Newspaper text can run 50-100K chars. Llama-3.1-8b's free tier wants
     # ~5K tokens per request, so chunk by ~15K chars and merge results.
-    chunks = _chunk_text(extracted_text, target_chars=15_000)
+    # 6K chars/chunk → ~2K input tokens; with 2K output cap stays under
+    # llama-3.1-8b-instant's ~6K TPM headroom even when bursting requests.
+    chunks = _chunk_text(extracted_text, target_chars=6_000)
     pool: list[Article] = []
     for i, chunk in enumerate(chunks):
         print(f"  classify chunk {i+1}/{len(chunks)} ({len(chunk):,} chars)")
-        raw = _groq_chat(CLASSIFY_SYSTEM, chunk, max_tokens=4000, temperature=0.2)
+        raw = _pipeline_chat(CLASSIFY_SYSTEM, chunk, max_tokens=2000, temperature=0.2)
         rows = _safe_json_array(raw)
         for r in rows:
             try:
@@ -203,7 +239,7 @@ def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Artic
                 ))
             except (KeyError, ValueError, TypeError):
                 continue
-        time.sleep(1.0)
+        time.sleep(2.5)  # polite spacing for Groq's free-tier TPM bucket
     # If the LLM split the same story across chunks, dedupe by headline.
     seen: set[str] = set()
     deduped: list[Article] = []
@@ -329,9 +365,9 @@ def stage_author(articles: list[Article], *, start_num: int = 1) -> None:
         # Pull PYQs from the verified corpus
         art.pyqs = find_pyqs(art.static_topics, limit=3)
         prompt = _format_author_prompt(art, n)
-        raw = _groq_chat(AUTHOR_SYSTEM, prompt, max_tokens=2500, temperature=0.3)
+        raw = _pipeline_chat(AUTHOR_SYSTEM, prompt, max_tokens=2500, temperature=0.3)
         art.markdown = raw.strip()
-        time.sleep(1.0)
+        time.sleep(2.5)  # polite spacing for Groq's free-tier TPM bucket
 
 
 def _format_author_prompt(art: Article, n: int) -> str:
