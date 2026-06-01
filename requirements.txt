@@ -14,6 +14,10 @@ pymupdf>=1.24.0
 pypdf>=4.0.0
 imagehash>=4.3.0
 Pillow>=10.0.0
+# Local OCR — primary path for the UPSC newspaper-digest pipeline. Avoids
+# burning Groq's vision-model daily-token quota. Needs the `tesseract` binary
+# installed on the host (apt-get install -y tesseract-ocr tesseract-ocr-eng).
+pytesseract>=0.3.13
 # QR codes embedded on PDF cover pages (opt-in `chapters` feature). [pil]
 # extra pulls in the PNG-rendering backend; Pillow itself is already above.
 qrcode[pil]>=7.4.0

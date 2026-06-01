@@ -179,11 +179,16 @@ def download_pdf(url: str) -> Path:
 
 
 # =============================================================================
-# PDF -> text (with OCR fallback for scanned Drishti PDFs)
+# PDF -> text (Tesseract first; Groq vision LLM as fallback)
 # =============================================================================
 
 OCR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
-OCR_DPI = 150  # 150 dpi A4 = ~1240x1754, safely under Groq's image size cap
+OCR_DPI = 150            # rendering DPI when handing the page to Tesseract / vision
+TESSERACT_MIN_CHARS = 80  # Tesseract output shorter than this triggers vision fallback
+
+# Flipped once per process if the Tesseract import / binary call fails, so we
+# only print the warning once rather than per-page.
+_TESSERACT_WARNED = False
 
 
 def _wait_for_429(exc: Exception, *, default_wait: float) -> float:
@@ -203,11 +208,29 @@ def _wait_for_429(exc: Exception, *, default_wait: float) -> float:
     return default_wait
 
 
-def ocr_page(pix) -> str:
+def _tesseract_ocr(pix, lang: str = "eng") -> str:
+    """Local OCR via the Tesseract binary. Returns extracted text, or "" on
+    any failure (ImportError, missing binary, exception during OCR). Caller
+    decides whether to fall back to the vision LLM."""
+    global _TESSERACT_WARNED
+    try:
+        import io
+        import pytesseract
+        from PIL import Image
+        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        return pytesseract.image_to_string(img, lang=lang).strip()
+    except Exception as exc:
+        if not _TESSERACT_WARNED:
+            print(f"      WARN: Tesseract unavailable ({exc}); using vision LLM fallback")
+            _TESSERACT_WARNED = True
+        return ""
+
+
+def _vision_ocr(pix) -> str:
     """OCR a single rendered PDF page via Groq Llama 4 Scout (vision).
 
-    Retries 6 times. On 429s, parses the 'try again in Xs' hint and waits
-    that long. On other errors, exponential backoff.
+    Used as a fallback when Tesseract returns too little. Retries 6 times;
+    on 429, parses the 'try again in Xs' hint and waits exactly that long.
     """
     import base64
     from groq import Groq
@@ -222,7 +245,7 @@ def ocr_page(pix) -> str:
                     "role": "user",
                     "content": [
                         {"type": "text", "text":
-                            "Extract every word of text from this UPSC exam page exactly as it appears. "
+                            "Extract every word of text from this page exactly as it appears. "
                             "Preserve question numbers, option letters (a), (b), (c), (d), and the order of items. "
                             "Output ONLY the text content — no preamble, no commentary, no markdown formatting."},
                         {"type": "image_url",
@@ -236,9 +259,21 @@ def ocr_page(pix) -> str:
         except Exception as exc:
             last_err = exc
             wait = _wait_for_429(exc, default_wait=5 * attempt)
-            print(f"      OCR attempt {attempt}/6 failed: waiting {wait:.1f}s — {str(exc)[:140]}")
+            print(f"      vision OCR attempt {attempt}/6 failed: waiting {wait:.1f}s — {str(exc)[:140]}")
             time.sleep(wait)
-    raise RuntimeError(f"OCR failed after 6 attempts: {last_err}")
+    raise RuntimeError(f"vision OCR failed after 6 attempts: {last_err}")
+
+
+def ocr_page(pix) -> str:
+    """Primary OCR entry point. Tesseract first (fast, free, no quotas),
+    Groq vision LLM as a last-resort fallback for pages Tesseract chokes on
+    (very small print, dense graphics, non-English script)."""
+    text = _tesseract_ocr(pix)
+    if len(text) >= TESSERACT_MIN_CHARS:
+        return text
+    if text:
+        print(f"      Tesseract returned only {len(text)} chars; trying vision fallback")
+    return _vision_ocr(pix)
 
 
 def extract_text(pdf_path: Path, *, ocr_threshold: int = 100,
