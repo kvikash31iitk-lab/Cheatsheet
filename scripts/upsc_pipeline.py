@@ -379,6 +379,32 @@ def _format_candidates_for_llm(batch: list[dict], start_idx: int) -> str:
     return "\n\n".join(parts)
 
 
+def _classify_via_groq(candidates: list[dict], pool: list["Article"]) -> None:
+    """Batched (4-at-a-time) Groq classify path. Used when claude_code isn't
+    configured or its call fails."""
+    BATCH = 4
+    for start in range(0, len(candidates), BATCH):
+        batch = candidates[start : start + BATCH]
+        print(f"  batch classify {start+1}-{start+len(batch)}/{len(candidates)}")
+        prompt = _format_candidates_for_llm(batch, start_idx=start)
+        raw = _pipeline_chat(BATCH_CLASSIFY_SYSTEM, prompt,
+                             max_tokens=2500, temperature=0.2)
+        rows = _safe_json_array(raw)
+        for r in rows:
+            try:
+                pool.append(Article(
+                    headline=str(r["headline"]).strip(),
+                    lede=str(r.get("lede", "")).strip(),
+                    body=str(r.get("body", "")).strip(),
+                    paper=str(r.get("paper", "GS-2")).strip(),
+                    static_topics=[str(t).strip() for t in (r.get("static_topics") or [])][:4],
+                    static_link=str(r.get("static_link", "")).strip(),
+                ))
+            except (KeyError, ValueError, TypeError):
+                continue
+        time.sleep(1.5)
+
+
 def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Article]:
     """Filter + structure articles into Article records, returning at most
     max_articles ordered by exam relevance.
@@ -404,28 +430,34 @@ def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Artic
     pool: list[Article] = []
 
     if len(candidates) >= 5:
-        # Batched LLM filter+structure path.
-        BATCH = 4
-        for start in range(0, len(candidates), BATCH):
-            batch = candidates[start : start + BATCH]
-            print(f"  batch classify {start+1}-{start+len(batch)}/{len(candidates)}")
-            prompt = _format_candidates_for_llm(batch, start_idx=start)
-            raw = _pipeline_chat(BATCH_CLASSIFY_SYSTEM, prompt,
-                                 max_tokens=2500, temperature=0.2)
-            rows = _safe_json_array(raw)
-            for r in rows:
-                try:
-                    pool.append(Article(
-                        headline=str(r["headline"]).strip(),
-                        lede=str(r.get("lede", "")).strip(),
-                        body=str(r.get("body", "")).strip(),
-                        paper=str(r.get("paper", "GS-2")).strip(),
-                        static_topics=[str(t).strip() for t in (r.get("static_topics") or [])][:4],
-                        static_link=str(r.get("static_link", "")).strip(),
-                    ))
-                except (KeyError, ValueError, TypeError):
-                    continue
-            time.sleep(1.5)
+        # If claude_code is configured, do all candidates in ONE call (200K
+        # context handles it easily). Otherwise batch 4-at-a-time through
+        # Groq to fit under its 6K-token per-request cap.
+        from bot.config import AUTHORING_PROVIDER
+        if AUTHORING_PROVIDER == "claude_code":
+            print(f"  classify backend: claude_code CLI (1 call, all {len(candidates)} candidates)")
+            try:
+                from bot.author import _author_claude_code
+                prompt = _format_candidates_for_llm(candidates, start_idx=0)
+                raw = _author_claude_code(BATCH_CLASSIFY_SYSTEM, prompt, max_tokens=8000)
+                rows = _safe_json_array(raw)
+                for r in rows:
+                    try:
+                        pool.append(Article(
+                            headline=str(r["headline"]).strip(),
+                            lede=str(r.get("lede", "")).strip(),
+                            body=str(r.get("body", "")).strip(),
+                            paper=str(r.get("paper", "GS-2")).strip(),
+                            static_topics=[str(t).strip() for t in (r.get("static_topics") or [])][:4],
+                            static_link=str(r.get("static_link", "")).strip(),
+                        ))
+                    except (KeyError, ValueError, TypeError):
+                        continue
+            except Exception as exc:
+                print(f"  classify via claude_code failed ({exc}); falling back to Groq batched")
+                _classify_via_groq(candidates, pool)
+        else:
+            _classify_via_groq(candidates, pool)
     else:
         # Fallback: old chunk-and-classify approach. Used when the heuristic
         # can't find bylines (Hindu, ToI, vernacular layouts, OCR damage).
