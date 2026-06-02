@@ -55,6 +55,97 @@ function fmt(iso: string | null | undefined): string {
   });
 }
 
+function fmtDuration(secs: number | null | undefined): string {
+  if (secs === null || secs === undefined) return '-';
+  if (secs < 60) return `${secs.toFixed(1)}s`;
+  const m = Math.floor(secs / 60);
+  const s = Math.round(secs - m * 60);
+  return `${m}m ${s}s`;
+}
+
+type StageTiming = { label: string; seconds: number | null };
+
+function ProcessingTime({ issue }: { issue: IssueWithMarkdown }) {
+  const stages: StageTiming[] = [
+    { label: 'Extract (OCR)', seconds: issue.extract_seconds },
+    { label: 'Classify', seconds: issue.classify_seconds },
+    { label: 'Author', seconds: issue.author_seconds },
+    { label: 'Render', seconds: issue.render_seconds },
+  ];
+  const total = stages.reduce((acc, s) => acc + (s.seconds ?? 0), 0);
+  const recorded = stages.some((s) => s.seconds !== null && s.seconds !== undefined);
+  if (!recorded) {
+    return (
+      <div style={{ fontSize: 13, color: 'var(--c-ink-3)' }}>
+        No timing data — this issue was processed before timing was instrumented.
+      </div>
+    );
+  }
+  const max = Math.max(...stages.map((s) => s.seconds ?? 0), 1);
+  return (
+    <div>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          marginBottom: 14,
+        }}
+      >
+        <div style={{ fontSize: 12, color: 'var(--c-ink-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>
+          TOTAL
+        </div>
+        <div style={{ fontFamily: 'var(--font-serif)', fontSize: 22, color: 'var(--c-ink)' }}>
+          {fmtDuration(total)}
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {stages.map((s) => {
+          const ratio = (s.seconds ?? 0) / max;
+          const pct = (s.seconds ?? 0) / Math.max(total, 1);
+          return (
+            <div key={s.label}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 13,
+                  marginBottom: 4,
+                }}
+              >
+                <span style={{ color: 'var(--c-ink)' }}>{s.label}</span>
+                <span style={{ color: 'var(--c-ink-3)' }}>
+                  {fmtDuration(s.seconds)}
+                  {s.seconds !== null && s.seconds !== undefined && total > 0 && (
+                    <span style={{ marginLeft: 8 }}>({Math.round(pct * 100)}%)</span>
+                  )}
+                </span>
+              </div>
+              <div
+                style={{
+                  height: 6,
+                  background: 'var(--c-line-2, #e5e1d7)',
+                  borderRadius: 3,
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${ratio * 100}%`,
+                    background: 'var(--c-accent, #2a5b3a)',
+                    transition: 'width 0.3s',
+                  }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ConfirmButton({
   label,
   confirmLabel,
@@ -342,6 +433,18 @@ export default function AdminUpscDetailPage() {
               </a>
             </div>
           )}
+        </Section>
+      )}
+
+      {/* Processing time */}
+      {(issue.status === 'preview' ||
+        issue.status === 'published' ||
+        issue.status === 'error') && (
+        <Section
+          title="Processing time"
+          description="Per-stage wall-clock duration on the pipeline worker. Watch the bars to see what to optimise."
+        >
+          <ProcessingTime issue={issue} />
         </Section>
       )}
 

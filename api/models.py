@@ -341,6 +341,15 @@ class UpscIssue(Base):
     llm_tokens_out: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     llm_cost_paise: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # Per-stage processing duration in seconds. Recorded as each stage exits
+    # so the admin UI can show "extract 12 min · classify 5 min · ..." for
+    # bottleneck spotting. Nullable for rows that ran before this column
+    # existed.
+    extract_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    classify_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    author_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    render_seconds: Mapped[Optional[float]] = mapped_column(Float)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )

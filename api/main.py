@@ -249,6 +249,12 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     # cache key includes a hash of this so the same URL with different feature
     # sets stores as separate PDFs.
     ("generations", "features", "TEXT"),
+    # Per-stage processing duration for UPSC digest issues. Added so the
+    # admin UI can show 'extract 12 min · classify 5 min · ...' breakdowns.
+    ("upsc_issues", "extract_seconds", "REAL"),
+    ("upsc_issues", "classify_seconds", "REAL"),
+    ("upsc_issues", "author_seconds", "REAL"),
+    ("upsc_issues", "render_seconds", "REAL"),
 ]
 
 

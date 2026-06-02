@@ -73,6 +73,10 @@ def _issue_dict(row: UpscIssue, *, include_markdown: bool = False) -> dict[str, 
         "llm_tokens_in": row.llm_tokens_in,
         "llm_tokens_out": row.llm_tokens_out,
         "llm_cost_paise": row.llm_cost_paise,
+        "extract_seconds": row.extract_seconds,
+        "classify_seconds": row.classify_seconds,
+        "author_seconds": row.author_seconds,
+        "render_seconds": row.render_seconds,
     }
     if include_markdown:
         out["markdown"] = row.markdown
@@ -285,6 +289,7 @@ def _kick_rerender(issue_id: str) -> None:
     """Render-only re-run (skip extract + classify + author, use the existing
     markdown on the row). Used after admin edits."""
     def _run():
+        import time
         from scripts import upsc_pipeline
         try:
             with upsc_pipeline.SyncSessionLocal() as session:
@@ -304,6 +309,7 @@ def _kick_rerender(issue_id: str) -> None:
                 B.RUNNING_HEADER = "UPSC CHEETSHEET"
                 B.RUNNING_RIGHT = row.issue_date.strftime("%d %b %Y").lstrip("0")
                 issue_url = f"https://cheetsheet.tech/upsc/{row.issue_date.isoformat()}"
+                t0 = time.monotonic()
                 B.build(
                     src=md_path, out=output_pdf, title=row.title,
                     subtitle=f"{row.source} - {row.issue_date.strftime('%d %B %Y').lstrip('0')}",
@@ -315,6 +321,7 @@ def _kick_rerender(issue_id: str) -> None:
                 pix = doc[0].get_pixmap(dpi=120)
                 pix.save(cover_thumb)
                 doc.close()
+                row.render_seconds = time.monotonic() - t0
                 row.output_pdf_path = str(output_pdf)
                 row.cover_thumb_path = str(cover_thumb)
                 row.status = "preview"

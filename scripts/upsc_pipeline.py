@@ -536,32 +536,46 @@ def process_issue(issue_id: str) -> None:
 
     try:
         # ------------------------------------------------------------------ extract
-        _set_status(issue_id, status="extracting")
+        _set_status(issue_id, status="extracting",
+                    extract_seconds=None, classify_seconds=None,
+                    author_seconds=None, render_seconds=None)
         print(f"[upsc] {issue_id} stage 1: extract")
+        t0 = time.monotonic()
         raw_text = stage_extract(pdf_path)
+        extract_dt = time.monotonic() - t0
+        print(f"  -> extract took {extract_dt:.1f}s")
 
         # ------------------------------------------------------------------ classify
-        _set_status(issue_id, status="authoring")
+        _set_status(issue_id, status="authoring", extract_seconds=extract_dt)
         print(f"[upsc] {issue_id} stage 2: classify")
+        t0 = time.monotonic()
         articles = stage_classify(raw_text, max_articles=12)
+        classify_dt = time.monotonic() - t0
+        print(f"  -> classify took {classify_dt:.1f}s")
         if not articles:
             raise RuntimeError("classify produced 0 articles — bad extraction?")
         print(f"  -> {len(articles)} articles survived classification")
 
         # ------------------------------------------------------------------ author
+        _set_status(issue_id, classify_seconds=classify_dt)
         print(f"[upsc] {issue_id} stage 3: author")
+        t0 = time.monotonic()
         stage_author(articles, start_num=1)
+        author_dt = time.monotonic() - t0
+        print(f"  -> author took {author_dt:.1f}s")
 
         # ------------------------------------------------------------------ render
-        _set_status(issue_id, status="rendering")
+        _set_status(issue_id, status="rendering", author_seconds=author_dt)
         print(f"[upsc] {issue_id} stage 4: render")
+        t0 = time.monotonic()
         page_count, size_bytes = stage_render(
             articles,
             issue_date=issue_date, source=source,
             title=title, style=style,
             out_path=output_pdf, cover_thumb_path=cover_thumb,
         )
-        print(f"  -> {output_pdf.name}: {page_count} pages, {size_bytes/1024:.1f} KB")
+        render_dt = time.monotonic() - t0
+        print(f"  -> {output_pdf.name}: {page_count} pages, {size_bytes/1024:.1f} KB ({render_dt:.1f}s)")
 
         # ------------------------------------------------------------------ preview
         summary = _compose_summary(articles)
@@ -572,8 +586,13 @@ def process_issue(issue_id: str) -> None:
             markdown=output_pdf.with_suffix(".md").read_text(encoding="utf-8"),
             summary=summary,
             article_count=len(articles),
+            render_seconds=render_dt,
         )
-        print(f"[upsc] {issue_id} -> preview (admin can publish)")
+        total = extract_dt + classify_dt + author_dt + render_dt
+        print(f"[upsc] {issue_id} -> preview "
+              f"(extract={extract_dt:.0f}s · classify={classify_dt:.0f}s · "
+              f"author={author_dt:.0f}s · render={render_dt:.0f}s · "
+              f"total={total:.0f}s / {total/60:.1f}m)")
 
     except Exception as exc:
         import traceback

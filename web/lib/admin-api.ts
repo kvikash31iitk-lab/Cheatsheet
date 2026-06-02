@@ -376,4 +376,8 @@ export type UpscIssue = {
   llm_tokens_in: number;
   llm_tokens_out: number;
   llm_cost_paise: number;
+  extract_seconds: number | null;
+  classify_seconds: number | null;
+  author_seconds: number | null;
+  render_seconds: number | null;
 };

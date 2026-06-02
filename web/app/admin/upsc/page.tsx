@@ -276,7 +276,7 @@ export default function AdminUpscPage() {
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: '140px 1fr 110px 110px 70px',
+                gridTemplateColumns: '140px 1fr 110px 110px 70px 90px',
                 gap: 12,
                 padding: '8px 12px',
                 fontSize: 11,
@@ -291,6 +291,7 @@ export default function AdminUpscPage() {
               <div>STATUS</div>
               <div>STYLE</div>
               <div style={{ textAlign: 'right' }}>ARTICLES</div>
+              <div style={{ textAlign: 'right' }}>TIME</div>
             </div>
             {issues.map((i) => (
               <Link
@@ -298,7 +299,7 @@ export default function AdminUpscPage() {
                 href={`/admin/upsc/${i.id}`}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '140px 1fr 110px 110px 70px',
+                  gridTemplateColumns: '140px 1fr 110px 110px 70px 90px',
                   gap: 12,
                   padding: '12px',
                   alignItems: 'center',
@@ -332,6 +333,25 @@ export default function AdminUpscPage() {
                   }}
                 >
                   {i.article_count || '-'}
+                </div>
+                <div
+                  style={{
+                    textAlign: 'right',
+                    fontSize: 12,
+                    color: 'var(--c-ink-3)',
+                    fontFamily: 'var(--font-mono)',
+                  }}
+                >
+                  {(() => {
+                    const total =
+                      (i.extract_seconds ?? 0) +
+                      (i.classify_seconds ?? 0) +
+                      (i.author_seconds ?? 0) +
+                      (i.render_seconds ?? 0);
+                    if (total <= 0) return '-';
+                    if (total < 60) return `${total.toFixed(0)}s`;
+                    return `${Math.round(total / 60)}m`;
+                  })()}
                 </div>
               </Link>
             ))}
