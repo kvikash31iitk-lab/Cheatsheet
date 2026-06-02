@@ -256,21 +256,49 @@ def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Artic
 
 
 def _chunk_text(text: str, target_chars: int) -> list[str]:
+    """Split text into chunks <= ``target_chars``.
+
+    Three-tier split, in priority order: page boundaries (form-feed), then
+    paragraph breaks (double newlines), then a hard character cut. The hard
+    cut is the safety net — a 20 KB OCR'd page with no paragraph breaks
+    must not be sent through whole.
+    """
     if len(text) <= target_chars:
         return [text]
-    parts = text.split("\f")
-    out: list[str] = []
-    buf: list[str] = []
-    size = 0
-    for p in parts:
-        if size + len(p) > target_chars and buf:
-            out.append("\n".join(buf))
-            buf, size = [], 0
-        buf.append(p)
-        size += len(p)
-    if buf:
-        out.append("\n".join(buf))
-    return out
+
+    def split_block(block: str, sep: str) -> list[str]:
+        """Greedy-pack ``block`` into pieces <= target_chars on ``sep``."""
+        out: list[str] = []
+        buf: list[str] = []
+        size = 0
+        for piece in block.split(sep):
+            if size + len(piece) > target_chars and buf:
+                out.append(sep.join(buf))
+                buf, size = [], 0
+            buf.append(piece)
+            size += len(piece) + len(sep)
+        if buf:
+            out.append(sep.join(buf))
+        return out
+
+    # 1. Greedy-pack by page
+    chunks = split_block(text, "\f")
+    # 2. Any chunk still too big (one page that exceeds target) — split by paragraph
+    refined: list[str] = []
+    for c in chunks:
+        if len(c) <= target_chars:
+            refined.append(c)
+        else:
+            refined.extend(split_block(c, "\n\n"))
+    # 3. Anything still too big after paragraph split — hard character cut.
+    final: list[str] = []
+    for c in refined:
+        if len(c) <= target_chars:
+            final.append(c)
+        else:
+            for i in range(0, len(c), target_chars):
+                final.append(c[i:i + target_chars])
+    return final
 
 
 # =============================================================================
