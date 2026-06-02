@@ -255,10 +255,12 @@ async def admin_patch(
         raise HTTPException(400, f"style must be one of {list(STYLE_CHOICES)}")
 
     needs_rerender = False
-    if patch.title is not None:
+    if patch.title is not None and patch.title.strip() != row.title:
         row.title = patch.title.strip()
-    if patch.source is not None:
+        needs_rerender = True  # cover page bakes the title in
+    if patch.source is not None and patch.source.strip() != row.source:
         row.source = patch.source.strip()
+        needs_rerender = True  # subtitle "<source> - <date>" is on the cover
     if patch.style is not None and patch.style != row.style:
         row.style = patch.style
         needs_rerender = True
