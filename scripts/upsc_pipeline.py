@@ -76,10 +76,18 @@ from scripts.digest_styles import STYLES  # noqa: E402
 PIPELINE_LLM = "llama-3.1-8b-instant"
 
 
+# If Groq hints a wait longer than this, treat as a daily-quota wall (TPD)
+# rather than a transient TPM blip: don't keep retrying — fail fast so the
+# admin can re-trigger after the rolling window resets. Daily walls return
+# multi-minute / hour-long hints; legitimate TPM congestion returns <60s.
+PIPELINE_LONG_WAIT_THRESHOLD = 90.0
+
+
 def _pipeline_chat(system: str, user: str, *, max_tokens: int = 2500,
                    temperature: float = 0.2) -> str:
     """Groq call pinned to ``PIPELINE_LLM`` (faster + higher TPM than 70B).
-    Same retry / 429-hint logic as seed_pyq_corpus._groq_chat."""
+    Same retry / 429-hint logic as seed_pyq_corpus._groq_chat — but bails out
+    early if Groq returns a long wait hint (means daily-quota wall, not TPM)."""
     from groq import Groq
     from bot.config import GROQ_API_KEY
     client = Groq(api_key=GROQ_API_KEY)
@@ -99,6 +107,11 @@ def _pipeline_chat(system: str, user: str, *, max_tokens: int = 2500,
         except Exception as exc:
             last_err = exc
             wait = _wait_for_429(exc, default_wait=10 * attempt)
+            if wait > PIPELINE_LONG_WAIT_THRESHOLD:
+                raise RuntimeError(
+                    f"pipeline LLM hit daily-quota wall (Groq asked to wait "
+                    f"{wait:.0f}s = {wait/60:.1f}min): {str(exc)[:200]}"
+                ) from exc
             print(f"    pipeline-llm attempt {attempt}/6 failed: waiting {wait:.1f}s — {str(exc)[:140]}")
             time.sleep(wait)
     raise RuntimeError(f"pipeline LLM failed after 6 attempts: {last_err}")
@@ -215,39 +228,197 @@ class Article:
     markdown: Optional[str] = None  # filled by stage 3
 
 
-def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Article]:
-    """LLM pass that segments + drops + tags. Returns at most max_articles.
+# Bylines that mark "an article body starts here" in Indian newspapers. Keep
+# these narrow (full-line matches only) — generic "two capitalised words"
+# patterns over-fire on datelines like 'New Delhi' or section labels.
+_BYLINE_PATTERNS = [
+    re.compile(r"^\s*Express News Service\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(PRESS TRUST OF INDIA|PTI)\s*$"),
+    re.compile(r"^\s*ANI\s*$"),
+    re.compile(r"^\s*(Reuters|Bloomberg|Associated Press|AFP)\s*$", re.IGNORECASE),
+    re.compile(r"^\s*FE Bureau\s*$"),
+    re.compile(r"^\s*ENS Economic Bureau\s*$", re.IGNORECASE),
+    re.compile(r"^\s*HT Correspondent\s*$", re.IGNORECASE),
+    # 'By Jane Doe' / 'By A Correspondent' / 'By A.J. Smith' — allow
+    # single-letter initials and 1-4 following words.
+    re.compile(r"^\s*By\s+[A-Z][A-Za-z.]*(\s+[A-Z][A-Za-z.]*){0,4}\s*$"),
+]
 
-    Per-call budget: Groq's free-tier 8b-instant caps each request at 6000
-    tokens total. Newspaper text tokenises at ~1:3 char:token. With a 4500-
-    char chunk (~1500 input) + ~500 system + 1500 max_tokens = ~3500 total,
-    well under the cap.
 
-    Two optimisations vs the first pass:
-      - target_chars 3000 -> 4500: cuts chunk count ~33%
-      - skip chunks < 400 chars (page-break fragments, blank rows after
-        the hard cut); they almost never contain articles and just burn TPM
+def _is_byline(line: str) -> bool:
+    s = line.strip()
+    if len(s) < 3 or len(s) > 60:
+        return False
+    return any(p.match(s) for p in _BYLINE_PATTERNS)
+
+
+def _glue_hyphenated(text: str) -> str:
+    """Tesseract breaks words at line-end with a soft hyphen ('gov-\\nernment').
+    Glue them back so the LLM sees clean prose."""
+    # Smart-hyphen (U+2010) and regular hyphen both appear
+    return re.sub(r"(\w)[-‐‐]\n(\w)", r"\1\2", text)
+
+
+def heuristic_segment(text: str) -> list[dict]:
+    """Split OCR'd newspaper text into candidate articles by detecting bylines.
+
+    A byline (e.g. 'Express News Service', 'PTI', 'By <Author>') reliably marks
+    the start of an article body. Walk backward from each byline to find the
+    headline (the closest non-empty lines above, before the next blank gap),
+    forward to find the body (until the next byline or a hard cap).
+
+    Returns a list of {"headline": str, "body": str} candidates. Empty list
+    if no bylines found — caller should fall back to chunk-based classify.
     """
-    chunks = _chunk_text(extracted_text, target_chars=4_500)
-    chunks = [c for c in chunks if len(c.strip()) >= 400]
-    pool: list[Article] = []
-    for i, chunk in enumerate(chunks):
-        print(f"  classify chunk {i+1}/{len(chunks)} ({len(chunk):,} chars)")
-        raw = _pipeline_chat(CLASSIFY_SYSTEM, chunk, max_tokens=1500, temperature=0.2)
-        rows = _safe_json_array(raw)
-        for r in rows:
-            try:
-                pool.append(Article(
-                    headline=str(r["headline"]).strip(),
-                    lede=str(r.get("lede", "")).strip(),
-                    body=str(r.get("body", "")).strip(),
-                    paper=str(r.get("paper", "GS-2")).strip(),
-                    static_topics=[str(t).strip() for t in (r.get("static_topics") or [])][:4],
-                    static_link=str(r.get("static_link", "")).strip(),
-                ))
-            except (KeyError, ValueError, TypeError):
+    text = _glue_hyphenated(text)
+    lines = text.split("\n")
+    byline_idx = [i for i, l in enumerate(lines) if _is_byline(l)]
+    if not byline_idx:
+        return []
+
+    out: list[dict] = []
+    for k, bidx in enumerate(byline_idx):
+        # Headline = the closest non-empty lines above, before the first blank
+        head_lines: list[str] = []
+        for j in range(bidx - 1, max(-1, bidx - 12), -1):
+            s = lines[j].strip()
+            if not s:
+                if head_lines:
+                    break
                 continue
-        time.sleep(1.5)  # polite spacing for Groq's free-tier TPM bucket
+            # Skip lines that are obviously not headlines (paragraph chunks)
+            if len(s) > 200 or s.endswith("."):
+                if head_lines:
+                    break
+                continue
+            head_lines.insert(0, s)
+        if not head_lines:
+            continue
+        headline = " ".join(head_lines).strip()
+        if len(headline) < 8:
+            continue
+
+        # Body = lines after byline until next byline OR cap of 180 lines
+        next_byline = byline_idx[k + 1] if k + 1 < len(byline_idx) else len(lines)
+        end = min(next_byline, bidx + 180)
+        body = "\n".join(lines[bidx + 1 : end]).strip()
+        # Drop articles with too-short bodies — they're stubs / photo captions.
+        # 150 chars ~ a 2-3 sentence news brief; below that is rarely a real
+        # article.
+        if len(body) < 150:
+            continue
+        out.append({"headline": headline, "body": body})
+    return out
+
+
+# Single-LLM-call batch classifier: send N candidates per call, get JSON back
+# with only the UPSC-relevant ones structured. 4 candidates per batch keeps
+# us comfortably under Groq's 6K-token per-request cap.
+BATCH_CLASSIFY_SYSTEM = """You receive a list of newspaper article candidates. Each has a numeric idx, a headline, and a body.
+
+For EACH candidate, decide if it's UPSC Civil Services exam-relevant.
+- KEEP: editorials, op-eds, explainers, policy stories, court verdicts, treaties, scheme launches, report releases, investigations, foreign-policy news — anything touching GS-1 (history/geography/society/art-culture), GS-2 (polity/IR/social justice), GS-3 (economy/environment/S&T/security), GS-4 (ethics).
+- DROP: ads, classifieds, sports, weather, market tickers, horoscopes, recipes, lifestyle fluff, page-fillers, anything that doesn't touch the syllabus.
+
+For each KEEP, output one JSON object:
+{
+  "idx": <int — the candidate's idx as given>,
+  "headline": "<clean headline>",
+  "lede": "<first 2-3 sentences of the article>",
+  "body": "<the article body, lightly normalised>",
+  "paper": "GS-1 | GS-2 | GS-3 | GS-4 | essay",
+  "static_topics": ["<2-4 syllabus tags like 'Polity/Federalism'>"],
+  "static_link": "<one-line context tying the news to a static topic>"
+}
+
+Output ONLY a JSON array of the KEEP objects. No prose, no markdown fences.
+Order by exam relevance (most useful first). If NONE are relevant, output [].
+"""
+
+
+def _format_candidates_for_llm(batch: list[dict], start_idx: int) -> str:
+    """Render a batch of candidates as a numbered prompt for the LLM."""
+    parts: list[str] = []
+    for offset, c in enumerate(batch):
+        idx = start_idx + offset
+        # Cap body at 1500 chars so the prompt stays small; lede is enough for
+        # the LLM to judge relevance.
+        body = c["body"][:1500]
+        parts.append(f"--- Candidate {idx} ---\nHeadline: {c['headline']}\n\n{body}")
+    return "\n\n".join(parts)
+
+
+def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Article]:
+    """Filter + structure articles into Article records, returning at most
+    max_articles ordered by exam relevance.
+
+    Strategy:
+      1. Run ``heuristic_segment`` to find article boundaries from byline
+         patterns. This typically returns 15-30 candidates for a 22-page
+         newspaper — vs the ~100 chunks the old approach generated.
+      2. Send candidates to the LLM in batches of 4 (small enough to fit
+         under Groq's per-request 6K-token cap, large enough that we make
+         only ~5-8 LLM calls per newspaper).
+      3. If the heuristic returns fewer than 5 candidates (very rare —
+         unusual paper format, OCR mangled all bylines), fall back to the
+         old chunk-and-classify path.
+
+    Expected LLM-call count per typical 22-page paper:
+      - Old: ~98-148 calls
+      - New: ~5-8 calls (15-25× reduction)
+    """
+    candidates = heuristic_segment(extracted_text)
+    print(f"  heuristic_segment found {len(candidates)} candidate articles")
+
+    pool: list[Article] = []
+
+    if len(candidates) >= 5:
+        # Batched LLM filter+structure path.
+        BATCH = 4
+        for start in range(0, len(candidates), BATCH):
+            batch = candidates[start : start + BATCH]
+            print(f"  batch classify {start+1}-{start+len(batch)}/{len(candidates)}")
+            prompt = _format_candidates_for_llm(batch, start_idx=start)
+            raw = _pipeline_chat(BATCH_CLASSIFY_SYSTEM, prompt,
+                                 max_tokens=2500, temperature=0.2)
+            rows = _safe_json_array(raw)
+            for r in rows:
+                try:
+                    pool.append(Article(
+                        headline=str(r["headline"]).strip(),
+                        lede=str(r.get("lede", "")).strip(),
+                        body=str(r.get("body", "")).strip(),
+                        paper=str(r.get("paper", "GS-2")).strip(),
+                        static_topics=[str(t).strip() for t in (r.get("static_topics") or [])][:4],
+                        static_link=str(r.get("static_link", "")).strip(),
+                    ))
+                except (KeyError, ValueError, TypeError):
+                    continue
+            time.sleep(1.5)
+    else:
+        # Fallback: old chunk-and-classify approach. Used when the heuristic
+        # can't find bylines (Hindu, ToI, vernacular layouts, OCR damage).
+        print(f"  heuristic found <5 candidates; falling back to chunk path")
+        chunks = _chunk_text(extracted_text, target_chars=4_500)
+        chunks = [c for c in chunks if len(c.strip()) >= 400]
+        for i, chunk in enumerate(chunks):
+            print(f"  classify chunk {i+1}/{len(chunks)} ({len(chunk):,} chars)")
+            raw = _pipeline_chat(CLASSIFY_SYSTEM, chunk,
+                                 max_tokens=1500, temperature=0.2)
+            rows = _safe_json_array(raw)
+            for r in rows:
+                try:
+                    pool.append(Article(
+                        headline=str(r["headline"]).strip(),
+                        lede=str(r.get("lede", "")).strip(),
+                        body=str(r.get("body", "")).strip(),
+                        paper=str(r.get("paper", "GS-2")).strip(),
+                        static_topics=[str(t).strip() for t in (r.get("static_topics") or [])][:4],
+                        static_link=str(r.get("static_link", "")).strip(),
+                    ))
+                except (KeyError, ValueError, TypeError):
+                    continue
+            time.sleep(1.5)
     # If the LLM split the same story across chunks, dedupe by headline.
     seen: set[str] = set()
     deduped: list[Article] = []

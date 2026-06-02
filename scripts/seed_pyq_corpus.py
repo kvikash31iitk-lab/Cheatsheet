@@ -192,19 +192,42 @@ _TESSERACT_WARNED = False
 
 
 def _wait_for_429(exc: Exception, *, default_wait: float) -> float:
-    """Parse Groq's 'Please try again in X.Xs' hint and return seconds to wait.
+    """Parse Groq's 'Please try again in X' hint and return seconds to wait.
 
-    The Groq SDK surfaces 429 as a string in the message; parse defensively
-    and fall back to ``default_wait`` if the hint is missing.
+    Groq's hint format varies — sometimes pure seconds ('15.5s'), sometimes
+    minutes+seconds ('2m15.8s'), sometimes hours+minutes ('1h12m'). Parse all
+    three; fall back to ``default_wait`` if nothing matches.
+
+    Daily-quota hits return long waits (minutes/hours); TPM hits return
+    short waits (sub-second to ~60s). We trust whichever format Groq sends.
     """
     import re
     msg = str(exc)
-    m = re.search(r"try again in ([\d.]+)\s*s", msg, re.IGNORECASE)
-    if m:
-        try:
-            return float(m.group(1)) + 0.5  # tiny buffer
-        except ValueError:
-            pass
+    # 'Xh Ym Zs' / 'Xh Ym' / 'Xm Ys' / 'Xm' / 'Xs' — match the longest first.
+    patterns = [
+        # 1h12m34.5s
+        (re.compile(r"try again in (\d+)h\s*(\d+)m\s*([\d.]+)\s*s", re.IGNORECASE),
+         lambda m: int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))),
+        # 1h12m
+        (re.compile(r"try again in (\d+)h\s*(\d+)m", re.IGNORECASE),
+         lambda m: int(m.group(1)) * 3600 + int(m.group(2)) * 60),
+        # 2m15.8s
+        (re.compile(r"try again in (\d+)m\s*([\d.]+)\s*s", re.IGNORECASE),
+         lambda m: int(m.group(1)) * 60 + float(m.group(2))),
+        # 2m
+        (re.compile(r"try again in (\d+)m\b", re.IGNORECASE),
+         lambda m: int(m.group(1)) * 60),
+        # 15.5s
+        (re.compile(r"try again in ([\d.]+)\s*s\b", re.IGNORECASE),
+         lambda m: float(m.group(1))),
+    ]
+    for pat, conv in patterns:
+        m = pat.search(msg)
+        if m:
+            try:
+                return conv(m) + 0.5  # tiny buffer
+            except (ValueError, TypeError):
+                continue
     return default_wait
 
 
