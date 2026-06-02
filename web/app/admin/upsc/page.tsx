@@ -137,7 +137,7 @@ function UploadForm({ onUploaded }: { onUploaded: () => void }) {
         type="text"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        placeholder="Defaults to 'UPSC Cheetsheet - YYYY-MM-DD'"
+        placeholder="Defaults to e.g. 'UPSC Cheetsheet - 01 June 2026'"
       />
       <Select
         label="RENDERER STYLE"

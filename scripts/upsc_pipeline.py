@@ -633,7 +633,7 @@ def _cli() -> None:
     except ValueError:
         sys.exit(f"--date must be YYYY-MM-DD, got {iso!r}")
 
-    title = args.title or f"UPSC Cheetsheet - {the_date.isoformat()}"
+    title = args.title or f"UPSC Cheetsheet - {the_date.strftime('%d %B %Y')}"
     import uuid
     new_id = uuid.uuid4().hex
     with SyncSessionLocal() as session:

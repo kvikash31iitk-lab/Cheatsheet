@@ -182,7 +182,8 @@ async def admin_upload(
         id=issue_id,
         issue_date=the_date,
         source=source.strip(),
-        title=(title or f"UPSC Cheetsheet - {the_date.isoformat()}").strip(),
+        # Human-readable default; URL still uses ISO date for routing.
+        title=(title or f"UPSC Cheetsheet - {the_date.strftime('%d %B %Y')}").strip(),
         style=style,
         status="uploaded",
         input_pdf_path=str(input_pdf_path),
