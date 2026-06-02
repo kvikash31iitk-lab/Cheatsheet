@@ -145,27 +145,58 @@ def _set_status(issue_id: str, *, status: Optional[str] = None,
 # Stage 1: extract
 # =============================================================================
 
-def stage_extract(pdf_path: Path) -> str:
+def stage_extract(pdf_path: Path, *, ocr_workers: int = 4) -> str:
     """Extract text from a newspaper PDF. OCR fallback for image-only pages.
 
     Newspaper PDFs (notably Indian Express HD) use subset fonts where
     PyMuPDF's text layer returns garbled glyphs even though it's "text".
     A character-distribution check catches that and forces OCR.
+
+    OCR runs in parallel via a ThreadPoolExecutor — Tesseract is a subprocess
+    so it releases the GIL during the actual recognition work, and a 2-vCPU
+    VPS comfortably handles 4 concurrent tesseract instances. Cuts a typical
+    18-page extract from ~18 min (serial) to ~5 min (4-way parallel).
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     doc = fitz.open(pdf_path)
-    pages: list[str] = []
+    n = len(doc)
+    pages: list[Optional[str]] = [None] * n
+
+    # First pass: pull text-layer pages directly, queue the rest for OCR.
+    ocr_jobs: list[tuple[int, "fitz.Pixmap"]] = []
     for i, page in enumerate(doc):
         text = page.get_text("text").strip()
         if _looks_like_real_text(text):
-            pages.append(text)
-            print(f"  page {i+1}/{len(doc)}: text layer ({len(text)} chars)")
+            pages[i] = text
+            print(f"  page {i+1}/{n}: text layer ({len(text)} chars)")
         else:
-            pix = page.get_pixmap(dpi=150)
-            ocr = ocr_page(pix)
-            pages.append(ocr)
-            print(f"  page {i+1}/{len(doc)}: OCR ({len(ocr)} chars)")
+            # Render now (PyMuPDF is not thread-safe — keep all fitz calls
+            # on the main thread; only the OCR step parallelises).
+            ocr_jobs.append((i, page.get_pixmap(dpi=150)))
     doc.close()
-    return "\n\f\n".join(pages)
+
+    # Parallel OCR over the queued pixmaps. Order doesn't matter during
+    # execution; we slot results back into ``pages[i]`` by index.
+    if ocr_jobs:
+        workers = max(1, min(ocr_workers, len(ocr_jobs)))
+        print(f"  OCR'ing {len(ocr_jobs)} pages with {workers} parallel workers")
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {ex.submit(ocr_page, pix): idx for idx, pix in ocr_jobs}
+            done = 0
+            from concurrent.futures import as_completed
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    text = fut.result()
+                except Exception as exc:
+                    text = ""
+                    print(f"  page {idx+1}/{n}: OCR FAILED — {exc}")
+                pages[idx] = text
+                done += 1
+                print(f"  page {idx+1}/{n}: OCR ({len(text)} chars)  [{done}/{len(ocr_jobs)} done]")
+
+    return "\n\f\n".join(p or "" for p in pages)
 
 
 def _looks_like_real_text(text: str) -> bool:
