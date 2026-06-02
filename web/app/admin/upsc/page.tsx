@@ -8,7 +8,8 @@ import { adminApi, type UpscIssue, type UpscStatus, type UpscStyle } from '@/lib
 
 const STATUS_LABEL: Record<UpscStatus, string> = {
   uploaded: 'Queued',
-  extracting: 'Extracting',
+  extracting: 'Extracting (OCR)',
+  classifying: 'Classifying',
   authoring: 'Authoring',
   rendering: 'Rendering',
   preview: 'Preview',
@@ -19,6 +20,7 @@ const STATUS_LABEL: Record<UpscStatus, string> = {
 const STATUS_TONE: Record<UpscStatus, 'neutral' | 'accent' | 'positive' | 'warning'> = {
   uploaded: 'neutral',
   extracting: 'accent',
+  classifying: 'accent',
   authoring: 'accent',
   rendering: 'accent',
   preview: 'warning',
@@ -230,7 +232,7 @@ export default function AdminUpscPage() {
   const inflight = useMemo(
     () =>
       issues?.some((i) =>
-        ['uploaded', 'extracting', 'authoring', 'rendering'].includes(i.status),
+        ['uploaded', 'extracting', 'classifying', 'authoring', 'rendering'].includes(i.status),
       ) ?? false,
     [issues],
   );

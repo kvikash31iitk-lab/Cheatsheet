@@ -216,15 +216,20 @@ class Article:
 
 
 def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Article]:
-    """LLM pass that segments + drops + tags. Returns at most max_articles."""
-    # Newspaper text can run 50-100K chars. Llama-3.1-8b's free tier wants
-    # ~5K tokens per request, so chunk by ~15K chars and merge results.
-    # Groq's per-request size limit on the free tier is 6000 tokens TOTAL
-    # (input + max_tokens reservation). Newspaper text tokenises at ~1 token
-    # per 3 chars (not 4 like English prose), so 3000-char chunks give us
-    # ~1000 input tokens + 1500 output reservation + ~500 system = ~3000
-    # total, well under the cap with a comfortable buffer.
-    chunks = _chunk_text(extracted_text, target_chars=3_000)
+    """LLM pass that segments + drops + tags. Returns at most max_articles.
+
+    Per-call budget: Groq's free-tier 8b-instant caps each request at 6000
+    tokens total. Newspaper text tokenises at ~1:3 char:token. With a 4500-
+    char chunk (~1500 input) + ~500 system + 1500 max_tokens = ~3500 total,
+    well under the cap.
+
+    Two optimisations vs the first pass:
+      - target_chars 3000 -> 4500: cuts chunk count ~33%
+      - skip chunks < 400 chars (page-break fragments, blank rows after
+        the hard cut); they almost never contain articles and just burn TPM
+    """
+    chunks = _chunk_text(extracted_text, target_chars=4_500)
+    chunks = [c for c in chunks if len(c.strip()) >= 400]
     pool: list[Article] = []
     for i, chunk in enumerate(chunks):
         print(f"  classify chunk {i+1}/{len(chunks)} ({len(chunk):,} chars)")
@@ -242,7 +247,7 @@ def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Artic
                 ))
             except (KeyError, ValueError, TypeError):
                 continue
-        time.sleep(2.5)  # polite spacing for Groq's free-tier TPM bucket
+        time.sleep(1.5)  # polite spacing for Groq's free-tier TPM bucket
     # If the LLM split the same story across chunks, dedupe by headline.
     seen: set[str] = set()
     deduped: list[Article] = []
@@ -546,7 +551,7 @@ def process_issue(issue_id: str) -> None:
         print(f"  -> extract took {extract_dt:.1f}s")
 
         # ------------------------------------------------------------------ classify
-        _set_status(issue_id, status="authoring", extract_seconds=extract_dt)
+        _set_status(issue_id, status="classifying", extract_seconds=extract_dt)
         print(f"[upsc] {issue_id} stage 2: classify")
         t0 = time.monotonic()
         articles = stage_classify(raw_text, max_articles=12)
@@ -557,7 +562,7 @@ def process_issue(issue_id: str) -> None:
         print(f"  -> {len(articles)} articles survived classification")
 
         # ------------------------------------------------------------------ author
-        _set_status(issue_id, classify_seconds=classify_dt)
+        _set_status(issue_id, status="authoring", classify_seconds=classify_dt)
         print(f"[upsc] {issue_id} stage 3: author")
         t0 = time.monotonic()
         stage_author(articles, start_num=1)

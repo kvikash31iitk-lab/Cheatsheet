@@ -353,6 +353,7 @@ export type UpscStyle =
 export type UpscStatus =
   | 'uploaded'
   | 'extracting'
+  | 'classifying'
   | 'authoring'
   | 'rendering'
   | 'preview'

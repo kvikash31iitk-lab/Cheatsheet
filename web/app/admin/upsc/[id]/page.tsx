@@ -16,6 +16,7 @@ import { adminApi, type UpscIssue, type UpscStatus, type UpscStyle } from '@/lib
 const STATUS_TONE: Record<UpscStatus, 'neutral' | 'accent' | 'mint' | 'gold' | 'rose'> = {
   uploaded: 'neutral',
   extracting: 'accent',
+  classifying: 'accent',
   authoring: 'accent',
   rendering: 'accent',
   preview: 'gold',
@@ -25,9 +26,10 @@ const STATUS_TONE: Record<UpscStatus, 'neutral' | 'accent' | 'mint' | 'gold' | '
 
 const STATUS_LABEL: Record<UpscStatus, string> = {
   uploaded: 'Queued',
-  extracting: 'Extracting...',
-  authoring: 'Authoring...',
-  rendering: 'Rendering...',
+  extracting: 'Extracting (OCR)...',
+  classifying: 'Classifying articles...',
+  authoring: 'Authoring digest...',
+  rendering: 'Rendering PDF...',
   preview: 'Ready for preview',
   published: 'Published',
   error: 'Error',
@@ -41,7 +43,7 @@ const STYLE_LABEL: Record<UpscStyle, string> = {
   magazine: 'Magazine',
 };
 
-const IN_FLIGHT: UpscStatus[] = ['uploaded', 'extracting', 'authoring', 'rendering'];
+const IN_FLIGHT: UpscStatus[] = ['uploaded', 'extracting', 'classifying', 'authoring', 'rendering'];
 
 type IssueWithMarkdown = UpscIssue & { markdown: string | null };
 
