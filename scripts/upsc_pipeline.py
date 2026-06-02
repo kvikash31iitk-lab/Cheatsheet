@@ -596,16 +596,49 @@ Rules:
 
 
 def stage_author(articles: list[Article], *, start_num: int = 1) -> None:
-    """Author each article (mutates in place, filling ``markdown``)."""
+    """Author each article (mutates in place, filling ``markdown``).
+
+    Prefers the Claude Code CLI when ``AUTHORING_PROVIDER=claude_code`` —
+    bills against the user's Anthropic Max subscription instead of the
+    Groq free-tier daily token quota the OCR + classify stages already
+    drain. Falls back to Groq on per-call exception, or permanently to
+    Groq if Claude CLI surfaces an auth-style unrecoverable failure.
+    """
+    from bot.author import _author_claude_code, ClaudeCodeUnrecoverableError
+    from bot.config import AUTHORING_PROVIDER
+
+    use_claude = AUTHORING_PROVIDER == "claude_code"
+    if use_claude:
+        print(f"  author backend: claude_code CLI (Anthropic Max subscription)")
+    else:
+        print(f"  author backend: groq {PIPELINE_LLM}")
+
     for i, art in enumerate(articles):
         n = start_num + i
         print(f"  authoring {n}/{start_num + len(articles) - 1}: {art.headline[:60]!r}")
         # Pull PYQs from the verified corpus
         art.pyqs = find_pyqs(art.static_topics, limit=3)
         prompt = _format_author_prompt(art, n)
-        raw = _pipeline_chat(AUTHOR_SYSTEM, prompt, max_tokens=1500, temperature=0.3)
+
+        if use_claude:
+            try:
+                raw = _author_claude_code(AUTHOR_SYSTEM, prompt, max_tokens=4000)
+            except ClaudeCodeUnrecoverableError as exc:
+                # OAuth dead or rate window stuck — fall back to Groq for the
+                # rest of the run, logged so admin sees the swap.
+                print(f"    claude_code unrecoverable ({exc}); falling back to Groq for remaining articles")
+                use_claude = False
+                raw = _pipeline_chat(AUTHOR_SYSTEM, prompt, max_tokens=1500, temperature=0.3)
+            except Exception as exc:
+                # Transient Claude CLI failure — fall back THIS article only,
+                # keep trying Claude on the next one.
+                print(f"    claude_code attempt failed ({exc}); using Groq for this article only")
+                raw = _pipeline_chat(AUTHOR_SYSTEM, prompt, max_tokens=1500, temperature=0.3)
+        else:
+            raw = _pipeline_chat(AUTHOR_SYSTEM, prompt, max_tokens=1500, temperature=0.3)
+
         art.markdown = raw.strip()
-        time.sleep(2.5)  # polite spacing for Groq's free-tier TPM bucket
+        time.sleep(0.5)
 
 
 def _format_author_prompt(art: Article, n: int) -> str:
