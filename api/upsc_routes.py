@@ -306,6 +306,7 @@ def _kick_rerender(issue_id: str) -> None:
                 from scripts.digest_styles import STYLES
                 import scripts.build_illustrated_book as B
                 STYLES[row.style]()
+                B.MASTHEAD_PATH = Path(__file__).resolve().parent.parent / "assets" / "brand" / "masthead_full.png"
                 B.RUNNING_HEADER = "UPSC CHEETSHEET"
                 B.RUNNING_RIGHT = row.issue_date.strftime("%d %b %Y").lstrip("0")
                 issue_url = f"https://cheetsheet.tech/upsc/{row.issue_date.isoformat()}"

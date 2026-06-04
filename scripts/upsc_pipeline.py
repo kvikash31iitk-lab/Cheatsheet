@@ -716,6 +716,8 @@ def stage_render(
     if style not in STYLES:
         raise RuntimeError(f"Unknown style: {style}. Must be one of {list(STYLES)}.")
     STYLES[style]()
+    # Brand masthead on the cover (replaces the plain text title).
+    B.MASTHEAD_PATH = PROJECT_ROOT / "assets" / "brand" / "masthead_full.png"
     B.RUNNING_HEADER = "UPSC CHEETSHEET"
     B.RUNNING_RIGHT = issue_date.strftime("%-d %b %Y") if sys.platform != "win32" else issue_date.strftime("%#d %b %Y")
     B.COVER_TAGLINE = [

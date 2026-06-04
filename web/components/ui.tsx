@@ -139,48 +139,34 @@ export const Card = ({
   </div>
 );
 
-export const CSLogo = ({ size = 18, color }: { size?: number; color?: string }) => (
-  <span
-    style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 8,
-      fontFamily: 'var(--font-serif)',
-      color: color || 'var(--c-ink)',
-      fontSize: size + 6,
-      lineHeight: 1,
-      letterSpacing: '-0.01em',
-      fontWeight: 400,
-    }}
-  >
-    <span style={{ display: 'inline-flex', position: 'relative', width: size, height: size }}>
-      <span
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'var(--c-accent)',
-          borderRadius: size * 0.22,
-          transform: 'rotate(-6deg)',
-        }}
-      />
-      <span
-        style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#fff',
-          fontFamily: 'var(--font-serif)',
-          fontSize: size * 0.7,
-          fontStyle: 'italic',
-          fontWeight: 500,
-          transform: 'translateY(-1px)',
-        }}
-      >
-        c
-      </span>
-    </span>
-    <span style={{ fontStyle: 'italic' }}>Cheatsheet</span>
-  </span>
-);
+// Brand wordmark. The PNG is exported from the Canva masthead — see
+// .upsc_work/logo/ for the source crops and assets/brand/ for the originals.
+// Rendered at native aspect ratio (335:50 = ~6.7:1) with height driven by
+// the ``size`` prop (matches the legacy text-mark API so existing callers
+// keep working).
+export const CSLogo = ({
+  size = 18,
+  variant = 'wordmark',
+}: {
+  size?: number;
+  /** ``wordmark`` is just the CHEETSHEET letters; ``masthead`` adds the
+   *  rules + tagline (much wider — use only at hero scale). */
+  variant?: 'wordmark' | 'masthead';
+  /** kept for API compat — no longer used */
+  color?: string;
+}) => {
+  const src = variant === 'masthead' ? '/brand/masthead_full.png' : '/brand/wordmark.png';
+  // Native aspect ratios from the cropped PNGs.
+  const aspect = variant === 'masthead' ? 365 / 123 : 335 / 50;
+  const height = variant === 'masthead' ? size * 2.4 : size * 1.3;
+  return (
+    /* eslint-disable-next-line @next/next/no-img-element */
+    <img
+      src={src}
+      alt="Cheetsheet"
+      width={Math.round(height * aspect)}
+      height={Math.round(height)}
+      style={{ display: 'inline-block', height, width: 'auto' }}
+    />
+  );
+};

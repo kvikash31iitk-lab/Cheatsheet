@@ -616,6 +616,12 @@ def make_chapter_index(chapters: list[str]) -> list:
 SHOW_QR: bool = False
 SOURCE_URL: str | None = None
 
+# Optional masthead image on the cover (replaces the big text title). Set
+# from the pipeline before calling build(); ``None`` means legacy text cover.
+# Path should point to a PNG at native aspect ratio — display width is fixed
+# at 12 cm and height scales proportionally.
+MASTHEAD_PATH: Path | None = None
+
 
 def cover_page(canv, doc):
     canv.saveState()
@@ -711,8 +717,28 @@ def render_block(kind, payload, story):
 
 
 def render_cover_page(story, title, subtitle):
-    story.append(Spacer(1, 5.5 * cm))
-    story.append(Paragraph(title, H_TITLE))
+    # Optional masthead image at the top of the cover. Set
+    # ``B.MASTHEAD_PATH`` from the calling pipeline (e.g. UPSC) to swap the
+    # plain text title for a brand-mark. None / missing file = legacy
+    # text-only cover (YouTube products keep this).
+    if MASTHEAD_PATH and Path(MASTHEAD_PATH).exists():
+        story.append(Spacer(1, 4 * cm))
+        # Use PIL to read native aspect so the masthead never distorts.
+        try:
+            with PILImage.open(MASTHEAD_PATH) as im:
+                native_w, native_h = im.size
+            target_w = 12 * cm
+            target_h = target_w * native_h / native_w
+            mast = Image(str(MASTHEAD_PATH), width=target_w, height=target_h)
+            mast.hAlign = "CENTER"
+            story.append(mast)
+            story.append(Spacer(1, 0.8 * cm))
+        except Exception:
+            # Fall back to text title if the image is broken.
+            story.append(Paragraph(title, H_TITLE))
+    else:
+        story.append(Spacer(1, 5.5 * cm))
+        story.append(Paragraph(title, H_TITLE))
     story.append(Paragraph(subtitle, H_SUBTITLE))
     story.append(Spacer(1, 1.5 * cm))
     for line in COVER_TAGLINE:
