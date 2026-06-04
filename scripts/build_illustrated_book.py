@@ -785,7 +785,11 @@ def build(src: Path | None = None, out: Path | None = None,
     # Cover-page QR is opt-in via the `chapters` feature. Reset on every
     # build() so a feature-enabled run followed by a no-feature run in the
     # same process doesn't leak state.
-    SHOW_QR = bool(source_url) and "chapters" in feats
+    # QR was originally part of `chapters`, but the UPSC digest wants the QR
+    # without the chapter-index page (the digest's own intro + "Must-read
+    # three" callout already serves as the table of contents). Accept `qr`
+    # as a standalone flag; keep `chapters` implying QR for backward compat.
+    SHOW_QR = bool(source_url) and ("qr" in feats or "chapters" in feats)
     SOURCE_URL = source_url
 
     md = src.read_text(encoding="utf-8")

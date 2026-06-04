@@ -313,7 +313,7 @@ def _kick_rerender(issue_id: str) -> None:
                 B.build(
                     src=md_path, out=output_pdf, title=row.title,
                     subtitle=f"{row.source} - {row.issue_date.strftime('%d %B %Y').lstrip('0')}",
-                    features=["summary", "tldr", "qna", "chapters"],
+                    features=["summary", "tldr", "qna", "qr"],
                     source_url=issue_url,
                 )
                 import fitz

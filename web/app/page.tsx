@@ -1,6 +1,9 @@
 import Link from 'next/link';
 import { Btn, Tag, CSLogo } from '@/components/ui';
 import { Ic } from '@/components/icons';
+import { serverFetchUpscList } from '@/lib/upsc-api';
+
+export const dynamic = 'force-dynamic';
 
 const NavBar = () => (
   <header
@@ -13,11 +16,21 @@ const NavBar = () => (
     }}
   >
     <CSLogo size={18} />
-    <nav style={{ display: 'flex', gap: 32, fontSize: 13.5, color: 'var(--c-ink-2)' }}>
+    <nav style={{ display: 'flex', gap: 28, fontSize: 13.5, color: 'var(--c-ink-2)' }}>
       <a href="#features" style={{ textDecoration: 'none', color: 'inherit' }}>Features</a>
       <a href="#pricing" style={{ textDecoration: 'none', color: 'inherit' }}>Pricing</a>
       <a href="#how" style={{ textDecoration: 'none', color: 'inherit' }}>How it works</a>
       <a href="#faq" style={{ textDecoration: 'none', color: 'inherit' }}>FAQ</a>
+      <Link
+        href="/upsc"
+        style={{
+          textDecoration: 'none',
+          color: 'var(--c-accent, #C9572B)',
+          fontWeight: 500,
+        }}
+      >
+        UPSC daily ✨
+      </Link>
     </nav>
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
       <Link href="/login" style={{ textDecoration: 'none' }}>
@@ -32,9 +45,11 @@ const NavBar = () => (
 
 const Hero = () => (
   <section style={{ padding: '72px 56px 56px', textAlign: 'center', position: 'relative' }}>
-    <Tag tone="accent" style={{ marginBottom: 24, padding: '5px 12px' }}>
-      <Ic.sparkle size={11} /> New · Book Notes for long lectures
-    </Tag>
+    <Link href="/upsc" style={{ textDecoration: 'none' }}>
+      <Tag tone="accent" style={{ marginBottom: 24, padding: '5px 12px', cursor: 'pointer' }}>
+        <Ic.sparkle size={11} /> New · UPSC daily digest →
+      </Tag>
+    </Link>
     <h1
       style={{
         fontFamily: 'var(--font-serif)',
@@ -255,6 +270,125 @@ const FeatureSplit = () => (
     </div>
   </section>
 );
+
+type UpscTeaserProps = {
+  latestDate: string | null;
+  latestTitle: string | null;
+  latestArticleCount: number | null;
+};
+
+const UpscTeaser = ({ latestDate, latestTitle, latestArticleCount }: UpscTeaserProps) => {
+  const hasLatest = !!latestDate;
+  const thumbUrl = latestDate ? `/api/public/upsc/thumb/${latestDate}` : null;
+  const dateLabel = latestDate
+    ? new Date(latestDate + 'T00:00:00').toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      })
+    : null;
+  return (
+    <section
+      style={{
+        padding: '80px 56px',
+        borderTop: '1px solid var(--c-line)',
+        background: 'var(--c-bg, #FBF8F1)',
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 1100,
+          margin: '0 auto',
+          display: 'grid',
+          gridTemplateColumns: hasLatest ? 'minmax(0, 300px) 1fr' : '1fr',
+          gap: 48,
+          alignItems: 'center',
+        }}
+      >
+        {hasLatest && (
+          <Link
+            href={`/upsc/${latestDate}`}
+            style={{
+              display: 'block',
+              aspectRatio: '1 / 1.414',
+              background: 'var(--c-surface-2, #f5f1ea)',
+              borderRadius: 14,
+              overflow: 'hidden',
+              border: '1px solid var(--c-line)',
+              boxShadow: '0 20px 48px -24px rgba(0,0,0,0.18)',
+              textDecoration: 'none',
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumbUrl!}
+              alt={`${latestTitle ?? 'UPSC digest'} cover`}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
+          </Link>
+        )}
+        <div>
+          <Tag tone="accent" style={{ marginBottom: 18, padding: '5px 12px' }}>
+            <Ic.sparkle size={11} /> Also new · daily UPSC digest
+          </Tag>
+          <h2
+            style={{
+              fontFamily: 'var(--font-serif)',
+              fontSize: 52,
+              lineHeight: 1.05,
+              letterSpacing: '-0.02em',
+              margin: '0 0 18px',
+              color: 'var(--c-ink)',
+              fontWeight: 400,
+            }}
+          >
+            Studying for <em style={{ fontStyle: 'italic' }}>UPSC?</em><br />
+            Today's newspaper, exam-ready.
+          </h2>
+          <p
+            style={{
+              fontSize: 17,
+              lineHeight: 1.55,
+              color: 'var(--c-ink-2)',
+              maxWidth: 540,
+              margin: '0 0 28px',
+            }}
+          >
+            15 exam-relevant stories distilled into one tight PDF every day. Paper-wise
+            GS tags, static linkage, two Prelims MCQs + one Mains question per article,
+            and <strong>only verified PYQ citations</strong> — never LLM-fabricated.
+          </p>
+          {hasLatest && dateLabel && (
+            <div style={{ fontSize: 13, color: 'var(--c-ink-3)', marginBottom: 22 }}>
+              Latest issue: <strong style={{ color: 'var(--c-ink-2)' }}>{dateLabel}</strong>
+              {latestArticleCount ? ` · ${latestArticleCount} articles` : ''}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <Link href="/upsc" style={{ textDecoration: 'none' }}>
+              <Btn variant="primary" size="lg" iconRight={<Ic.arrow size={14} />}>
+                Read today's digest
+              </Btn>
+            </Link>
+            <Link
+              href="/upsc"
+              style={{
+                fontSize: 13.5,
+                color: 'var(--c-ink-2)',
+                textDecoration: 'none',
+              }}
+            >
+              See the archive →
+            </Link>
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--c-ink-3)', marginTop: 14 }}>
+            Free · no login · drops daily by 7:30 AM IST.
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
 
 const HowItWorks = () => {
   const steps = [
@@ -624,6 +758,9 @@ const Footer = () => (
       <span>© 2026 Cheatsheet Labs · Made for students</span>
     </div>
     <div style={{ display: 'flex', gap: 20 }}>
+      <Link href="/upsc" style={{ color: 'inherit', textDecoration: 'none' }}>
+        UPSC daily
+      </Link>
       <a href="#" style={{ color: 'inherit', textDecoration: 'none' }}>Privacy</a>
       <a href="#" style={{ color: 'inherit', textDecoration: 'none' }}>Terms</a>
       <a href="#" style={{ color: 'inherit', textDecoration: 'none' }}>Contact</a>
@@ -632,12 +769,21 @@ const Footer = () => (
   </footer>
 );
 
-export default function Page() {
+export default async function Page() {
+  // Pull the latest published UPSC issue for the dedicated teaser section.
+  // Fails silently to a no-thumbnail variant if the API is down or empty.
+  const issues = await serverFetchUpscList(1);
+  const latest = issues[0] ?? null;
   return (
     <main style={{ minHeight: '100vh' }}>
       <NavBar />
       <Hero />
       <FeatureSplit />
+      <UpscTeaser
+        latestDate={latest?.date ?? null}
+        latestTitle={latest?.title ?? null}
+        latestArticleCount={latest?.article_count ?? null}
+      />
       <HowItWorks />
       <Pricing />
       <FAQ />
