@@ -45,6 +45,9 @@ UPSC_UPLOADS.mkdir(parents=True, exist_ok=True)
 
 router = APIRouter(tags=["upsc"])
 
+# Issue IDs whose pipeline thread is currently alive in this process.
+# main.py reads this to detect orphans in the periodic sweep.
+_upsc_in_flight: set[str] = set()
 
 STYLE_CHOICES = ("academic", "dense", "dense_tight", "coaching", "magazine")
 
@@ -87,6 +90,7 @@ def _kick_pipeline(issue_id: str) -> None:
     """Background task wrapper — runs the pipeline in a thread so the request
     handler returns immediately. ``process_issue`` does its own DB session
     management via SyncSessionLocal, so no event-loop interaction here."""
+    _upsc_in_flight.add(issue_id)
     def _run():
         from scripts.upsc_pipeline import process_issue
         try:
@@ -94,6 +98,8 @@ def _kick_pipeline(issue_id: str) -> None:
         except Exception as exc:
             # process_issue already records error_message on the row.
             print(f"[upsc] pipeline crashed for {issue_id}: {exc}")
+        finally:
+            _upsc_in_flight.discard(issue_id)
     threading.Thread(target=_run, daemon=True).start()
 
 
