@@ -57,6 +57,13 @@ COVER_TAGLINE = [
     "A visual, revise-friendly companion to a hands-on tutorial",
     "on building agentic workflows with Claude Code.",
 ]
+# Defaults saved at import time so build() can reset after each call.
+# The UPSC pipeline sets these globals before calling build(); without a
+# reset they bleed into the next video-book build in the same process.
+_D_RUNNING_HEADER = RUNNING_HEADER
+_D_RUNNING_RIGHT = RUNNING_RIGHT
+_D_COVER_FOOTER = COVER_FOOTER
+_D_COVER_TAGLINE = list(COVER_TAGLINE)
 # Resolve image paths in markdown relative to this directory:
 IMAGE_BASE = Path(r"C:\Users\HP\Documents\Claude\Video notes\work\v1")
 # ============================================================================
@@ -820,41 +827,51 @@ def build(src: Path | None = None, out: Path | None = None,
 
     md = src.read_text(encoding="utf-8")
 
-    # --- preprocess for features -------------------------------------------
-    summary_md: str | None = None
-    if "summary" in feats:
-        summary_md, md = _extract_summary_block(md)
+    try:
+        # --- preprocess for features -------------------------------------------
+        summary_md: str | None = None
+        if "summary" in feats:
+            summary_md, md = _extract_summary_block(md)
 
-    if "mermaid" in feats:
-        # Render mermaid blocks BEFORE chapter extraction so the LLM hasn't
-        # buried a chapter heading inside a fenced block by mistake. Diagrams
-        # are written next to the output PDF in a sibling _diagrams/ dir.
-        md = _render_mermaid_blocks(md, out.parent / "_diagrams")
+        if "mermaid" in feats:
+            # Render mermaid blocks BEFORE chapter extraction so the LLM hasn't
+            # buried a chapter heading inside a fenced block by mistake. Diagrams
+            # are written next to the output PDF in a sibling _diagrams/ dir.
+            md = _render_mermaid_blocks(md, out.parent / "_diagrams")
 
-    chapter_titles: list[str] | None = None
-    if "chapters" in feats:
-        chapter_titles = _extract_chapter_titles(md)
+        chapter_titles: list[str] | None = None
+        if "chapters" in feats:
+            chapter_titles = _extract_chapter_titles(md)
 
-    story = render(md, summary_md=summary_md, chapter_titles=chapter_titles)
+        story = render(md, summary_md=summary_md, chapter_titles=chapter_titles)
 
-    doc = BaseDocTemplate(
-        str(out), pagesize=A4,
-        leftMargin=MARGIN_L, rightMargin=MARGIN_R,
-        topMargin=MARGIN_T, bottomMargin=MARGIN_B,
-        title=TITLE, author="Generated student notes",
-    )
-    frame_cover = Frame(0, 0, PAGE_W, PAGE_H, id="cover", showBoundary=0,
-                        leftPadding=2*cm, rightPadding=2*cm,
-                        topPadding=2*cm, bottomPadding=2*cm)
-    frame_body = Frame(MARGIN_L, MARGIN_B, BODY_W,
-                       PAGE_H - MARGIN_T - MARGIN_B, id="body", showBoundary=0)
-    doc.addPageTemplates([
-        PageTemplate(id="cover", frames=[frame_cover], onPage=cover_page),
-        PageTemplate(id="body",  frames=[frame_body],  onPage=body_page),
-    ])
-    doc.build(story)
-    print(f"OK: {out}  ({out.stat().st_size/1024:.1f} kB)")
-    return out
+        doc = BaseDocTemplate(
+            str(out), pagesize=A4,
+            leftMargin=MARGIN_L, rightMargin=MARGIN_R,
+            topMargin=MARGIN_T, bottomMargin=MARGIN_B,
+            title=TITLE, author="Generated student notes",
+        )
+        frame_cover = Frame(0, 0, PAGE_W, PAGE_H, id="cover", showBoundary=0,
+                            leftPadding=2*cm, rightPadding=2*cm,
+                            topPadding=2*cm, bottomPadding=2*cm)
+        frame_body = Frame(MARGIN_L, MARGIN_B, BODY_W,
+                           PAGE_H - MARGIN_T - MARGIN_B, id="body", showBoundary=0)
+        doc.addPageTemplates([
+            PageTemplate(id="cover", frames=[frame_cover], onPage=cover_page),
+            PageTemplate(id="body",  frames=[frame_body],  onPage=body_page),
+        ])
+        doc.build(story)
+        print(f"OK: {out}  ({out.stat().st_size/1024:.1f} kB)")
+        return out
+    finally:
+        # Reset UPSC-specific globals so they don't bleed into the next
+        # video-book build running in the same process.
+        global RUNNING_HEADER, RUNNING_RIGHT, COVER_FOOTER, COVER_TAGLINE, MASTHEAD_PATH
+        RUNNING_HEADER = _D_RUNNING_HEADER
+        RUNNING_RIGHT = _D_RUNNING_RIGHT
+        COVER_FOOTER = _D_COVER_FOOTER
+        COVER_TAGLINE = list(_D_COVER_TAGLINE)
+        MASTHEAD_PATH = None
 
 
 if __name__ == "__main__":
