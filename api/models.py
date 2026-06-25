@@ -350,6 +350,24 @@ class UpscIssue(Base):
     author_seconds: Mapped[Optional[float]] = mapped_column(Float)
     render_seconds: Mapped[Optional[float]] = mapped_column(Float)
 
+    # --- Narrated-video pipeline (digest -> TTS narration -> MP4 -> YouTube) ---
+    # All nullable / defaulted, following the output_pdf_path precedent so they
+    # back-fill cleanly on existing rows via _migrate_columns.
+    #   video_status:   none | queued | rendering | uploading | ready | error
+    #   video_progress: current stage label shown in the admin UI
+    #   narration_script: JSON string — list of {section_id,label,text,est_seconds}
+    #   video_config:   JSON of the chosen VideoConfig variants
+    video_status: Mapped[Optional[str]] = mapped_column(String(16))
+    video_progress: Mapped[Optional[str]] = mapped_column(String(32))
+    video_path: Mapped[Optional[str]] = mapped_column(Text)
+    youtube_id: Mapped[Optional[str]] = mapped_column(String(20))
+    youtube_url: Mapped[Optional[str]] = mapped_column(Text)
+    narration_script: Mapped[Optional[str]] = mapped_column(Text)
+    script_confirmed: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    video_config: Mapped[Optional[str]] = mapped_column(Text)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )

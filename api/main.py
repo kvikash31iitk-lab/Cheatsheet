@@ -256,6 +256,17 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("upsc_issues", "classify_seconds", "REAL"),
     ("upsc_issues", "author_seconds", "REAL"),
     ("upsc_issues", "render_seconds", "REAL"),
+    # Narrated-video pipeline columns for UPSC digest issues. All nullable /
+    # defaulted so they back-fill on existing rows. ``script_confirmed`` uses
+    # the __BOOL_FALSE__ placeholder (0 on SQLite, FALSE on Postgres).
+    ("upsc_issues", "video_status", "VARCHAR(16)"),
+    ("upsc_issues", "video_progress", "VARCHAR(32)"),
+    ("upsc_issues", "video_path", "TEXT"),
+    ("upsc_issues", "youtube_id", "VARCHAR(20)"),
+    ("upsc_issues", "youtube_url", "TEXT"),
+    ("upsc_issues", "narration_script", "TEXT"),
+    ("upsc_issues", "script_confirmed", "BOOLEAN NOT NULL DEFAULT __BOOL_FALSE__"),
+    ("upsc_issues", "video_config", "TEXT"),
 ]
 
 

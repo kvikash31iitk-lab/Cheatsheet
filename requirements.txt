@@ -43,3 +43,11 @@ razorpay>=1.4.2
 # Self-hosted Whisper (no rate limits) — used when WHISPER_BACKEND=local.
 # Brings in ctranslate2, tokenizers, onnxruntime — ~200 MB install.
 faster-whisper>=1.0.3
+
+# YouTube Data API v3 upload (scripts/youtube_upload.py). google-auth-oauthlib
+# is only needed for the one-time offline OAuth consent that mints the refresh
+# token; the others are used at runtime by the resumable videos.insert upload.
+google-api-python-client>=2.0.0
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.2.0

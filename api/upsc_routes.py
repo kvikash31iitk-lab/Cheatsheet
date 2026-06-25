@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
+import subprocess
 import threading
 import uuid
 from datetime import date as date_cls, datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import (
     APIRouter,
@@ -29,11 +31,12 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api import settings as app_settings
 from api.db import get_session
 from api.deps import require_admin
 from api.models import AuditLog, UpscIssue, User
@@ -50,6 +53,40 @@ router = APIRouter(tags=["upsc"])
 _upsc_in_flight: set[str] = set()
 
 STYLE_CHOICES = ("academic", "dense", "dense_tight", "coaching", "magazine")
+
+# --- Narrated-video pipeline constants ---------------------------------------
+VIDEO_ENGINES = ("gemini", "chirp")
+VIDEO_LANGS = ("hi", "en")
+SLIDE_STYLES = ("digest", "clean", "animated")
+PRIVACY_CHOICES = ("public", "unlisted", "private")
+
+# The app_settings key holding the persisted VideoDefaults blob. Read/written
+# through the same api.settings helper every other setting uses, so it lives in
+# the app_settings table and rides the 60s cache.
+VIDEO_DEFAULTS_KEY = "video_defaults"
+
+# Server-side fallback used when no defaults row has been saved yet. The UI
+# pre-fills new issues from this. Kept here (not in api/settings.DEFAULTS, which
+# we do not own) so reads/writes stay inside this file's contract.
+VIDEO_DEFAULTS_FALLBACK: dict[str, Any] = {
+    "engine": "chirp",
+    "voice": "hi-IN-Chirp3-HD-Alnilam",
+    "lang": "hi",
+    "slide_style": "digest",
+    "theme": "amber",
+    "privacy": "unlisted",
+    "auto_publish": False,
+    "auto_generate_on_upload": False,
+    "title_template": "UPSC Daily Digest — {date}",
+    "description_template": (
+        "Exam-relevant current affairs from {source}, {date}.\n\n"
+        "Subscribe for a fresh UPSC digest every day."
+    ),
+}
+
+# QC band: a valid digest video should sit between a few seconds and ~40 min.
+QC_MIN_DURATION = 1.0
+QC_MAX_DURATION = 40 * 60.0
 
 
 # =============================================================================
@@ -80,6 +117,16 @@ def _issue_dict(row: UpscIssue, *, include_markdown: bool = False) -> dict[str, 
         "classify_seconds": row.classify_seconds,
         "author_seconds": row.author_seconds,
         "render_seconds": row.render_seconds,
+        # Narrated-video pipeline fields (all nullable; mirror the model).
+        "video_status": row.video_status,
+        "video_progress": row.video_progress,
+        "video_path": row.video_path,
+        "has_video": bool(row.video_path),
+        "youtube_id": row.youtube_id,
+        "youtube_url": row.youtube_url,
+        "narration_script": row.narration_script,
+        "script_confirmed": bool(row.script_confirmed),
+        "video_config": row.video_config,
     }
     if include_markdown:
         out["markdown"] = row.markdown
@@ -345,6 +392,220 @@ def _kick_rerender(issue_id: str) -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
+# =============================================================================
+# Narrated-video helpers (QC gate + defaults + the _kick_video daemon)
+# =============================================================================
+
+def _ffprobe_bin() -> str:
+    return os.environ.get("FFPROBE_BIN", "").strip() or "ffprobe"
+
+
+def _qc_video(video_path: str) -> tuple[bool, str, float]:
+    """QC gate before any YouTube upload. ffprobe the MP4 and require:
+    file exists, a decodable audio stream is present, and duration is inside
+    the expected band. Returns ``(ok, reason, duration)`` — ``reason`` is empty
+    when ok. Never raises; a missing/broken ffprobe is reported as a failure so
+    we fail closed (no publish) rather than open."""
+    if not video_path or not Path(video_path).exists():
+        return False, "video file missing on disk", 0.0
+    try:
+        proc = subprocess.run(
+            [
+                _ffprobe_bin(), "-v", "error",
+                "-print_format", "json",
+                "-show_format", "-show_streams",
+                video_path,
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+    except FileNotFoundError:
+        return False, "ffprobe not found — cannot QC video", 0.0
+    except Exception as exc:  # noqa: BLE001
+        return False, f"ffprobe failed: {exc}", 0.0
+    if proc.returncode != 0:
+        return False, f"ffprobe error: {(proc.stderr or '').strip()[:200]}", 0.0
+    try:
+        info = json.loads(proc.stdout or "{}")
+    except Exception:  # noqa: BLE001
+        return False, "ffprobe returned unparseable output", 0.0
+
+    streams = info.get("streams") or []
+    has_audio = any(s.get("codec_type") == "audio" for s in streams)
+    has_video = any(s.get("codec_type") == "video" for s in streams)
+    if not has_video:
+        return False, "no video stream", 0.0
+    if not has_audio:
+        return False, "no audio stream (narration missing)", 0.0
+
+    duration = 0.0
+    try:
+        duration = float((info.get("format") or {}).get("duration") or 0.0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration < QC_MIN_DURATION:
+        return False, f"duration too short ({duration:.1f}s)", duration
+    if duration > QC_MAX_DURATION:
+        return False, f"duration too long ({duration:.1f}s)", duration
+    return True, "", duration
+
+
+def _set_video_status(
+    issue_id: str, *, status: Optional[str] = None,
+    progress: Optional[str] = None, error: Optional[str] = None,
+    **fields: Any,
+) -> None:
+    """Write video_status/video_progress (and any extra row fields) from inside
+    the worker thread, using the pipeline's sync session like _kick_rerender."""
+    from scripts import upsc_pipeline
+    try:
+        with upsc_pipeline.SyncSessionLocal() as session:
+            row = session.get(UpscIssue, issue_id)
+            if row is None:
+                return
+            if status is not None:
+                row.video_status = status
+            if progress is not None:
+                row.video_progress = progress
+            if error is not None:
+                row.error_message = error
+            for k, v in fields.items():
+                setattr(row, k, v)
+            session.commit()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[upsc-video] status write failed for {issue_id}: {exc}")
+
+
+def _kick_video(issue_id: str) -> None:
+    """Fire-and-forget video build for an issue. Mirrors _kick_rerender's
+    thread + SyncSessionLocal shape. Lazy-imports the scripts.* engine modules
+    (built to the shared contract by sibling agents) inside the thread so the
+    request handler never depends on the TTS/google libs being importable.
+
+    Pipeline: (generate script if not confirmed/empty) -> build_video ->
+    QC gate -> optional YouTube upload (when config.auto_publish + privacy).
+    Status flows none/queued -> rendering -> uploading -> ready | error."""
+    _upsc_in_flight.add(issue_id)
+
+    def _run() -> None:
+        from scripts import upsc_pipeline
+        try:
+            # ---- Load the row + chosen config -----------------------------
+            with upsc_pipeline.SyncSessionLocal() as session:
+                row = session.get(UpscIssue, issue_id)
+                if row is None:
+                    return
+                try:
+                    config = json.loads(row.video_config) if row.video_config else {}
+                except Exception:  # noqa: BLE001
+                    config = {}
+                script_confirmed = bool(row.script_confirmed)
+                raw_script = row.narration_script
+
+            lang = (config.get("lang") or "hi")
+
+            # ---- Script: reuse the confirmed/edited one, else generate -----
+            _set_video_status(issue_id, status="rendering",
+                              progress="preparing script", error=None)
+            sections: list[dict] = []
+            if raw_script:
+                try:
+                    parsed = json.loads(raw_script)
+                    if isinstance(parsed, list):
+                        sections = parsed
+                except Exception:  # noqa: BLE001
+                    sections = []
+            if not sections:
+                from scripts import upsc_narration
+                sections = upsc_narration.generate_script(issue_id, lang=lang)
+                # Persist the freshly generated script so the UI can show it.
+                _set_video_status(
+                    issue_id,
+                    narration_script=json.dumps(sections, ensure_ascii=False),
+                )
+
+            # ---- Build the video (engine updates progress as it goes) ------
+            _set_video_status(issue_id, status="rendering",
+                              progress="rendering slides + narration")
+            from scripts import upsc_video
+            result = upsc_video.build_video(issue_id, config, sections)
+            video_path = result["video_path"]
+            _set_video_status(
+                issue_id, status="ready", progress="video ready",
+                video_path=video_path, error=None,
+            )
+
+            # ---- Optional auto-publish to YouTube (behind the QC gate) -----
+            privacy = (config.get("privacy") or "").strip().lower()
+            auto_publish = bool(config.get("auto_publish"))
+            if auto_publish and privacy in PRIVACY_CHOICES:
+                ok, reason, _dur = _qc_video(video_path)
+                if not ok:
+                    _set_video_status(
+                        issue_id, status="error",
+                        progress=f"QC failed: {reason}",
+                        error=f"QC gate blocked publish: {reason}",
+                    )
+                    return
+                _set_video_status(issue_id, status="uploading",
+                                  progress="uploading to YouTube")
+                meta = _youtube_meta_from_config(issue_id, config)
+                from scripts import youtube_upload
+                up = youtube_upload.upload(video_path, meta)
+                _set_video_status(
+                    issue_id, status="ready", progress="published to YouTube",
+                    youtube_id=up.get("youtube_id"),
+                    youtube_url=up.get("youtube_url"),
+                )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[upsc-video] build failed for {issue_id}: {exc}")
+            _set_video_status(
+                issue_id, status="error", progress="error",
+                error=str(exc)[:500],
+            )
+        finally:
+            _upsc_in_flight.discard(issue_id)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _youtube_meta_from_config(issue_id: str, config: dict) -> dict[str, Any]:
+    """Build YouTube upload metadata from saved defaults templates + the issue.
+    Runs inside the worker thread (sync session). Templates support {date},
+    {source}, {title} placeholders."""
+    from scripts import upsc_pipeline
+    defaults = app_settings.get_sync(VIDEO_DEFAULTS_KEY) or {}
+    if not isinstance(defaults, dict):
+        defaults = {}
+    title_tpl = config.get("title_template") or defaults.get(
+        "title_template") or VIDEO_DEFAULTS_FALLBACK["title_template"]
+    desc_tpl = config.get("description_template") or defaults.get(
+        "description_template") or VIDEO_DEFAULTS_FALLBACK["description_template"]
+    date_str = source = title = ""
+    with upsc_pipeline.SyncSessionLocal() as session:
+        row = session.get(UpscIssue, issue_id)
+        if row is not None:
+            source = row.source or ""
+            title = row.title or ""
+            try:
+                date_str = row.issue_date.strftime("%d %B %Y").lstrip("0")
+            except Exception:  # noqa: BLE001
+                date_str = ""
+    subst = {"date": date_str, "source": source, "title": title}
+
+    def _fmt(tpl: str) -> str:
+        try:
+            return tpl.format(**subst)
+        except Exception:  # noqa: BLE001
+            return tpl
+
+    return {
+        "title": _fmt(title_tpl) or title or "UPSC Daily Digest",
+        "description": _fmt(desc_tpl),
+        "tags": ["UPSC", "current affairs", "daily digest"],
+        "privacy": (config.get("privacy") or "unlisted"),
+    }
+
+
 @router.post("/api/admin/upsc/issues/{issue_id}/reauthor")
 async def admin_reauthor(
     issue_id: str,
@@ -463,6 +724,328 @@ async def admin_pyq_reseed(
     await s.commit()
     _kick_pyq_reseed(body.years, body.stages)
     return {"queued": "ok", "years": body.years, "stages": ",".join(body.stages)}
+
+
+# =============================================================================
+# Admin: narrated-video studio (voices, script, make-video, youtube, defaults)
+# =============================================================================
+
+@router.get("/api/admin/upsc/voices")
+async def admin_voices(
+    engine: str = "chirp",
+    lang: str = "hi",
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Ranked voice catalogue for an engine+language. Also reports whether the
+    Gemini engine is currently usable so the UI can badge the fallback."""
+    engine = (engine or "chirp").lower()
+    lang = (lang or "hi").lower()
+    if engine not in VIDEO_ENGINES:
+        raise HTTPException(400, f"engine must be one of {list(VIDEO_ENGINES)}")
+    if lang not in VIDEO_LANGS:
+        raise HTTPException(400, f"lang must be one of {list(VIDEO_LANGS)}")
+    from scripts import upsc_video
+    try:
+        voices = upsc_video.list_voices(engine, lang)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"could not list voices: {exc}")
+    try:
+        gemini_active = bool(upsc_video.gemini_billing_active())
+    except Exception:  # noqa: BLE001
+        gemini_active = False
+    return {
+        "engine": engine,
+        "lang": lang,
+        "voices": voices,
+        "gemini_billing_active": gemini_active,
+    }
+
+
+class VoicePreview(BaseModel):
+    engine: str = "chirp"
+    voice: str
+    lang: str = "hi"
+    text: Optional[str] = Field(None, max_length=600)
+
+
+@router.post("/api/admin/upsc/voice-preview")
+async def admin_voice_preview(
+    body: VoicePreview,
+    admin: User = Depends(require_admin),
+) -> Response:
+    """Synthesize one sample sentence in the chosen engine/voice/lang and return
+    the WAV bytes inline for the UI to play."""
+    engine = (body.engine or "chirp").lower()
+    lang = (body.lang or "hi").lower()
+    if engine not in VIDEO_ENGINES:
+        raise HTTPException(400, f"engine must be one of {list(VIDEO_ENGINES)}")
+    if lang not in VIDEO_LANGS:
+        raise HTTPException(400, f"lang must be one of {list(VIDEO_LANGS)}")
+    if not body.voice or not body.voice.strip():
+        raise HTTPException(400, "voice is required")
+    from scripts import upsc_video
+    try:
+        wav = upsc_video.preview_voice(engine, body.voice.strip(), lang, body.text)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"voice preview failed: {exc}")
+    return Response(
+        content=wav,
+        media_type="audio/wav",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/api/admin/upsc/issues/{issue_id}/script")
+async def admin_generate_script(
+    issue_id: str,
+    s: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+    lang: str = "hi",
+) -> dict[str, Any]:
+    """Generate the spoken narration script from the issue's authored markdown
+    and persist it (unconfirmed). Returns ``{sections:[...]}``. The LLM rewrite
+    can be slow, so it runs in a thread to avoid blocking the event loop."""
+    lang = (lang or "hi").lower()
+    if lang not in VIDEO_LANGS:
+        raise HTTPException(400, f"lang must be one of {list(VIDEO_LANGS)}")
+    row = await s.get(UpscIssue, issue_id)
+    if row is None:
+        raise HTTPException(404, "issue not found")
+    if not row.markdown or not row.markdown.strip():
+        raise HTTPException(400, "issue has no authored markdown yet")
+
+    import anyio
+
+    def _gen() -> list[dict]:
+        from scripts import upsc_narration
+        return upsc_narration.generate_script(issue_id, lang=lang)
+
+    try:
+        sections = await anyio.to_thread.run_sync(_gen)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"script generation failed: {exc}")
+
+    row.narration_script = json.dumps(sections, ensure_ascii=False)
+    row.script_confirmed = False
+    await _audit(s, admin, "upsc.script_generate", target_id=issue_id, payload={
+        "sections": len(sections), "lang": lang,
+    })
+    await s.commit()
+    return {"sections": sections}
+
+
+class ScriptSection(BaseModel):
+    section_id: str
+    label: str = ""
+    text: str = ""
+    est_seconds: float = 0.0
+
+
+class ScriptPatch(BaseModel):
+    sections: list[ScriptSection]
+    confirmed: bool = False
+
+
+@router.patch("/api/admin/upsc/issues/{issue_id}/script")
+async def admin_save_script(
+    issue_id: str,
+    patch: ScriptPatch,
+    s: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Save the edited narration script + confirmed flag. TTS will not run
+    until ``confirmed`` is true (the make-video endpoint enforces this)."""
+    row = await s.get(UpscIssue, issue_id)
+    if row is None:
+        raise HTTPException(404, "issue not found")
+    sections = [sec.model_dump() for sec in patch.sections]
+    row.narration_script = json.dumps(sections, ensure_ascii=False)
+    row.script_confirmed = bool(patch.confirmed)
+    await _audit(s, admin, "upsc.script_save", target_id=issue_id, payload={
+        "sections": len(sections), "confirmed": bool(patch.confirmed),
+    })
+    await s.commit()
+    return {"ok": True}
+
+
+class MakeVideoConfig(BaseModel):
+    engine: Literal["gemini", "chirp"] = "chirp"
+    voice: str
+    lang: Literal["hi", "en"] = "hi"
+    slide_style: Literal["digest", "clean", "animated"] = "digest"
+    theme: str = "amber"
+    privacy: Literal["public", "unlisted", "private"] = "unlisted"
+    auto_publish: bool = False
+    title_template: Optional[str] = None
+    description_template: Optional[str] = None
+
+
+class MakeVideoRequest(BaseModel):
+    config: MakeVideoConfig
+
+
+@router.post("/api/admin/upsc/issues/{issue_id}/make-video")
+async def admin_make_video(
+    issue_id: str,
+    body: MakeVideoRequest,
+    s: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Persist the chosen variant config and kick the video build daemon.
+    Requires a confirmed script (the TTS confirm gate). Mirrors admin_publish's
+    guard + audit + commit shape, then fires _kick_video like _kick_rerender."""
+    row = await s.get(UpscIssue, issue_id)
+    if row is None:
+        raise HTTPException(404, "issue not found")
+    if not row.markdown or not row.markdown.strip():
+        raise HTTPException(400, "issue has no authored markdown — cannot make a video")
+    if not row.script_confirmed:
+        raise HTTPException(400, "confirm the narration script before generating the video")
+    if row.video_status in ("queued", "rendering", "uploading"):
+        raise HTTPException(409, f"a video job is already in progress (status={row.video_status})")
+
+    config = body.config.model_dump()
+    row.video_config = json.dumps(config, ensure_ascii=False)
+    row.video_status = "queued"
+    row.video_progress = "queued"
+    row.error_message = None
+    await _audit(s, admin, "upsc.make_video", target_id=issue_id, payload=config)
+    await s.commit()
+    await s.refresh(row)
+
+    _kick_video(issue_id)
+    return _issue_dict(row)
+
+
+@router.get("/api/admin/upsc/video/{issue_id}")
+async def admin_video(
+    issue_id: str,
+    s: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> FileResponse:
+    """Stream the rendered MP4 for inline preview. FileResponse natively honors
+    HTTP Range requests, so the <video> element can seek."""
+    row = await s.get(UpscIssue, issue_id)
+    if row is None:
+        raise HTTPException(404, "issue not found")
+    if not row.video_path:
+        raise HTTPException(404, "no rendered video yet")
+    video = Path(row.video_path)
+    if not video.exists():
+        raise HTTPException(410, "video missing from disk")
+    return FileResponse(video, media_type="video/mp4", filename=f"upsc-{issue_id}.mp4")
+
+
+class YoutubePublish(BaseModel):
+    title: str = Field(..., min_length=1, max_length=100)
+    description: str = Field("", max_length=5000)
+    tags: list[str] = Field(default_factory=list)
+    privacy: Literal["public", "unlisted", "private"] = "unlisted"
+
+
+@router.post("/api/admin/upsc/issues/{issue_id}/youtube")
+async def admin_youtube(
+    issue_id: str,
+    body: YoutubePublish,
+    s: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Manually publish the rendered video to YouTube. Runs the QC gate first
+    and blocks (surfacing the reason) if the MP4 is invalid / silent / out of
+    band. The upload itself runs in a thread (network-bound, slow)."""
+    row = await s.get(UpscIssue, issue_id)
+    if row is None:
+        raise HTTPException(404, "issue not found")
+    if not row.video_path:
+        raise HTTPException(400, "no rendered video to publish")
+    video_path = row.video_path
+    if not Path(video_path).exists():
+        raise HTTPException(410, "video missing from disk")
+
+    # QC gate — fail closed, surface the reason. Block any publish if it fails.
+    ok, reason, _dur = _qc_video(video_path)
+    if not ok:
+        raise HTTPException(422, f"QC gate blocked publish: {reason}")
+
+    meta = {
+        "title": body.title.strip(),
+        "description": body.description,
+        "tags": body.tags,
+        "privacy": body.privacy,
+    }
+
+    import anyio
+
+    def _do_upload() -> dict:
+        from scripts import youtube_upload
+        return youtube_upload.upload(video_path, meta)
+
+    try:
+        result = await anyio.to_thread.run_sync(_do_upload)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"YouTube upload failed: {exc}")
+
+    row.youtube_id = result.get("youtube_id")
+    row.youtube_url = result.get("youtube_url")
+    row.video_status = "ready"
+    row.video_progress = "published to YouTube"
+    await _audit(s, admin, "upsc.youtube_publish", target_id=issue_id, payload={
+        "youtube_url": row.youtube_url, "privacy": body.privacy,
+    })
+    await s.commit()
+    return {"youtube_url": row.youtube_url, "youtube_id": row.youtube_id}
+
+
+def _merged_video_defaults(stored: Any) -> dict[str, Any]:
+    """Overlay the stored defaults blob on the fallback so every key is present
+    even when only a subset was saved."""
+    out = dict(VIDEO_DEFAULTS_FALLBACK)
+    if isinstance(stored, dict):
+        out.update({k: v for k, v in stored.items() if v is not None})
+    return out
+
+
+@router.get("/api/admin/upsc/video-defaults")
+async def admin_get_video_defaults(
+    s: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Read the persisted VideoDefaults from app_settings (merged with the
+    server fallback so the UI always gets a complete object)."""
+    stored = await app_settings.get(s, VIDEO_DEFAULTS_KEY)
+    return _merged_video_defaults(stored)
+
+
+class VideoDefaultsBody(BaseModel):
+    engine: Literal["gemini", "chirp"] = "chirp"
+    voice: str = "hi-IN-Chirp3-HD-Alnilam"
+    lang: Literal["hi", "en"] = "hi"
+    slide_style: Literal["digest", "clean", "animated"] = "digest"
+    theme: str = "amber"
+    privacy: Literal["public", "unlisted", "private"] = "unlisted"
+    auto_publish: bool = False
+    auto_generate_on_upload: bool = False
+    title_template: str = VIDEO_DEFAULTS_FALLBACK["title_template"]
+    description_template: str = VIDEO_DEFAULTS_FALLBACK["description_template"]
+
+
+class VideoDefaultsRequest(BaseModel):
+    defaults: VideoDefaultsBody
+
+
+@router.put("/api/admin/upsc/video-defaults")
+async def admin_put_video_defaults(
+    body: VideoDefaultsRequest,
+    s: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Persist the VideoDefaults blob into app_settings (one JSON row, same
+    path every other setting uses). New issues pre-fill from this."""
+    value = body.defaults.model_dump()
+    await app_settings.set_value(s, VIDEO_DEFAULTS_KEY, value, updated_by=admin.email)
+    await _audit(s, admin, "upsc.video_defaults", payload=value)
+    await s.commit()
+    return {"ok": True}
 
 
 # =============================================================================

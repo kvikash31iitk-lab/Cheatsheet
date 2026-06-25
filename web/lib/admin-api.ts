@@ -339,6 +339,66 @@ export const adminApi = {
       method: 'POST',
       json: { years, stages },
     }),
+
+  // UPSC video
+  getVoices: (engine: VideoConfig['engine'], lang: VideoConfig['lang']) =>
+    req<VoiceOption[]>(
+      `/api/admin/upsc/voices?engine=${encodeURIComponent(engine)}&lang=${encodeURIComponent(lang)}`,
+    ),
+  previewVoice: (input: {
+    engine: VideoConfig['engine'];
+    voice: string;
+    lang: VideoConfig['lang'];
+    text: string;
+  }) =>
+    fetch('/api/admin/upsc/voice-preview', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then(async (r) => {
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(text || `${r.status} ${r.statusText}`);
+      }
+      return r.blob();
+    }),
+  generateScript: (id: string) =>
+    req<{ sections: NarrationSection[] }>(
+      `/api/admin/upsc/issues/${id}/script`,
+      { method: 'POST' },
+    ),
+  saveScript: (id: string, sections: NarrationSection[], confirmed: boolean) =>
+    req<{ ok: boolean }>(`/api/admin/upsc/issues/${id}/script`, {
+      method: 'PATCH',
+      json: { sections, confirmed },
+    }),
+  makeVideo: (id: string, config: VideoConfig) =>
+    req<UpscIssue>(`/api/admin/upsc/issues/${id}/make-video`, {
+      method: 'POST',
+      json: { config },
+    }),
+  publishYoutube: (
+    id: string,
+    meta: {
+      title: string;
+      description: string;
+      tags: string[];
+      privacy: VideoConfig['privacy'];
+    },
+  ) =>
+    req<{ youtube_url: string }>(`/api/admin/upsc/issues/${id}/youtube`, {
+      method: 'POST',
+      json: meta,
+    }),
+  getVideoDefaults: () =>
+    req<VideoDefaults>('/api/admin/upsc/video-defaults'),
+  putVideoDefaults: (defaults: VideoDefaults) =>
+    req<{ ok: boolean }>('/api/admin/upsc/video-defaults', {
+      method: 'PUT',
+      json: { defaults },
+    }),
+  videoUrl: (id: string) => `/api/admin/upsc/video/${id}`,
 };
 
 // UPSC types --------------------------------------------------------------
@@ -358,7 +418,41 @@ export type UpscStatus =
   | 'rendering'
   | 'preview'
   | 'published'
+  | 'video_rendering'
+  | 'video_ready'
   | 'error';
+
+// UPSC video types --------------------------------------------------------
+
+export type VoiceOption = {
+  id: string;
+  label: string;
+  rank: number;
+  is_default: boolean;
+};
+
+export type NarrationSection = {
+  section_id: string;
+  label: string;
+  text: string;
+  est_seconds: number;
+};
+
+export type VideoConfig = {
+  engine: 'gemini' | 'chirp';
+  voice: string;
+  lang: 'hi' | 'en';
+  slide_style: 'digest' | 'clean' | 'animated';
+  theme: string;
+  privacy: 'public' | 'unlisted' | 'private';
+};
+
+export type VideoDefaults = VideoConfig & {
+  auto_publish: boolean;
+  auto_generate_on_upload: boolean;
+  title_template: string;
+  description_template: string;
+};
 
 export type UpscIssue = {
   id: string;
@@ -381,4 +475,12 @@ export type UpscIssue = {
   classify_seconds: number | null;
   author_seconds: number | null;
   render_seconds: number | null;
+  video_status: string | null;
+  video_progress: string | null;
+  video_path: string | null;
+  youtube_id: string | null;
+  youtube_url: string | null;
+  narration_script: string | null;
+  script_confirmed: boolean;
+  video_config: string | null;
 };
