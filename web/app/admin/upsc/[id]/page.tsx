@@ -22,6 +22,8 @@ const STATUS_TONE: Record<UpscStatus, 'neutral' | 'accent' | 'mint' | 'gold' | '
   preview: 'gold',
   published: 'mint',
   error: 'rose',
+  video_rendering: 'accent',
+  video_ready: 'mint',
 };
 
 const STATUS_LABEL: Record<UpscStatus, string> = {
@@ -33,6 +35,8 @@ const STATUS_LABEL: Record<UpscStatus, string> = {
   preview: 'Ready for preview',
   published: 'Published',
   error: 'Error',
+  video_rendering: 'Rendering video...',
+  video_ready: 'Video ready',
 };
 
 const STYLE_LABEL: Record<UpscStyle, string> = {
