@@ -165,6 +165,35 @@ function activeStageIndex(progress: string | null | undefined): number {
   return -1;
 }
 
+const STAGE_VERB: Record<(typeof VIDEO_STAGES)[number], string> = {
+  slides: 'Rendering slides',
+  tts: 'Synthesizing voiceover',
+  stitch: 'Stitching clips',
+  upload: 'Uploading to YouTube',
+};
+// cumulative % boundary at the START of each stage (duration-weighted), then 100
+const STAGE_BOUNDS = [0, 12, 50, 90, 100];
+
+/* Parse a free-text video_progress label into the active stage, a sub-progress
+ * fraction (from any "N/M" count), a human one-liner, and an overall 0–100%.
+ *   "stitch 9/16" -> { stageIdx:2, frac:0.56, human:"Stitching clips · 9 / 16", overall:70 } */
+function parseVideoProgress(progress: string | null | undefined): {
+  stageIdx: number;
+  frac: number;
+  human: string;
+  overall: number;
+} {
+  const stageIdx = activeStageIndex(progress);
+  const m = (progress || '').match(/(\d+)\s*\/\s*(\d+)/);
+  const frac = m && Number(m[2]) > 0 ? Math.min(1, Number(m[1]) / Number(m[2])) : 0;
+  if (stageIdx < 0) return { stageIdx, frac: 0, human: progress || '', overall: 0 };
+  const stage = VIDEO_STAGES[stageIdx];
+  const human = STAGE_VERB[stage] + (m ? ` · ${m[1]} / ${m[2]}` : '');
+  const lo = STAGE_BOUNDS[stageIdx];
+  const hi = STAGE_BOUNDS[stageIdx + 1];
+  return { stageIdx, frac, human, overall: Math.round(lo + (hi - lo) * frac) };
+}
+
 /* ------------------------------------------------------------------ *
  *  ConfirmButton — copied idiom from /admin/upsc/[id]/page.tsx        *
  * ------------------------------------------------------------------ */
@@ -1049,7 +1078,8 @@ export default function AdminUpscVideoStudioPage() {
     [issues],
   );
 
-  const stageIdx = activeStageIndex(issue?.video_progress);
+  const vp = parseVideoProgress(issue?.video_progress);
+  const stageIdx = vp.stageIdx;
   const hasVideo = vStatus === 'ready' || Boolean(issue?.video_path);
 
   /* ============================================================== *
@@ -1759,14 +1789,23 @@ export default function AdminUpscVideoStudioPage() {
                       style={{
                         height: 6,
                         borderRadius: 3,
+                        overflow: 'hidden',
                         background: done
                           ? 'var(--c-accent, #2a5b3a)'
-                          : current
-                            ? 'var(--c-gold, #b8860b)'
-                            : 'var(--c-line-2, #e5e1d7)',
-                        transition: 'background .3s',
+                          : 'var(--c-line-2, #e5e1d7)',
                       }}
-                    />
+                    >
+                      {current && (
+                        <div
+                          style={{
+                            height: '100%',
+                            width: `${Math.max(6, vp.frac * 100)}%`,
+                            background: 'var(--c-gold, #b8860b)',
+                            transition: 'width .4s',
+                          }}
+                        />
+                      )}
+                    </div>
                     <div
                       style={{
                         fontSize: 11,
@@ -1784,10 +1823,61 @@ export default function AdminUpscVideoStudioPage() {
               })}
             </div>
 
-            {issue.video_progress && (
-              <div style={{ marginTop: 10, fontSize: 12.5, color: 'var(--c-ink-2)' }}>
-                Stage: <strong>{issue.video_progress}</strong>
+            {videoBusy ? (
+              <div style={{ marginTop: 12 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline',
+                    marginBottom: 6,
+                  }}
+                >
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--c-ink)' }}>
+                    {vp.human || issue.video_progress || 'Starting…'}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 12.5,
+                      color: 'var(--c-ink-3)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {vp.overall}%
+                  </span>
+                </div>
+                <div
+                  role="progressbar"
+                  aria-valuenow={vp.overall}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Video render progress"
+                  style={{
+                    height: 8,
+                    borderRadius: 4,
+                    background: 'var(--c-line-2, #e5e1d7)',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${vp.overall}%`,
+                      background: 'var(--c-accent, #2a5b3a)',
+                      transition: 'width .5s',
+                    }}
+                  />
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--c-ink-3)', marginTop: 4 }}>
+                  Live · auto-refreshes every few seconds while rendering.
+                </div>
               </div>
+            ) : (
+              issue.video_progress && (
+                <div style={{ marginTop: 10, fontSize: 12.5, color: 'var(--c-ink-2)' }}>
+                  Stage: <strong>{issue.video_progress}</strong>
+                </div>
+              )
             )}
             {vStatus === 'error' && (
               <ErrorBanner msg={issue.error_message || 'Video render failed. See logs.'} />
