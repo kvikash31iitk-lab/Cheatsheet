@@ -882,70 +882,66 @@ async def admin_generate_script(
     issue_id: str,
     s: AsyncSession = Depends(get_session),
     admin: User = Depends(require_admin),
-    lang: str = "hi",
 ) -> dict[str, Any]:
-    """Create a 'pending' script-generation job and return its id IMMEDIATELY.
+    """Kick BOTH an English and a Hindi script-generation job and return both
+    job ids IMMEDIATELY. The UI polls both
+    (``GET /api/admin/upsc/script/{job_id}``) and lets the user toggle between
+    the two finished scripts — English = pure English, Hindi = Hinglish in
+    Devanagari. Each job's slow sequential-Groq rewrite runs in its own
+    background ``_run_script_job`` worker, which logs its language and mirrors
+    its result onto the issue's ``narration_script`` when saved.
 
-    The slow (~60s, sequential Groq) rewrite runs in a background worker
-    (``_run_script_job``) which writes the result to the ``script_jobs`` row and
-    mirrors it onto the issue's ``narration_script``. Clients poll
-    ``GET /api/admin/upsc/script/{job_id}`` for completion.
-
-    (Was: blocked ~60s awaiting the rewrite, which timed out at the Next.js proxy
-    even though the work completed and saved.)"""
-    lang = (lang or "hi").lower()
-    if lang not in VIDEO_LANGS:
-        raise HTTPException(400, f"lang must be one of {list(VIDEO_LANGS)}")
+    Returns ``{en_job_id, hi_job_id, status:"pending"}``. The per-language
+    partial-unique index ux_script_jobs_active lets an en and a hi job coexist
+    for one issue while still blocking duplicate same-language jobs."""
     row = await s.get(UpscIssue, issue_id)
     if row is None:
         raise HTTPException(404, "issue not found")
     if not row.markdown or not row.markdown.strip():
         raise HTTPException(400, "issue has no authored markdown yet")
 
-    # Idempotency on (digest_id, language): if a job for this issue+lang is
-    # already pending or processing, return THAT job instead of spawning a
-    # duplicate Groq run (double-click / fast-retry guard). A done/failed job
-    # does NOT block a fresh request. (Contract retry semantics — added here;
-    # the earlier worker-only commit created a new job unconditionally.)
-    existing = (await s.execute(
-        select(ScriptJob)
-        .where(
-            ScriptJob.digest_id == issue_id,
-            ScriptJob.language == lang,
-            ScriptJob.status.in_(("pending", "processing")),
-        )
-        .order_by(desc(ScriptJob.created_at))
-    )).scalars().first()
-    if existing is not None:
-        return {"job_id": existing.id, "status": existing.status}
-
-    job = ScriptJob(digest_id=issue_id, language=lang, status="pending")
-    s.add(job)
-    try:
-        # flush assigns job.id; the partial unique index ux_script_jobs_active is
-        # the DB-level backstop if a concurrent request raced past the pre-check.
-        await s.flush()
-    except IntegrityError:
-        await s.rollback()
-        winner = (await s.execute(
-            select(ScriptJob)
-            .where(
+    async def _ensure_job(language: str) -> str:
+        """Return a live (pending/processing) job id for this issue+language —
+        reusing an existing one (idempotency) or creating a fresh job. Race-safe:
+        a SAVEPOINT around the insert means an IntegrityError from the
+        ux_script_jobs_active backstop rolls back ONLY this insert, never the
+        sibling job already created earlier in the same request."""
+        live = (await s.execute(
+            select(ScriptJob).where(
                 ScriptJob.digest_id == issue_id,
-                ScriptJob.language == lang,
+                ScriptJob.language == language,
                 ScriptJob.status.in_(("pending", "processing")),
-            )
-            .order_by(desc(ScriptJob.created_at))
+            ).order_by(desc(ScriptJob.created_at))
         )).scalars().first()
-        if winner is not None:
-            return {"job_id": winner.id, "status": winner.status}
-        raise HTTPException(409, "could not create script job; please retry")
-    job_id = job.id
+        if live is not None:
+            return live.id
+        job = ScriptJob(digest_id=issue_id, language=language, status="pending")
+        try:
+            async with s.begin_nested():  # savepoint — isolates a race failure
+                s.add(job)
+                await s.flush()
+        except IntegrityError:
+            winner = (await s.execute(
+                select(ScriptJob).where(
+                    ScriptJob.digest_id == issue_id,
+                    ScriptJob.language == language,
+                    ScriptJob.status.in_(("pending", "processing")),
+                ).order_by(desc(ScriptJob.created_at))
+            )).scalars().first()
+            if winner is not None:
+                return winner.id
+            raise HTTPException(409, "could not create script job; please retry")
+        return job.id
+
+    en_id = await _ensure_job("en")
+    hi_id = await _ensure_job("hi")
     await _audit(s, admin, "upsc.script_generate", target_id=issue_id,
-                 payload={"lang": lang, "job_id": job_id})
+                 payload={"en_job_id": en_id, "hi_job_id": hi_id})
     await s.commit()
 
-    _kick_script_job(job_id)
-    return {"job_id": job_id, "status": "pending"}
+    _kick_script_job(en_id)
+    _kick_script_job(hi_id)
+    return {"en_job_id": en_id, "hi_job_id": hi_id, "status": "pending"}
 
 
 @router.get("/api/admin/upsc/script/{job_id}")
