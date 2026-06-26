@@ -641,8 +641,16 @@ export default function AdminUpscVideoStudioPage() {
   /* ============================================================== *
    *  Load the selected issue (and its script) + poll while busy    *
    * ============================================================== */
-  const loadIssue = useCallback(() => {
+  const loadIssue = useCallback((opts?: { force?: boolean }) => {
     if (!selectedId) return;
+    // `force` = a deliberate (re)load for a freshly-selected issue: hydrate from
+    // the persisted script even though the closed-over `dirty` may still read
+    // stale-true from the issue we just switched away from. Without it,
+    // switching FROM an edited issue left the NEXT issue's saved script
+    // un-hydrated (pre-existing stale-closure bug surfaced in review). The
+    // unforced path (the 5 s video poll) still respects `dirty` to protect
+    // in-progress edits.
+    const force = opts?.force ?? false;
     adminApi
       .getUpscIssue(selectedId)
       .then((r) => {
@@ -652,13 +660,13 @@ export default function AdminUpscVideoStudioPage() {
           try {
             const parsed = JSON.parse(r.narration_script) as NarrationSection[];
             if (Array.isArray(parsed)) {
-              setSections((prev) => (dirty ? prev : parsed));
+              setSections((prev) => (!force && dirty ? prev : parsed));
             }
           } catch {
             /* ignore malformed persisted script */
           }
         }
-        if (!dirty) setScriptConfirmed(Boolean(r.script_confirmed));
+        if (force || !dirty) setScriptConfirmed(Boolean(r.script_confirmed));
         // hydrate any saved video_config
         if (r.video_config) {
           try {
@@ -681,7 +689,7 @@ export default function AdminUpscVideoStudioPage() {
     setScriptError(null);
     setMakeError(null);
     setYtError(null);
-    if (selectedId) loadIssue();
+    if (selectedId) loadIssue({ force: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
@@ -848,7 +856,15 @@ export default function AdminUpscVideoStudioPage() {
       setScriptError(null);
       try {
         const secs = await runScriptJob(selectedId, config.lang);
-        const fresh = secs.find((s) => s.section_id === sections[idx].section_id);
+        // Match the regenerated section by a CONTENT key (the headline in the
+        // label), not the positional section_id: `art-NN` is assigned by article
+        // order, so a reordered/changed article set would splice a DIFFERENT
+        // story's text into this slot. Stripping a leading "N. " makes it
+        // survive renumbering; intro/overview/outro keep their stable labels.
+        const contentKey = (s: NarrationSection) =>
+          s.label.replace(/^\s*\d+\.\s*/, '').trim();
+        const target = contentKey(sections[idx]);
+        const fresh = secs.find((s) => contentKey(s) === target);
         if (fresh) {
           setSections((prev) => {
             if (!prev) return prev;
@@ -880,8 +896,10 @@ export default function AdminUpscVideoStudioPage() {
         setScriptConfirmed(confirmed);
         setDirty(false);
       } catch (e) {
+        // Surface via the (role=alert) banner; do NOT re-throw — the callers
+        // (Btn / ConfirmButton) have no .catch(), so a re-throw became an
+        // unhandled promise rejection. The user already sees the error.
         setScriptError(String(e instanceof Error ? e.message : e));
-        throw e;
       }
     },
     [selectedId, sections],
@@ -896,8 +914,9 @@ export default function AdminUpscVideoStudioPage() {
       // force a fresh load so polling kicks in immediately
       loadIssue();
     } catch (e) {
+      // Shown via the (role=alert) banner; do NOT re-throw (ConfirmButton has
+      // no .catch → unhandled rejection). The user already sees the error.
       setMakeError(String(e instanceof Error ? e.message : e));
-      throw e;
     }
   }, [selectedId, config, sampleMode, loadIssue]);
 
@@ -917,8 +936,9 @@ export default function AdminUpscVideoStudioPage() {
       setIssue((prev) => (prev ? { ...prev, youtube_url: r.youtube_url } : prev));
       loadIssue();
     } catch (e) {
+      // Shown via the (role=alert) banner; do NOT re-throw (ConfirmButton has
+      // no .catch → unhandled rejection). The user already sees the error.
       setYtError(String(e instanceof Error ? e.message : e));
-      throw e;
     }
   }, [selectedId, ytTitle, ytDesc, ytTags, config.privacy, loadIssue]);
 
