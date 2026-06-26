@@ -342,9 +342,9 @@ export const adminApi = {
 
   // UPSC video
   getVoices: (engine: VideoConfig['engine'], lang: VideoConfig['lang']) =>
-    req<VoiceOption[]>(
+    req<{ voices: VoiceOption[]; gemini_billing_active: boolean }>(
       `/api/admin/upsc/voices?engine=${encodeURIComponent(engine)}&lang=${encodeURIComponent(lang)}`,
-    ),
+    ).then((r) => r.voices),
   previewVoice: (input: {
     engine: VideoConfig['engine'];
     voice: string;
