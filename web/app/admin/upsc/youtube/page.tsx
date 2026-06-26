@@ -511,6 +511,7 @@ export default function AdminUpscVideoStudioPage() {
 
   /* ---- variant config (the four controls) ---- */
   const [config, setConfig] = useState<VideoConfig>(DEFAULT_CONFIG);
+  const [sampleMode, setSampleMode] = useState(false);
   const [coverSlide, setCoverSlide] = useState(true);
   const [introOutro, setIntroOutro] = useState(true);
 
@@ -833,7 +834,7 @@ export default function AdminUpscVideoStudioPage() {
     if (!selectedId) return;
     setMakeError(null);
     try {
-      const updated = await adminApi.makeVideo(selectedId, config);
+      const updated = await adminApi.makeVideo(selectedId, { ...config, sample: sampleMode });
       setIssue((prev) => (prev ? { ...prev, ...updated } : prev));
       // force a fresh load so polling kicks in immediately
       loadIssue();
@@ -841,7 +842,7 @@ export default function AdminUpscVideoStudioPage() {
       setMakeError(String(e instanceof Error ? e.message : e));
       throw e;
     }
-  }, [selectedId, config, loadIssue]);
+  }, [selectedId, config, sampleMode, loadIssue]);
 
   const onPublishYoutube = useCallback(async () => {
     if (!selectedId) return;
@@ -1294,6 +1295,29 @@ export default function AdminUpscVideoStudioPage() {
                 })}
               </div>
 
+              {issue?.has_cover_thumb && (
+                <div style={{ marginTop: 12 }}>
+                  <FieldLabel>PREVIEW</FieldLabel>
+                  <img
+                    src={adminApi.thumbUrl(issue.id)}
+                    alt="slide preview"
+                    style={{
+                      width: '100%',
+                      maxWidth: 320,
+                      borderRadius: 10,
+                      border: '1px solid var(--c-line-2)',
+                      display: 'block',
+                    }}
+                  />
+                  <div style={{ fontSize: 11, color: 'var(--c-ink-3)', marginTop: 4 }}>
+                    First digest page — slides letterbox this to 1920×1080.
+                    {config.slide_style !== 'digest'
+                      ? ' (Clean/Animated render as digest pages for now.)'
+                      : ''}
+                  </div>
+                </div>
+              )}
+
               <div style={{ height: 14 }} />
               <FieldLabel>THEME / ACCENT</FieldLabel>
               <select
@@ -1450,6 +1474,45 @@ export default function AdminUpscVideoStudioPage() {
                 Confirm the script above before rendering.
               </div>
             )}
+
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+              {[
+                { id: false, label: 'Full video', sub: 'All sections (~10–18 min)' },
+                { id: true, label: 'Sample', sub: 'Intro + first story (~1 min)' },
+              ].map((m) => {
+                const active = sampleMode === m.id;
+                return (
+                  <button
+                    key={String(m.id)}
+                    type="button"
+                    disabled={videoBusy}
+                    onClick={() => setSampleMode(m.id)}
+                    style={{
+                      flex: 1,
+                      textAlign: 'left',
+                      padding: '9px 12px',
+                      borderRadius: 10,
+                      border: active
+                        ? '1px solid var(--c-accent, #2a5b3a)'
+                        : '1px solid var(--c-line-2)',
+                      background: active
+                        ? 'var(--c-accent-2, #eef5ef)'
+                        : 'var(--c-surface-2, #f5f1ea)',
+                      cursor: videoBusy ? 'not-allowed' : 'pointer',
+                      opacity: videoBusy ? 0.6 : 1,
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-ink)' }}>
+                      {active ? '◉ ' : '○ '}
+                      {m.label}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--c-ink-3)', marginTop: 1 }}>
+                      {m.sub}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
 
             {/* per-stage progress strip */}
             <div style={{ display: 'flex', gap: 8 }}>

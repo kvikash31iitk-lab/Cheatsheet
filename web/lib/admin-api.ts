@@ -399,6 +399,7 @@ export const adminApi = {
       json: { defaults },
     }),
   videoUrl: (id: string) => `/api/admin/upsc/video/${id}`,
+  thumbUrl: (id: string) => `/api/admin/upsc/issues/${id}/thumb`,
 };
 
 // UPSC types --------------------------------------------------------------
@@ -445,6 +446,7 @@ export type VideoConfig = {
   slide_style: 'digest' | 'clean' | 'animated';
   theme: string;
   privacy: 'public' | 'unlisted' | 'private';
+  sample?: boolean;
 };
 
 export type VideoDefaults = VideoConfig & {

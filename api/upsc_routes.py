@@ -523,6 +523,10 @@ def _kick_video(issue_id: str) -> None:
                     narration_script=json.dumps(sections, ensure_ascii=False),
                 )
 
+            # ---- Sample mode: intro + first story only, for a quick preview --
+            if config.get("sample") and len(sections) > 2:
+                sections = sections[:2]
+
             # ---- Build the video (engine updates progress as it goes) ------
             _set_video_status(issue_id, status="rendering",
                               progress="rendering slides + narration")
@@ -878,6 +882,7 @@ class MakeVideoConfig(BaseModel):
     auto_publish: bool = False
     title_template: Optional[str] = None
     description_template: Optional[str] = None
+    sample: bool = False  # quick preview: intro + first story only
 
 
 class MakeVideoRequest(BaseModel):
