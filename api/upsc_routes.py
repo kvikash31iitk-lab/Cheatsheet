@@ -789,8 +789,15 @@ async def admin_voice_preview(
     if not body.voice or not body.voice.strip():
         raise HTTPException(400, "voice is required")
     from scripts import upsc_video
+    import anyio
+    # CRITICAL: preview_voice() does blocking network I/O and, on a TTS 429,
+    # honours the server's escalating "retry in Ns" hint with time.sleep() —
+    # which on this single-worker uvicorn would FREEZE the whole event loop
+    # (every other request hangs -> "socket hang up"). Run it in a worker thread.
     try:
-        wav = upsc_video.preview_voice(engine, body.voice.strip(), lang, body.text)
+        wav = await anyio.to_thread.run_sync(
+            upsc_video.preview_voice, engine, body.voice.strip(), lang, body.text
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"voice preview failed: {exc}")
     return Response(
