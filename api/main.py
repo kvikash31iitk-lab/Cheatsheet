@@ -568,18 +568,27 @@ async def _periodic_script_job_sweep() -> None:
 # stuck in any of these makes the frontend `videoBusy` true, disabling the whole
 # Slides/Voice UI — so an interrupted render must be reaped or controls lock up.
 _VIDEO_FLIGHT_STATES = ("queued", "rendering", "uploading")
+# The PERIODIC sweep excludes 'queued': admin_make_video commits 'queued' BEFORE
+# _kick_video adds the id to _upsc_in_flight (with an `await s.refresh` yield in
+# between), so a just-launched build is briefly 'queued' yet not-in-set — sweeping
+# it would wrongly reset a live render. The in-thread 'rendering'/'uploading'
+# transitions ARE add-before-status protected; a genuinely-stuck 'queued' (kick
+# died before reaching 'rendering') is rare and caught by startup recovery.
+_VIDEO_SWEEP_STATES = ("rendering", "uploading")
 
 
 def _resolve_stuck_video(issue: UpscIssue) -> tuple[str, str, str | None]:
     """Decide how to resolve a stuck video: ->'ready' if the final MP4 actually
     landed on disk (the build finished and only the status write was lost), else
     ->'error' so the admin can re-run. Returns (video_status, video_progress,
-    video_path_or_None). Existence-only check, per the recovery design."""
+    video_path_or_None). Existence-only check, per the recovery design.
+    NOTE: video_progress is VARCHAR(32) — both labels below are kept <=32 chars
+    (a longer string raises StringDataRightTruncation on Postgres)."""
     from scripts import upsc_pipeline
     mp4 = upsc_pipeline.WORK_ROOT / issue.id / "digest.mp4"
     if (issue.video_path and Path(issue.video_path).exists()) or mp4.exists():
         return "ready", "video ready", (issue.video_path or str(mp4))
-    return "error", "render interrupted — click Make video to retry", None
+    return "error", "render interrupted - retry", None
 
 
 async def _recover_stuck_videos() -> None:
@@ -620,7 +629,8 @@ async def _periodic_video_sweep() -> None:
     orphan. We key off _upsc_in_flight rather than a created_at window because a
     video starts long after the issue is created; this also PRECISELY excludes a
     legitimately-long render (a 20-min build stays in the set the whole time, so
-    it is never touched). (video_status only — dual-script untouched.)"""
+    it is never touched). Only 'rendering'/'uploading' are swept (not 'queued' —
+    see _VIDEO_SWEEP_STATES). (video_status only — dual-script untouched.)"""
     from api.upsc_routes import _upsc_in_flight
     INTERVAL_SEC = 300
     while True:
@@ -630,7 +640,7 @@ async def _periodic_video_sweep() -> None:
                 candidates = (
                     await s.execute(
                         select(UpscIssue).where(
-                            UpscIssue.video_status.in_(_VIDEO_FLIGHT_STATES)
+                            UpscIssue.video_status.in_(_VIDEO_SWEEP_STATES)
                         )
                     )
                 ).scalars().all()
