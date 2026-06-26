@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AdminShell, PageHeader, Section, Input, Textarea, Toggle } from '@/components/admin-shell';
+import { AdminShell, PageHeader, Section, Input, Select, Textarea, Toggle } from '@/components/admin-shell';
 import { Tag } from '@/components/ui';
 import {
   adminApi,
   type UpscIssue,
   type UpscStatus,
+  type UpscStyle,
   type VoiceOption,
   type NarrationSection,
   type VideoConfig,
@@ -554,7 +555,59 @@ export default function AdminUpscVideoStudioPage() {
 
   useEffect(() => {
     refreshList();
+    const t = setInterval(refreshList, 5000);
+    return () => clearInterval(t);
   }, [refreshList]);
+
+  /* ============================================================== *
+   *  Upload a newspaper PDF -> digest pipeline                      *
+   * ============================================================== */
+  const [upFile, setUpFile] = useState<File | null>(null);
+  const [upDate, setUpDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [upSource, setUpSource] = useState('Indian Express');
+  const [upTitle, setUpTitle] = useState('');
+  const [upStyle, setUpStyle] = useState<UpscStyle>('dense_tight');
+  const [uploading, setUploading] = useState(false);
+  const [upErr, setUpErr] = useState<string | null>(null);
+  const upFileRef = useRef<HTMLInputElement>(null);
+
+  const submitUpload = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!upFile) {
+        setUpErr('Pick a PDF file first.');
+        return;
+      }
+      setUploading(true);
+      setUpErr(null);
+      try {
+        const fd = new FormData();
+        fd.append('pdf', upFile);
+        fd.append('issue_date', upDate);
+        fd.append('source', upSource);
+        if (upTitle) fd.append('title', upTitle);
+        fd.append('style', upStyle);
+        await adminApi.uploadUpscIssue(fd);
+        setUpFile(null);
+        setUpTitle('');
+        if (upFileRef.current) upFileRef.current.value = '';
+        refreshList();
+      } catch (e: unknown) {
+        setUpErr(String(e instanceof Error ? e.message : e));
+      } finally {
+        setUploading(false);
+      }
+    },
+    [upFile, upDate, upSource, upTitle, upStyle, refreshList],
+  );
+
+  const processing = useMemo(
+    () =>
+      (issues ?? []).filter((i) =>
+        ['uploaded', 'extracting', 'classifying', 'authoring', 'rendering'].includes(i.status),
+      ),
+    [issues],
+  );
 
   /* Load defaults once. */
   useEffect(() => {
@@ -976,6 +1029,124 @@ export default function AdminUpscVideoStudioPage() {
           )}
         </Section>
       )}
+
+      {/* ---------------- Upload newspaper (digest pipeline) ---------------- */}
+      <Section
+        title="Upload newspaper"
+        description="Drop today's e-paper PDF. The digest pipeline extracts → classifies → authors → renders (~5–10 min); the date then lights up below, ready to videofy."
+      >
+        <form onSubmit={submitUpload}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Input
+              label="ISSUE DATE"
+              type="date"
+              value={upDate}
+              onChange={(e) => setUpDate(e.target.value)}
+              required
+            />
+            <Input
+              label="SOURCE NEWSPAPER"
+              type="text"
+              value={upSource}
+              onChange={(e) => setUpSource(e.target.value)}
+              placeholder="Indian Express"
+              required
+            />
+          </div>
+          <Input
+            label="TITLE (OPTIONAL)"
+            type="text"
+            value={upTitle}
+            onChange={(e) => setUpTitle(e.target.value)}
+            placeholder="Defaults to 'UPSC Cheetsheet - <date>'"
+          />
+          <Select
+            label="RENDERER STYLE"
+            value={upStyle}
+            onChange={(e) => setUpStyle(e.target.value as UpscStyle)}
+          >
+            <option value="dense_tight">Dense Tight (default)</option>
+            <option value="dense">Dense</option>
+            <option value="academic">Academic</option>
+            <option value="coaching">Coaching</option>
+            <option value="magazine">Magazine</option>
+          </Select>
+          <label style={{ display: 'block', marginBottom: 12 }}>
+            <div
+              style={{
+                fontSize: 11,
+                color: 'var(--c-ink-3)',
+                letterSpacing: '.06em',
+                marginBottom: 5,
+              }}
+            >
+              NEWSPAPER PDF
+            </div>
+            <input
+              ref={upFileRef}
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => setUpFile(e.target.files?.[0] ?? null)}
+              required
+              style={{ width: '100%', fontSize: 13 }}
+            />
+          </label>
+          {upErr && (
+            <div
+              style={{
+                color: '#b91c1c',
+                fontSize: 13,
+                marginBottom: 10,
+                padding: '8px 12px',
+                background: '#fef2f2',
+                borderRadius: 8,
+                border: '1px solid #fecaca',
+              }}
+            >
+              {upErr}
+            </div>
+          )}
+          <button
+            type="submit"
+            disabled={uploading || !upFile}
+            style={{
+              background: uploading || !upFile ? 'var(--c-line-2)' : 'var(--c-accent, #2a5b3a)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 8,
+              padding: '9px 18px',
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: uploading || !upFile ? 'default' : 'pointer',
+            }}
+          >
+            {uploading ? 'Uploading…' : 'Upload & process'}
+          </button>
+        </form>
+        {processing.length > 0 && (
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--c-line-2)' }}>
+            <div style={{ fontSize: 12, color: 'var(--c-ink-3)', marginBottom: 8 }}>
+              Processing (auto-refreshing)
+            </div>
+            {processing.map((i) => (
+              <div
+                key={i.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '6px 0',
+                }}
+              >
+                <span style={{ fontSize: 13, color: 'var(--c-ink)' }}>
+                  {formatDate(i.issue_date)} · {i.source}
+                </span>
+                <Tag tone="accent">{STATUS_LABEL[i.status]}</Tag>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
 
       {/* ---------------- Issue picker ---------------- */}
       <Section
