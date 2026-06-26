@@ -47,6 +47,17 @@ def parse_digest(md: str) -> dict:
             meta["subtitle"] = _clean(p)
             break
 
+    # must-read three (from the [!revise] callout)
+    meta["must_read"] = []
+    mr = re.search(r"\[!revise\][^\n]*\n((?:>.*\n?)+)", md)
+    if mr:
+        blk = re.sub(r"^>\s?", "", mr.group(1), flags=re.M)
+        for ln in blk.split("\n"):
+            m = re.match(r"\s*\d+\.\s*\*\*(.+?)\*\*\s*[—–-]+\s*\*(GS-[\d/]+)\*\.?\s*(.*)", ln)
+            if m:
+                meta["must_read"].append(
+                    {"headline": _clean(m.group(1)), "gs": m.group(2), "sub": _clean(m.group(3))})
+
     # article blocks
     blocks = re.split(r"\n##\s+\d+\.\s+", "\n" + md)[1:]
     for i, blk in enumerate(blocks, 1):
@@ -120,6 +131,18 @@ body{background:#1a1613;color:#f3ecdd;font-family:'Inter',sans-serif;overflow:hi
 .lens .ll{font-family:'JetBrains Mono',monospace;font-size:19px;letter-spacing:.1em;margin-bottom:14px}
 .lens .lt{font-size:23px;line-height:1.4;color:#d8d0c1}
 .lfor .ll{color:#2e8b57}.lag .ll{color:#c0552f}.lway .ll{color:#cfa64e}
+/* must-read + overview slides */
+.mr-title{font-size:66px;font-weight:700;margin-bottom:6px}
+.mr-list{display:flex;flex-direction:column;gap:30px;margin-top:22px}
+.mr-row{display:grid;grid-template-columns:74px 1fr 96px;gap:28px;align-items:start}
+.mr-num{font-size:50px;color:#6b6358;line-height:1}
+.mr-h{font-size:35px;font-weight:700;line-height:1.16;margin-bottom:9px}
+.mr-s{font-size:23px;color:#bdb4a4;line-height:1.42}
+.mr-tag{text-align:right;padding-top:8px}
+.ov-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px 60px;margin-top:24px}
+.ov-item{display:grid;grid-template-columns:48px 1fr auto;gap:18px;align-items:center;font-size:24px}
+.ov-n{color:#6b6358;font-size:27px;font-family:'Source Serif 4',serif}
+.ov-h{color:#e9e1d2;line-height:1.25}
 """
 
 
@@ -194,6 +217,51 @@ def html_outro(meta: dict) -> str:
     return _slide(body)
 
 
+def html_mustread(meta: dict) -> str:
+    items = meta.get("must_read", [])[:3]
+    if not items:  # fallback to the first three articles
+        items = [{"headline": a["headline"], "gs": a["gs"], "sub": (a.get("why") or "")[:150]}
+                 for a in meta["articles"][:3]]
+    rows = ""
+    for i, it in enumerate(items, 1):
+        rows += (
+            f'<div class="mr-row"><div class="mr-num serif">{i}</div>'
+            f'<div><div class="mr-h serif">{html.escape(it["headline"])}</div>'
+            f'<div class="mr-s">{html.escape(it.get("sub", ""))}</div></div>'
+            f'<div class="mr-tag">{_gs_pill(it.get("gs", ""))}</div></div>'
+        )
+    body = (
+        '<div class="head mono muted"><span>UPSC Cheetsheet</span><span>Daily Digest</span></div>'
+        '<div style="margin-top:40px"><div class="t-label mono amber">Revise in 60 seconds</div>'
+        '<div class="mr-title serif">The must-read three</div></div>'
+        '<div class="rule" style="margin-top:24px"></div>'
+        f'<div class="mr-list">{rows}</div>'
+        '<div class="foot"><div class="mono muted">Today\'s top three</div>'
+        '<div class="mono muted">cheetsheet.tech/upsc</div></div>'
+    )
+    return _slide(body)
+
+
+def html_overview(meta: dict) -> str:
+    arts = meta["articles"]
+    cells = "".join(
+        f'<div class="ov-item"><span class="ov-n">{a["n"]:02d}</span>'
+        f'<span class="ov-h">{html.escape(a["headline"])}</span>{_gs_pill(a["gs"])}</div>'
+        for a in arts
+    )
+    body = (
+        '<div class="head mono muted"><span>UPSC Cheetsheet</span><span>Daily Digest</span></div>'
+        '<div style="margin-top:40px"><div class="t-label mono amber">Paper-wise map</div>'
+        f'<div class="mr-title serif">The {len(arts)} stories today</div></div>'
+        '<div class="rule" style="margin-top:24px"></div>'
+        f'<div class="ov-grid">{cells}</div>'
+        '<div class="foot"><div class="mono muted">GS-1 polity &amp; geography &middot; '
+        'GS-2 governance &amp; IR &middot; GS-3 economy, security &amp; sci-tech</div>'
+        '<div class="mono muted">cheetsheet.tech/upsc</div></div>'
+    )
+    return _slide(body)
+
+
 # --------------------------------------------------------------------------- #
 # Render via Playwright
 # --------------------------------------------------------------------------- #
@@ -203,6 +271,10 @@ def render(md_text: str, out_dir: str | Path, *, theme: str = "amber") -> list[P
     out_dir.mkdir(parents=True, exist_ok=True)
     meta = parse_digest(md_text)
     pages_html = [html_title(meta)]
+    if meta.get("articles"):
+        # must-read + overview always paired with the matching narration sections
+        pages_html.append(html_mustread(meta))
+        pages_html.append(html_overview(meta))
     pages_html += [html_article(a) for a in meta["articles"]]
     pages_html.append(html_outro(meta))
 

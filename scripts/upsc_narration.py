@@ -250,6 +250,22 @@ def generate_script(issue_id: str, *, lang: str = "hi") -> list[dict]:
         "est_seconds": est_seconds(intro),
     })
 
+    # must-read + overview slides each get a short deterministic narration, kept
+    # aligned with the branded-deck slide order (title, must-read, overview, …).
+    if articles:
+        if lang == "hi":
+            mr_text = "सबसे पहले, आज की तीन सबसे ज़रूरी खबरें — इन्हें ज़रूर रिवाइज़ कर लीजिए।"
+            ov_text = (f"आज हमने कुल {len(articles)} परीक्षा-केंद्रित खबरें कवर की हैं, "
+                       "जो जनरल स्टडीज़ के अलग-अलग पेपर्स से जुड़ी हैं। चलिए एक-एक करके शुरू करते हैं।")
+        else:
+            mr_text = "First, the three must-read stories of the day — be sure to revise these."
+            ov_text = (f"Today we cover {len(articles)} exam-relevant stories across the "
+                       "General Studies papers. Let's go through them one by one.")
+        sections.append({"section_id": "mustread", "label": "Must-read three",
+                         "text": mr_text, "est_seconds": est_seconds(mr_text)})
+        sections.append({"section_id": "overview", "label": "Overview",
+                         "text": ov_text, "est_seconds": est_seconds(ov_text)})
+
     for i, (headline, body_md) in enumerate(articles, start=1):
         print(f"  spoken-rewrite {i}/{len(articles)}: {headline[:60]!r}", flush=True)
         text = rewrite_article(headline, body_md)
