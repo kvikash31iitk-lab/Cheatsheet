@@ -54,6 +54,7 @@ import urllib.request
 import wave
 from pathlib import Path
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -636,25 +637,45 @@ def build_video(issue_id: str, config: dict, sections: list) -> dict:
     # ---------------------------------------------------------------- tts
     # One wav per section, write-on-success (no stub left on failure).
     total = len(sections)
-    for i, sec in enumerate(sections):
+
+    def _tts_one(idx: int, sec: dict) -> None:
         text = (sec.get("text") or "").strip()
-        wp = aud_dir / f"s{i:02d}.wav"
+        wp = aud_dir / f"s{idx:02d}.wav"
         if _valid_wav(wp):
-            print(f"[video] {issue_id}: tts {i+1}/{total} cached", flush=True)
-            continue
+            return
         if wp.exists():
             wp.unlink()
         if not text:
             # Empty section -> 0.6s of silence so the clip still maps to a slide.
             silence = b"\x00\x00" * int(SAMPLE_RATE * 0.6)
             _write_wav(silence, wp)
-            continue
-        _set_video_status(issue_id, status="rendering",
-                          video_progress=f"tts {i+1}/{total}")
-        print(f"[video] {issue_id}: tts {i+1}/{total} ({engine}/{voice})", flush=True)
+            return
         pcm = _synth_pcm(text, engine, voice, lang)  # raises before file write
         _write_wav(pcm, wp)
-        time.sleep(1.0)  # gentle pacing, matches the deck scripts
+
+    if engine == "chirp":
+        # Cloud TTS has no tight rate limit -> synth sections in PARALLEL.
+        done = 0
+        _set_video_status(issue_id, status="rendering", video_progress=f"tts 0/{total}")
+        with ThreadPoolExecutor(max_workers=min(5, total or 1)) as ex:
+            futs = [ex.submit(_tts_one, i, sec) for i, sec in enumerate(sections)]
+            for fut in as_completed(futs):
+                fut.result()  # propagate any TTS failure
+                done += 1
+                _set_video_status(issue_id, status="rendering",
+                                  video_progress=f"tts {done}/{total}")
+                print(f"[video] {issue_id}: tts {done}/{total} (chirp · parallel)", flush=True)
+    else:
+        # Gemini is rate-limited (10/min) -> sequential with gentle pacing.
+        for i, sec in enumerate(sections):
+            if _valid_wav(aud_dir / f"s{i:02d}.wav"):
+                print(f"[video] {issue_id}: tts {i+1}/{total} cached", flush=True)
+                continue
+            _set_video_status(issue_id, status="rendering",
+                              video_progress=f"tts {i+1}/{total}")
+            print(f"[video] {issue_id}: tts {i+1}/{total} ({engine}/{voice})", flush=True)
+            _tts_one(i, sec)
+            time.sleep(1.0)  # gentle pacing
 
     # hard verify (from finish_all.py)
     bad = [i for i in range(total) if not _valid_wav(aud_dir / f"s{i:02d}.wav")]
@@ -662,19 +683,33 @@ def build_video(issue_id: str, config: dict, sections: list) -> dict:
         raise RuntimeError(f"TTS produced invalid wavs for sections {bad}")
 
     # ---------------------------------------------------------------- stitch
+    # Per-clip ffmpeg encodes are independent + CPU-bound -> run in PARALLEL.
     _set_video_status(issue_id, status="rendering", video_progress="stitch")
-    clips: list[Path] = []
-    duration = 0.0
-    for i, sec in enumerate(sections):
-        wp = aud_dir / f"s{i:02d}.wav"
-        # Map section -> slide page. If there are fewer pages than sections,
-        # cycle through pages so every section still narrates over a real slide.
-        slide = slides[i % n_pages]
-        clip = clips_dir / f"c{i:02d}.mp4"
+
+    def _clip_one(idx: int):
+        wp = aud_dir / f"s{idx:02d}.wav"
+        # Map section -> slide page (cycle if fewer pages than sections) so
+        # every section still narrates over a real slide.
+        slide = slides[idx % n_pages]
+        clip = clips_dir / f"c{idx:02d}.mp4"
         dur = _make_clip(slide, wp, clip)
-        duration += dur + PAUSE
-        clips.append(clip)
-        print(f"[video] {issue_id}: clip {i+1}/{total} {dur:.1f}s", flush=True)
+        return idx, clip, dur
+
+    workers = max(1, min(os.cpu_count() or 2, 4))
+    results: list[Optional[tuple]] = [None] * total
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(_clip_one, i) for i in range(total)]
+        for fut in as_completed(futs):
+            idx, clip, dur = fut.result()
+            results[idx] = (clip, dur)
+            done += 1
+            _set_video_status(issue_id, status="rendering",
+                              video_progress=f"stitch {done}/{total}")
+            print(f"[video] {issue_id}: clip {done}/{total} (idx {idx} · {dur:.1f}s)", flush=True)
+
+    clips = [results[i][0] for i in range(total)]  # ordered for concat
+    duration = sum(results[i][1] + PAUSE for i in range(total))
 
     _concat(clips, clips_dir / "concat.txt", out_mp4)
     size_bytes = out_mp4.stat().st_size
