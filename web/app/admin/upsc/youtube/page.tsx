@@ -669,16 +669,15 @@ export default function AdminUpscVideoStudioPage() {
       .then((r) => {
         setIssue(r);
         // hydrate script + confirmed from persisted narration_script
-        if (r.narration_script) {
+        // Hydrate the saved script ONLY on a deliberate (forced) issue load, into
+        // the Hindi slot (the default). The unforced 5s video-poll must NOT
+        // re-hydrate sections: narration_script may hold an English save, and
+        // writing it into the Hindi slot would make the Hindi tab show English.
+        // (Re-generate after a reload to repopulate both languages — accepted.)
+        if (force && r.narration_script) {
           try {
             const parsed = JSON.parse(r.narration_script) as NarrationSection[];
-            if (Array.isArray(parsed)) {
-              // Persisted narration_script is the saved script; hydrate it into
-              // the Hindi slot (the historical default). The English script is
-              // not persisted separately (no schema change) — re-generate to
-              // repopulate both languages after a reload.
-              setSectionsHi((prev) => (!force && dirty ? prev : parsed));
-            }
+            if (Array.isArray(parsed)) setSectionsHi(parsed);
           } catch {
             /* ignore malformed persisted script */
           }
@@ -829,19 +828,36 @@ export default function AdminUpscVideoStudioPage() {
     [],
   );
 
-  /* Kick BOTH language jobs and poll them concurrently to completion. Returns
-   * the finished English and Hindi section lists. Shared by Generate /
+  /* Kick BOTH language jobs and poll them concurrently. Returns each language's
+   * sections, or null if that one failed/timed-out — shared by Generate /
    * Regenerate-all / per-section regen. (Two parallel jobs => up to 2 concurrent
-   * Groq streams; each job is itself sequential, so this stays gentle on RPM.) */
+   * Groq streams; each job is itself sequential, so this stays gentle on RPM.)
+   * Uses allSettled (NOT all): one language failing must not discard the other
+   * that succeeded, and allSettled awaits BOTH so no sibling keeps polling. */
   const runDualScript = useCallback(
-    async (id: string): Promise<{ en: NarrationSection[]; hi: NarrationSection[] }> => {
+    async (
+      id: string,
+    ): Promise<{ en: NarrationSection[] | null; hi: NarrationSection[] | null }> => {
       const token = (scriptPollRef.current += 1); // invalidate any prior poll
       setScriptProgress(0);
       const { en_job_id, hi_job_id } = await adminApi.generateScript(id);
-      const [en, hi] = await Promise.all([
+      const [enR, hiR] = await Promise.allSettled([
         pollJob(en_job_id, token),
         pollJob(hi_job_id, token),
       ]);
+      // Superseded (issue switch / unmount) — bail like the single-job path did.
+      const cancelled = [enR, hiR].some(
+        (r) => r.status === 'rejected' && (r.reason as Error)?.message === '__cancelled__',
+      );
+      if (cancelled) throw new Error('__cancelled__');
+      const en = enR.status === 'fulfilled' ? enR.value : null;
+      const hi = hiR.status === 'fulfilled' ? hiR.value : null;
+      if (!en && !hi) {
+        const failed = [enR, hiR].find((r) => r.status === 'rejected') as
+          | PromiseRejectedResult
+          | undefined;
+        throw new Error((failed?.reason as Error)?.message || 'Script generation failed.');
+      }
       return { en, hi };
     },
     [pollJob],
@@ -853,8 +869,14 @@ export default function AdminUpscVideoStudioPage() {
     setScriptError(null);
     try {
       const { en, hi } = await runDualScript(selectedId);
-      setSectionsEn(en);
-      setSectionsHi(hi);
+      if (en) setSectionsEn(en);
+      if (hi) setSectionsHi(hi);
+      if (!en || !hi) {
+        // One language failed; the other is ready (its toggle shows '· —').
+        setScriptError(
+          `The ${!en ? 'English' : 'Hindi'} script failed — the other is ready. Click “Regenerate all” to retry the missing one.`,
+        );
+      }
       setScriptConfirmed(false);
       setDirty(true);
     } catch (e) {
@@ -907,20 +929,29 @@ export default function AdminUpscVideoStudioPage() {
           next[fi] = matches[0];
           return next;
         };
-        setSectionsEn((prev) => spliceOne(prev, en));
-        setSectionsHi((prev) => spliceOne(prev, hi));
-        // Surface an error only if the ACTIVE language couldn't uniquely match.
+        // Seed an empty slot with the full fresh script (the dual run already
+        // generated it) instead of dropping it; otherwise splice the one section.
+        // A null language (failed / timed-out) leaves its slot untouched.
+        setSectionsEn((prev) => (en ? (prev ? spliceOne(prev, en) : en) : prev));
+        setSectionsHi((prev) => (hi ? (prev ? spliceOne(prev, hi) : hi) : prev));
+        // Surface an error based on the ACTIVE language's result.
         const activeFresh = scriptLangRef.current === 'en' ? en : hi;
-        const m = activeFresh.filter((s) => contentKey(s) === target);
-        if (m.length === 1) {
-          setDirty(true);
-          setScriptConfirmed(false);
-        } else {
+        if (!activeFresh) {
           setScriptError(
-            m.length > 1
-              ? 'This section’s headline isn’t unique enough to regenerate on its own — use “Regenerate all”.'
-              : 'Could not find a matching section to regenerate.',
+            `The ${scriptLangRef.current === 'en' ? 'English' : 'Hindi'} regeneration failed — please retry.`,
           );
+        } else {
+          const m = activeFresh.filter((s) => contentKey(s) === target);
+          if (m.length === 1) {
+            setDirty(true);
+            setScriptConfirmed(false);
+          } else {
+            setScriptError(
+              m.length > 1
+                ? 'This section’s headline isn’t unique enough to regenerate on its own — use “Regenerate all”.'
+                : 'Could not find a matching section to regenerate.',
+            );
+          }
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -1337,7 +1368,13 @@ export default function AdminUpscVideoStudioPage() {
                     <button
                       key={lg}
                       type="button"
-                      onClick={() => setScriptLang(lg)}
+                      onClick={() => {
+                        setScriptLang(lg);
+                        // Keep the TTS/voice language in sync with the viewed
+                        // script so make-video never reads one language's text
+                        // with the other language's voice.
+                        setCfg('lang', lg);
+                      }}
                       aria-pressed={active}
                       title={has ? '' : 'Not generated yet — Regenerate to fill both'}
                       style={{
@@ -1608,7 +1645,12 @@ export default function AdminUpscVideoStudioPage() {
               <RadioRow
                 options={LANGS}
                 value={config.lang}
-                onChange={(v) => setCfg('lang', v)}
+                onChange={(v) => {
+                  setCfg('lang', v);
+                  // Mirror into the script toggle so the editor shows the same
+                  // language whose voice will narrate the video (kept in sync).
+                  setScriptLang(v as 'en' | 'hi');
+                }}
                 disabled={videoBusy}
               />
 
