@@ -359,6 +359,149 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
  *  PAGE                                                               *
  * ================================================================== */
 
+function IssueCalendar({
+  issues,
+  selectedId,
+  onPick,
+}: {
+  issues: UpscIssue[];
+  selectedId: string;
+  onPick: (id: string) => void;
+}) {
+  const byDate = useMemo(() => {
+    const m: Record<string, UpscIssue> = {};
+    for (const it of issues) m[it.issue_date.slice(0, 10)] = it;
+    return m;
+  }, [issues]);
+
+  const [view, setView] = useState(() => {
+    const base = issues[0]?.issue_date ? new Date(issues[0].issue_date) : new Date();
+    return { y: base.getFullYear(), m: base.getMonth() };
+  });
+
+  const first = new Date(view.y, view.m, 1);
+  const startOffset = first.getDay();
+  const daysInMonth = new Date(view.y, view.m + 1, 0).getDate();
+  const monthName = first.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < startOffset; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const key = (d: number) =>
+    `${view.y}-${String(view.m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+  const nav = (label: string, delta: number) => (
+    <button
+      type="button"
+      aria-label={delta < 0 ? 'Previous month' : 'Next month'}
+      onClick={() =>
+        setView((v) => {
+          const nm = v.m + delta;
+          return { y: v.y + Math.floor(nm / 12), m: ((nm % 12) + 12) % 12 };
+        })
+      }
+      style={{
+        border: '1px solid var(--c-line-2)',
+        background: 'transparent',
+        color: 'var(--c-ink-2)',
+        borderRadius: 8,
+        padding: '2px 12px',
+        cursor: 'pointer',
+        fontSize: 16,
+        lineHeight: 1.4,
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div style={{ maxWidth: 340 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 10,
+        }}
+      >
+        {nav('‹', -1)}
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--c-ink)' }}>{monthName}</div>
+        {nav('›', 1)}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+          <div
+            key={i}
+            style={{ textAlign: 'center', fontSize: 11, color: 'var(--c-ink-3)', paddingBottom: 2 }}
+          >
+            {d}
+          </div>
+        ))}
+        {cells.map((d, i) => {
+          if (d === null) return <div key={i} />;
+          const it = byDate[key(d)];
+          const isSel = Boolean(it && it.id === selectedId);
+          const hasVid = Boolean(it && it.video_status && it.video_status !== 'none');
+          return (
+            <button
+              key={i}
+              type="button"
+              disabled={!it}
+              onClick={() => it && onPick(it.id)}
+              title={
+                it
+                  ? `${formatDate(it.issue_date)} · ${it.source}${hasVid ? ` · video:${it.video_status}` : ''}`
+                  : 'No digest for this date'
+              }
+              style={{
+                position: 'relative',
+                aspectRatio: '1 / 1',
+                borderRadius: 8,
+                fontSize: 13,
+                cursor: it ? 'pointer' : 'default',
+                border: isSel
+                  ? '1px solid var(--c-accent, #2a5b3a)'
+                  : it
+                    ? '1px solid var(--c-line-2)'
+                    : '1px solid transparent',
+                background: isSel
+                  ? 'var(--c-accent, #2a5b3a)'
+                  : it
+                    ? 'var(--c-surface-2, #f5f1ea)'
+                    : 'transparent',
+                color: isSel ? '#fff' : it ? 'var(--c-ink)' : 'var(--c-ink-3)',
+                opacity: it ? 1 : 0.45,
+                fontWeight: it ? 600 : 400,
+              }}
+            >
+              {d}
+              {hasVid && !isSel ? (
+                <span
+                  style={{
+                    position: 'absolute',
+                    bottom: 4,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: 5,
+                    height: 5,
+                    borderRadius: '50%',
+                    background: 'var(--c-accent, #2a5b3a)',
+                  }}
+                />
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--c-ink-3)' }}>
+        Highlighted dates have an authored digest · dot = video already made
+      </div>
+    </div>
+  );
+}
+
 export default function AdminUpscVideoStudioPage() {
   const [issues, setIssues] = useState<UpscIssue[] | null>(null);
   const [selectedId, setSelectedId] = useState<string>('');
@@ -860,19 +1003,11 @@ export default function AdminUpscVideoStudioPage() {
           </div>
         )}
         {eligibleIssues.length > 0 && (
-          <select
-            value={selectedId}
-            onChange={(e) => setSelectedId(e.target.value)}
-            style={{ ...selectStyle, maxWidth: 420 }}
-          >
-            <option value="">— select an issue —</option>
-            {eligibleIssues.map((i) => (
-              <option key={i.id} value={i.id}>
-                {formatDate(i.issue_date)} · {i.source}
-                {i.video_status && i.video_status !== 'none' ? ` · video:${i.video_status}` : ''}
-              </option>
-            ))}
-          </select>
+          <IssueCalendar
+            issues={eligibleIssues}
+            selectedId={selectedId}
+            onPick={setSelectedId}
+          />
         )}
       </Section>
 
