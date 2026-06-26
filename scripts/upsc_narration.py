@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Optional
-from concurrent.futures import ThreadPoolExecutor
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -282,25 +282,20 @@ def generate_script(issue_id: str, *, lang: str = "hi") -> list[dict]:
         sections.append({"section_id": "overview", "label": "Overview",
                          "text": ov_text, "est_seconds": est_seconds(ov_text)})
 
-    # Spoken-rewrite all articles in PARALLEL (the Groq helper has its own 429
-    # backoff) so the script returns in seconds, not minutes — well under any
-    # proxy timeout. ex.map preserves input order, so sections stay ordered.
-    def _rewrite(task: tuple) -> dict:
-        i, headline, body_md = task
-        print(f"  spoken-rewrite {i}/{len(articles)}: {headline[:60]!r}", flush=True)
+    # Spoken-rewrite each article SEQUENTIALLY — exactly one Groq call at a time,
+    # never concurrent. (Architect-locked: concurrency trips Groq's RPM; the async
+    # worker, not parallelism, is what keeps this slow stage off the request path.)
+    # The timestamp on each line lets the architect verify strict sequencing.
+    for i, (headline, body_md) in enumerate(articles, start=1):
+        print(f"  [{time.strftime('%H:%M:%S')}] spoken-rewrite {i}/{len(articles)}: "
+              f"{headline[:60]!r}", flush=True)
         text = rewrite_article(headline, body_md, lang)
-        return {
+        sections.append({
             "section_id": f"art-{i:02d}",
             "label": f"{i}. {headline}"[:80],
             "text": text,
             "est_seconds": est_seconds(text),
-        }
-
-    tasks = [(i, h, b) for i, (h, b) in enumerate(articles, start=1)]
-    # 3 workers: faster than sequential but gentle on Groq's RPM (5 tripped 429s).
-    with ThreadPoolExecutor(max_workers=min(3, len(tasks) or 1)) as ex:
-        for sec in ex.map(_rewrite, tasks):
-            sections.append(sec)
+        })
 
     outro = _outro_text(lang)
     sections.append({

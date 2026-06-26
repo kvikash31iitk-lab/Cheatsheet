@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api import settings as app_settings
 from api.db import get_session
 from api.deps import require_admin
-from api.models import AuditLog, UpscIssue, User
+from api.models import AuditLog, ScriptJob, UpscIssue, User, _utcnow
 
 # Where input newspaper PDFs land. The pipeline reads from here.
 UPSC_UPLOADS = Path(__file__).resolve().parent.parent / "web_work" / "upsc_uploads"
@@ -799,6 +799,76 @@ async def admin_voice_preview(
     )
 
 
+def _run_script_job(job_id: str) -> None:
+    """Background worker for ONE script-generation job. Daemon thread (same
+    pattern as ``_kick_video``). It:
+      * claims the job atomically under a row lock (``SELECT ... FOR UPDATE``) —
+        IDEMPOTENT: a duplicate kick or a re-run sees status != 'pending' and
+        skips, so Groq is never called twice for the same job;
+      * runs the slow SEQUENTIAL Groq rewrite (``upsc_narration.generate_script``
+        does exactly one Groq call per article, in order — no concurrency);
+      * catches EVERYTHING so a Groq error marks the job 'failed' and the worker
+        thread never crashes;
+      * writes the result to the job row AND mirrors it onto the issue's
+        ``narration_script`` so the existing video-build/hydrate flow keeps working.
+    """
+    from scripts import upsc_pipeline
+
+    # 1. Claim the job (row lock) — idempotent.
+    with upsc_pipeline.SyncSessionLocal() as s:
+        job = s.execute(
+            select(ScriptJob).where(ScriptJob.id == job_id).with_for_update()
+        ).scalar_one_or_none()
+        if job is None:
+            print(f"[script-job] {job_id}: not found", flush=True)
+            return
+        if job.status != "pending":
+            print(f"[script-job] {job_id}: already '{job.status}' "
+                  f"(started_at={job.started_at}) — skipping (idempotent)", flush=True)
+            s.rollback()
+            return
+        job.status = "processing"
+        job.started_at = _utcnow()
+        digest_id, lang = job.digest_id, job.language
+        s.commit()  # releases the FOR UPDATE lock; the claim is now durable
+
+    print(f"[script-job] {job_id}: processing digest={digest_id} lang={lang}", flush=True)
+
+    # 2. Slow SEQUENTIAL Groq rewrite — never let it crash the worker.
+    try:
+        from scripts import upsc_narration
+        sections = upsc_narration.generate_script(digest_id, lang=lang)
+    except Exception as exc:  # noqa: BLE001
+        with upsc_pipeline.SyncSessionLocal() as s:
+            j = s.get(ScriptJob, job_id)
+            if j is not None:
+                j.status = "failed"
+                j.error = str(exc)[:500]
+                j.completed_at = _utcnow()
+                s.commit()
+        print(f"[script-job] {job_id}: FAILED — {exc}", flush=True)
+        return
+
+    # 3. Persist result + keep the issue's narration_script in sync.
+    with upsc_pipeline.SyncSessionLocal() as s:
+        j = s.get(ScriptJob, job_id)
+        if j is not None:
+            j.status = "done"
+            j.result = json.dumps({"sections": sections}, ensure_ascii=False)
+            j.completed_at = _utcnow()
+        issue = s.get(UpscIssue, digest_id)
+        if issue is not None:
+            issue.narration_script = json.dumps(sections, ensure_ascii=False)
+            issue.script_confirmed = False
+        s.commit()
+    print(f"[script-job] {job_id}: DONE ({len(sections)} sections)", flush=True)
+
+
+def _kick_script_job(job_id: str) -> None:
+    """Fire the script worker in a daemon thread (same pattern as _kick_video)."""
+    threading.Thread(target=_run_script_job, args=(job_id,), daemon=True).start()
+
+
 @router.post("/api/admin/upsc/issues/{issue_id}/script")
 async def admin_generate_script(
     issue_id: str,
@@ -806,9 +876,15 @@ async def admin_generate_script(
     admin: User = Depends(require_admin),
     lang: str = "hi",
 ) -> dict[str, Any]:
-    """Generate the spoken narration script from the issue's authored markdown
-    and persist it (unconfirmed). Returns ``{sections:[...]}``. The LLM rewrite
-    can be slow, so it runs in a thread to avoid blocking the event loop."""
+    """Create a 'pending' script-generation job and return its id IMMEDIATELY.
+
+    The slow (~60s, sequential Groq) rewrite runs in a background worker
+    (``_run_script_job``) which writes the result to the ``script_jobs`` row and
+    mirrors it onto the issue's ``narration_script``. Clients poll the job
+    (separate endpoint — not part of this change) for completion.
+
+    (Was: blocked ~60s awaiting the rewrite, which timed out at the Next.js proxy
+    even though the work completed and saved.)"""
     lang = (lang or "hi").lower()
     if lang not in VIDEO_LANGS:
         raise HTTPException(400, f"lang must be one of {list(VIDEO_LANGS)}")
@@ -818,24 +894,16 @@ async def admin_generate_script(
     if not row.markdown or not row.markdown.strip():
         raise HTTPException(400, "issue has no authored markdown yet")
 
-    import anyio
-
-    def _gen() -> list[dict]:
-        from scripts import upsc_narration
-        return upsc_narration.generate_script(issue_id, lang=lang)
-
-    try:
-        sections = await anyio.to_thread.run_sync(_gen)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"script generation failed: {exc}")
-
-    row.narration_script = json.dumps(sections, ensure_ascii=False)
-    row.script_confirmed = False
-    await _audit(s, admin, "upsc.script_generate", target_id=issue_id, payload={
-        "sections": len(sections), "lang": lang,
-    })
+    job = ScriptJob(digest_id=issue_id, language=lang, status="pending")
+    s.add(job)
+    await s.flush()  # assign job.id via the _uuid default before we reference it
+    job_id = job.id
+    await _audit(s, admin, "upsc.script_generate", target_id=issue_id,
+                 payload={"lang": lang, "job_id": job_id})
     await s.commit()
-    return {"sections": sections}
+
+    _kick_script_job(job_id)
+    return {"job_id": job_id, "status": "pending"}
 
 
 class ScriptSection(BaseModel):

@@ -407,6 +407,33 @@ class Pyq(Base):
     )
 
 
+class ScriptJob(Base):
+    """One background script-generation job (async refactor of the formerly
+    synchronous /script handler). The HTTP handler creates a 'pending' row and
+    returns its id immediately; a worker thread claims it (row lock), runs the
+    sequential Groq rewrite, and writes the result here.
+
+    Contract (locked by architect). NOTE the codebase has no native JSONB column
+    type wired up and stores JSON as Text elsewhere (e.g. UpscIssue.narration_script),
+    so ``result`` is Text holding a JSON string {"sections":[...]}; ``id`` is a
+    uuid4 hex String (matching every other id in this schema) rather than a
+    native UUID column, for cross-backend (Postgres + dev SQLite) parity.
+    """
+    __tablename__ = "script_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    digest_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    language: Mapped[str] = mapped_column(String(8), nullable=False)  # "en" | "hi"
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")  # pending|processing|done|failed
+    result: Mapped[Optional[str]] = mapped_column(Text)   # JSON: {"sections": [...]}
+    error: Mapped[Optional[str]] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
 # Indexes
 Index("ix_generations_user_created", Generation.user_id, Generation.created_at.desc())
 Index("ix_generations_status", Generation.status)
@@ -423,6 +450,7 @@ Index(
     PromoRedemption.user_id,
     unique=True,
 )
+Index("ix_script_jobs_status", ScriptJob.status)
 Index("ix_upsc_issues_date", UpscIssue.issue_date.desc())
 Index("ix_upsc_issues_status", UpscIssue.status)
 Index("ix_pyq_year_paper", Pyq.year, Pyq.paper)
