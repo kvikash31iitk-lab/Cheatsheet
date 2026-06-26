@@ -30,6 +30,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -266,15 +267,24 @@ def generate_script(issue_id: str, *, lang: str = "hi") -> list[dict]:
         sections.append({"section_id": "overview", "label": "Overview",
                          "text": ov_text, "est_seconds": est_seconds(ov_text)})
 
-    for i, (headline, body_md) in enumerate(articles, start=1):
+    # Spoken-rewrite all articles in PARALLEL (the Groq helper has its own 429
+    # backoff) so the script returns in seconds, not minutes — well under any
+    # proxy timeout. ex.map preserves input order, so sections stay ordered.
+    def _rewrite(task: tuple) -> dict:
+        i, headline, body_md = task
         print(f"  spoken-rewrite {i}/{len(articles)}: {headline[:60]!r}", flush=True)
         text = rewrite_article(headline, body_md)
-        sections.append({
+        return {
             "section_id": f"art-{i:02d}",
             "label": f"{i}. {headline}"[:80],
             "text": text,
             "est_seconds": est_seconds(text),
-        })
+        }
+
+    tasks = [(i, h, b) for i, (h, b) in enumerate(articles, start=1)]
+    with ThreadPoolExecutor(max_workers=min(5, len(tasks) or 1)) as ex:
+        for sec in ex.map(_rewrite, tasks):
+            sections.append(sec)
 
     outro = _outro_text(lang)
     sections.append({
