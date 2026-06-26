@@ -528,8 +528,21 @@ export default function AdminUpscVideoStudioPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewUrlRef = useRef<string | null>(null);
 
-  /* ---- script ---- */
-  const [sections, setSections] = useState<NarrationSection[] | null>(null);
+  /* ---- script (dual: English + Hindi generated together, toggle between) ---- */
+  const [sectionsEn, setSectionsEn] = useState<NarrationSection[] | null>(null);
+  const [sectionsHi, setSectionsHi] = useState<NarrationSection[] | null>(null);
+  const [scriptLang, setScriptLang] = useState<'en' | 'hi'>('hi');
+  // Keep a ref of the active language so the stable setSections dispatcher below
+  // (deps []) always writes to the CURRENT language, with no stale closures.
+  const scriptLangRef = useRef<'en' | 'hi'>('hi');
+  scriptLangRef.current = scriptLang;
+  // `sections` = the active script; `setSections` writes the active language.
+  const sections = scriptLang === 'en' ? sectionsEn : sectionsHi;
+  const setSections = useCallback(
+    (u: React.SetStateAction<NarrationSection[] | null>) =>
+      (scriptLangRef.current === 'en' ? setSectionsEn : setSectionsHi)(u),
+    [],
+  );
   const [scriptBusy, setScriptBusy] = useState(false);
   const [scriptError, setScriptError] = useState<string | null>(null);
   const [scriptConfirmed, setScriptConfirmed] = useState(false);
@@ -660,7 +673,11 @@ export default function AdminUpscVideoStudioPage() {
           try {
             const parsed = JSON.parse(r.narration_script) as NarrationSection[];
             if (Array.isArray(parsed)) {
-              setSections((prev) => (!force && dirty ? prev : parsed));
+              // Persisted narration_script is the saved script; hydrate it into
+              // the Hindi slot (the historical default). The English script is
+              // not persisted separately (no schema change) — re-generate to
+              // repopulate both languages after a reload.
+              setSectionsHi((prev) => (!force && dirty ? prev : parsed));
             }
           } catch {
             /* ignore malformed persisted script */
@@ -683,7 +700,9 @@ export default function AdminUpscVideoStudioPage() {
   useEffect(() => {
     // reset per-issue UI state when the picker changes
     setIssue(null);
-    setSections(null);
+    setSectionsEn(null);
+    setSectionsHi(null);
+    setScriptLang('hi');
     setScriptConfirmed(false);
     setDirty(false);
     setScriptError(null);
@@ -779,25 +798,16 @@ export default function AdminUpscVideoStudioPage() {
     scriptPollRef.current += 1;
   }, [selectedId]);
 
-  /* Kick an async script job and poll it to completion. Shared by "Generate",
-   * "Regenerate all" and per-section regen. Polls every 2s; gives up after
-   * 5 min. Throws '__cancelled__' if superseded (issue switch / unmount), or
-   * Error(message) on failed/timeout. Resolves with the finished sections. */
-  const runScriptJob = useCallback(
-    async (id: string, lang: 'hi' | 'en'): Promise<NarrationSection[]> => {
-      const token = (scriptPollRef.current += 1); // invalidate any prior poll
-      setScriptProgress(0);
-      const { job_id } = await adminApi.generateScript(id, lang);
+  /* Poll ONE job to completion. Polls every 2s; gives up after 5 min. Throws
+   * '__cancelled__' if superseded (issue switch / unmount — re-checked AFTER each
+   * await so a poll resolving on the same tick as a switch can't clobber the new
+   * issue), or Error(message) on failed/timeout. Resolves with its sections. */
+  const pollJob = useCallback(
+    async (jobId: string, token: number): Promise<NarrationSection[]> => {
       const deadline = Date.now() + 5 * 60 * 1000; // 5-minute cap
       for (;;) {
         if (scriptPollRef.current !== token) throw new Error('__cancelled__');
-        const job = await adminApi.getScriptJob(job_id);
-        // Re-check AFTER the await: the issue may have switched (or the component
-        // unmounted) WHILE this GET was in flight. Without this, a poll that
-        // resolves 'done' on the same tick as an issue-switch would clobber the
-        // newly-selected issue's sections (and write a stale progress %). This
-        // single guard fixes the stale-clobber, stale-progress and
-        // setState-after-unmount races in one place.
+        const job = await adminApi.getScriptJob(jobId);
         if (scriptPollRef.current !== token) throw new Error('__cancelled__');
         setScriptProgress(job.progress);
         if (job.status === 'done') {
@@ -819,13 +829,32 @@ export default function AdminUpscVideoStudioPage() {
     [],
   );
 
+  /* Kick BOTH language jobs and poll them concurrently to completion. Returns
+   * the finished English and Hindi section lists. Shared by Generate /
+   * Regenerate-all / per-section regen. (Two parallel jobs => up to 2 concurrent
+   * Groq streams; each job is itself sequential, so this stays gentle on RPM.) */
+  const runDualScript = useCallback(
+    async (id: string): Promise<{ en: NarrationSection[]; hi: NarrationSection[] }> => {
+      const token = (scriptPollRef.current += 1); // invalidate any prior poll
+      setScriptProgress(0);
+      const { en_job_id, hi_job_id } = await adminApi.generateScript(id);
+      const [en, hi] = await Promise.all([
+        pollJob(en_job_id, token),
+        pollJob(hi_job_id, token),
+      ]);
+      return { en, hi };
+    },
+    [pollJob],
+  );
+
   const onGenerateScript = useCallback(async () => {
     if (!selectedId) return;
     setScriptBusy(true);
     setScriptError(null);
     try {
-      const secs = await runScriptJob(selectedId, config.lang);
-      setSections(secs);
+      const { en, hi } = await runDualScript(selectedId);
+      setSectionsEn(en);
+      setSectionsHi(hi);
       setScriptConfirmed(false);
       setDirty(true);
     } catch (e) {
@@ -834,7 +863,7 @@ export default function AdminUpscVideoStudioPage() {
     } finally {
       setScriptBusy(false);
     }
-  }, [selectedId, config.lang, runScriptJob]);
+  }, [selectedId, runDualScript]);
 
   const onEditSection = useCallback((idx: number, text: string) => {
     setSections((prev) => {
@@ -847,43 +876,48 @@ export default function AdminUpscVideoStudioPage() {
     setScriptConfirmed(false);
   }, []);
 
-  /* Regenerate a single section: re-run the full generator, swap in just
-   * that section's fresh text. (No per-section endpoint in the contract.) */
+  /* Regenerate a single section: re-run the full (dual) generator and swap in
+   * just that section's fresh text — in BOTH languages, since article labels
+   * (English headlines) are shared across en/hi and only the text differs.
+   * Only an UNAMBIGUOUS single content-key match is spliced (labels are
+   * truncated to 80 chars and headlines aren't deduped, so a key can collide);
+   * otherwise it degrades to a graceful error instead of splicing the wrong
+   * story's text. (Matching the old positional art-NN avoided collisions but
+   * mis-targeted on reorder; requiring exactly one match gets both.) */
   const onRegenSection = useCallback(
     async (idx: number) => {
       if (!selectedId || !sections) return;
       setRegenIdx(idx);
       setScriptError(null);
       try {
-        const secs = await runScriptJob(selectedId, config.lang);
-        // Match the regenerated section by a CONTENT key (the headline in the
-        // label), not the positional section_id: `art-NN` is assigned by article
-        // order, so a reordered/changed article set would splice a DIFFERENT
-        // story's text into this slot. Stripping a leading "N. " makes it
-        // survive renumbering; intro/overview/outro keep their stable labels.
-        // Only splice on an UNAMBIGUOUS single match. Labels are truncated to 80
-        // chars and headlines aren't guaranteed unique (the digest parser does
-        // not dedupe), so the content key CAN collide — in that case degrade to
-        // the graceful error rather than silently splice a different story's text
-        // into this slot. (Matching the old positional art-NN avoided collisions
-        // but mis-targeted on reorder; requiring exactly one match gets both.)
+        const { en, hi } = await runDualScript(selectedId);
         const contentKey = (s: NarrationSection) =>
           s.label.replace(/^\s*\d+\.\s*/, '').trim();
         const target = contentKey(sections[idx]);
-        const matches = secs.filter((s) => contentKey(s) === target);
-        const fresh = matches.length === 1 ? matches[0] : undefined;
-        if (fresh) {
-          setSections((prev) => {
-            if (!prev) return prev;
-            const next = [...prev];
-            next[idx] = fresh;
-            return next;
-          });
+        const spliceOne = (
+          arr: NarrationSection[] | null,
+          fresh: NarrationSection[],
+        ): NarrationSection[] | null => {
+          if (!arr) return arr;
+          const matches = fresh.filter((s) => contentKey(s) === target);
+          if (matches.length !== 1) return arr; // collision / miss -> leave as-is
+          const fi = arr.findIndex((s) => contentKey(s) === target);
+          if (fi < 0) return arr;
+          const next = [...arr];
+          next[fi] = matches[0];
+          return next;
+        };
+        setSectionsEn((prev) => spliceOne(prev, en));
+        setSectionsHi((prev) => spliceOne(prev, hi));
+        // Surface an error only if the ACTIVE language couldn't uniquely match.
+        const activeFresh = scriptLangRef.current === 'en' ? en : hi;
+        const m = activeFresh.filter((s) => contentKey(s) === target);
+        if (m.length === 1) {
           setDirty(true);
           setScriptConfirmed(false);
         } else {
           setScriptError(
-            matches.length > 1
+            m.length > 1
               ? 'This section’s headline isn’t unique enough to regenerate on its own — use “Regenerate all”.'
               : 'Could not find a matching section to regenerate.',
           );
@@ -895,7 +929,7 @@ export default function AdminUpscVideoStudioPage() {
         setRegenIdx(null);
       }
     },
-    [selectedId, sections, config.lang, runScriptJob],
+    [selectedId, sections, runDualScript],
   );
 
   const onSaveScript = useCallback(
@@ -1290,6 +1324,40 @@ export default function AdminUpscVideoStudioPage() {
             }
           >
             <ErrorBanner msg={scriptError} />
+            {(sectionsEn || sectionsHi) && (
+              <div
+                role="group"
+                aria-label="Script language"
+                style={{ display: 'flex', gap: 6, marginBottom: 12 }}
+              >
+                {(['hi', 'en'] as const).map((lg) => {
+                  const has = (lg === 'en' ? sectionsEn : sectionsHi) != null;
+                  const active = scriptLang === lg;
+                  return (
+                    <button
+                      key={lg}
+                      type="button"
+                      onClick={() => setScriptLang(lg)}
+                      aria-pressed={active}
+                      title={has ? '' : 'Not generated yet — Regenerate to fill both'}
+                      style={{
+                        padding: '6px 14px',
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        borderRadius: 8,
+                        cursor: 'pointer',
+                        border: '1px solid var(--c-line-2)',
+                        background: active ? 'var(--c-accent, #2a5b3a)' : 'transparent',
+                        color: active ? '#fff' : 'var(--c-ink-2)',
+                      }}
+                    >
+                      {lg === 'hi' ? 'Hindi (Hinglish)' : 'English'}
+                      {has ? '' : ' · —'}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {!sections && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <ConfirmButton

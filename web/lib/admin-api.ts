@@ -363,11 +363,12 @@ export const adminApi = {
       }
       return r.blob();
     }),
-  /* Kick an async script-generation job. Returns immediately with a job ref;
-   * poll getScriptJob(job_id) until status is 'done' or 'failed'. */
-  generateScript: (id: string, lang: 'hi' | 'en' = 'hi') =>
-    req<ScriptJobRef>(
-      `/api/admin/upsc/issues/${id}/script?lang=${lang}`,
+  /* Kick BOTH the English and Hindi script jobs in one call. Returns both job
+   * ids immediately; poll each with getScriptJob() and let the user toggle
+   * between the two finished scripts (no re-generation needed to switch). */
+  generateScript: (id: string) =>
+    req<ScriptJobPair>(
+      `/api/admin/upsc/issues/${id}/script`,
       { method: 'POST' },
     ),
   /* Poll one script job (read-only). 404 (unknown job) throws via req(). */
@@ -446,9 +447,10 @@ export type NarrationSection = {
 
 export type ScriptJobState = 'pending' | 'processing' | 'done' | 'failed';
 
-/** Returned by POST .../script (async kick). */
-export type ScriptJobRef = {
-  job_id: string;
+/** Returned by POST .../script (async kick) — both languages at once. */
+export type ScriptJobPair = {
+  en_job_id: string;
+  hi_job_id: string;
   status: ScriptJobState;
 };
 
