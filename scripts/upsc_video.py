@@ -119,6 +119,7 @@ def gemini_billing_active() -> bool:
 # deck_full_chirp_hi.py, which hardcoded Alnilam.)
 _CHIRP_HI = [
     ("hi-IN-Chirp3-HD-Alnilam", "Alnilam (vikash voice)"),
+    ("hi-IN-Chirp3-HD-Erinome", "Erinome"),
     ("hi-IN-Chirp3-HD-Achernar", "Achernar"),
     ("hi-IN-Chirp3-HD-Algenib", "Algenib"),
     ("hi-IN-Chirp3-HD-Achird", "Achird"),
@@ -129,6 +130,7 @@ _CHIRP_HI = [
 ]
 _CHIRP_EN = [
     ("en-IN-Chirp3-HD-Alnilam", "Alnilam (vikash voice)"),
+    ("en-IN-Chirp3-HD-Erinome", "Erinome (warm English)"),
     ("en-IN-Chirp3-HD-Achernar", "Achernar"),
     ("en-IN-Chirp3-HD-Algenib", "Algenib"),
     ("en-IN-Chirp3-HD-Charon", "Charon"),
