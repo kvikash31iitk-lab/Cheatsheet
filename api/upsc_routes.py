@@ -880,8 +880,8 @@ async def admin_generate_script(
 
     The slow (~60s, sequential Groq) rewrite runs in a background worker
     (``_run_script_job``) which writes the result to the ``script_jobs`` row and
-    mirrors it onto the issue's ``narration_script``. Clients poll the job
-    (separate endpoint — not part of this change) for completion.
+    mirrors it onto the issue's ``narration_script``. Clients poll
+    ``GET /api/admin/upsc/script/{job_id}`` for completion.
 
     (Was: blocked ~60s awaiting the rewrite, which timed out at the Next.js proxy
     even though the work completed and saved.)"""
@@ -894,6 +894,23 @@ async def admin_generate_script(
     if not row.markdown or not row.markdown.strip():
         raise HTTPException(400, "issue has no authored markdown yet")
 
+    # Idempotency on (digest_id, language): if a job for this issue+lang is
+    # already pending or processing, return THAT job instead of spawning a
+    # duplicate Groq run (double-click / fast-retry guard). A done/failed job
+    # does NOT block a fresh request. (Contract retry semantics — added here;
+    # the earlier worker-only commit created a new job unconditionally.)
+    existing = (await s.execute(
+        select(ScriptJob)
+        .where(
+            ScriptJob.digest_id == issue_id,
+            ScriptJob.language == lang,
+            ScriptJob.status.in_(("pending", "processing")),
+        )
+        .order_by(desc(ScriptJob.created_at))
+    )).scalars().first()
+    if existing is not None:
+        return {"job_id": existing.id, "status": existing.status}
+
     job = ScriptJob(digest_id=issue_id, language=lang, status="pending")
     s.add(job)
     await s.flush()  # assign job.id via the _uuid default before we reference it
@@ -904,6 +921,43 @@ async def admin_generate_script(
 
     _kick_script_job(job_id)
     return {"job_id": job_id, "status": "pending"}
+
+
+@router.get("/api/admin/upsc/script/{job_id}")
+async def admin_get_script_job(
+    job_id: str,
+    s: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Poll one script-generation job (read-only). Locked contract shape:
+    ``{status, progress, result, error}``.
+
+    * ``status``   — pending | processing | done | failed
+    * ``progress`` — coarse by design (the worker exposes no per-article detail):
+                     0 pending, 50 processing, 100 done/failed.
+    * ``result``   — ``{"sections": [...]}`` on success, else null. NOTE the
+                     narration is structured *sections* (what the editor renders,
+                     and what POST used to return), not a single ``script``
+                     string — so result carries ``sections`` rather than ``script``.
+    * ``error``    — failure message when status == 'failed', else null.
+
+    Returns 404 for an unknown job id."""
+    job = await s.get(ScriptJob, job_id)
+    if job is None:
+        raise HTTPException(404, "script job not found")
+    progress = {"pending": 0, "processing": 50, "done": 100, "failed": 100}.get(job.status, 0)
+    result = None
+    if job.status == "done" and job.result:
+        try:
+            result = json.loads(job.result)
+        except Exception:  # noqa: BLE001
+            result = None
+    return {
+        "status": job.status,
+        "progress": progress,
+        "result": result,
+        "error": job.error,
+    }
 
 
 class ScriptSection(BaseModel):

@@ -363,11 +363,16 @@ export const adminApi = {
       }
       return r.blob();
     }),
-  generateScript: (id: string) =>
-    req<{ sections: NarrationSection[] }>(
-      `/api/admin/upsc/issues/${id}/script`,
+  /* Kick an async script-generation job. Returns immediately with a job ref;
+   * poll getScriptJob(job_id) until status is 'done' or 'failed'. */
+  generateScript: (id: string, lang: 'hi' | 'en' = 'hi') =>
+    req<ScriptJobRef>(
+      `/api/admin/upsc/issues/${id}/script?lang=${lang}`,
       { method: 'POST' },
     ),
+  /* Poll one script job (read-only). 404 (unknown job) throws via req(). */
+  getScriptJob: (jobId: string) =>
+    req<ScriptJobStatus>(`/api/admin/upsc/script/${jobId}`),
   saveScript: (id: string, sections: NarrationSection[], confirmed: boolean) =>
     req<{ ok: boolean }>(`/api/admin/upsc/issues/${id}/script`, {
       method: 'PATCH',
@@ -437,6 +442,24 @@ export type NarrationSection = {
   label: string;
   text: string;
   est_seconds: number;
+};
+
+export type ScriptJobState = 'pending' | 'processing' | 'done' | 'failed';
+
+/** Returned by POST .../script (async kick). */
+export type ScriptJobRef = {
+  job_id: string;
+  status: ScriptJobState;
+};
+
+/** Returned by GET .../script/{job_id} (poll). Locked contract shape.
+ *  `result` carries structured `sections` (not a single `script` string),
+ *  matching what the editor renders. */
+export type ScriptJobStatus = {
+  status: ScriptJobState;
+  progress: number; // 0–100, coarse: 0 pending, 50 processing, 100 done/failed
+  result: { sections: NarrationSection[] } | null;
+  error: string | null;
 };
 
 export type VideoConfig = {

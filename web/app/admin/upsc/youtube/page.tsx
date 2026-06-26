@@ -534,6 +534,10 @@ export default function AdminUpscVideoStudioPage() {
   const [scriptConfirmed, setScriptConfirmed] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [regenIdx, setRegenIdx] = useState<number | null>(null);
+  const [scriptProgress, setScriptProgress] = useState(0);
+  /* monotonic token: switching issues / unmount bumps it to cancel any
+   * in-flight script poll (the running loop sees its token go stale). */
+  const scriptPollRef = useRef(0);
 
   /* ---- video / publish ---- */
   const [makeError, setMakeError] = useState<string | null>(null);
@@ -760,21 +764,61 @@ export default function AdminUpscVideoStudioPage() {
     }
   }, [config.engine, config.voice, config.lang]);
 
+  /* Switching issues (or unmounting) cancels any in-flight script poll: the
+   * running loop sees its token go stale and bails with '__cancelled__'. */
+  useEffect(() => () => {
+    scriptPollRef.current += 1;
+  }, [selectedId]);
+
+  /* Kick an async script job and poll it to completion. Shared by "Generate",
+   * "Regenerate all" and per-section regen. Polls every 2s; gives up after
+   * 5 min. Throws '__cancelled__' if superseded (issue switch / unmount), or
+   * Error(message) on failed/timeout. Resolves with the finished sections. */
+  const runScriptJob = useCallback(
+    async (id: string, lang: 'hi' | 'en'): Promise<NarrationSection[]> => {
+      const token = (scriptPollRef.current += 1); // invalidate any prior poll
+      setScriptProgress(0);
+      const { job_id } = await adminApi.generateScript(id, lang);
+      const deadline = Date.now() + 5 * 60 * 1000; // 5-minute cap
+      for (;;) {
+        if (scriptPollRef.current !== token) throw new Error('__cancelled__');
+        const job = await adminApi.getScriptJob(job_id);
+        setScriptProgress(job.progress);
+        if (job.status === 'done') {
+          const secs = job.result?.sections;
+          if (!secs || secs.length === 0) {
+            throw new Error('Generation finished but returned no script.');
+          }
+          return secs;
+        }
+        if (job.status === 'failed') {
+          throw new Error(job.error || 'Script generation failed.');
+        }
+        if (Date.now() >= deadline) {
+          throw new Error('Generation timed out; check back later. You can retry.');
+        }
+        await new Promise<void>((res) => setTimeout(res, 2000));
+      }
+    },
+    [],
+  );
+
   const onGenerateScript = useCallback(async () => {
     if (!selectedId) return;
     setScriptBusy(true);
     setScriptError(null);
     try {
-      const r = await adminApi.generateScript(selectedId);
-      setSections(r.sections);
+      const secs = await runScriptJob(selectedId, config.lang);
+      setSections(secs);
       setScriptConfirmed(false);
       setDirty(true);
     } catch (e) {
-      setScriptError(String(e instanceof Error ? e.message : e));
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg !== '__cancelled__') setScriptError(msg);
     } finally {
       setScriptBusy(false);
     }
-  }, [selectedId]);
+  }, [selectedId, config.lang, runScriptJob]);
 
   const onEditSection = useCallback((idx: number, text: string) => {
     setSections((prev) => {
@@ -795,8 +839,8 @@ export default function AdminUpscVideoStudioPage() {
       setRegenIdx(idx);
       setScriptError(null);
       try {
-        const r = await adminApi.generateScript(selectedId);
-        const fresh = r.sections.find((s) => s.section_id === sections[idx].section_id);
+        const secs = await runScriptJob(selectedId, config.lang);
+        const fresh = secs.find((s) => s.section_id === sections[idx].section_id);
         if (fresh) {
           setSections((prev) => {
             if (!prev) return prev;
@@ -810,12 +854,13 @@ export default function AdminUpscVideoStudioPage() {
           setScriptError('Could not find a matching section to regenerate.');
         }
       } catch (e) {
-        setScriptError(String(e instanceof Error ? e.message : e));
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg !== '__cancelled__') setScriptError(msg);
       } finally {
         setRegenIdx(null);
       }
     },
-    [selectedId, sections],
+    [selectedId, sections, config.lang, runScriptJob],
   );
 
   const onSaveScript = useCallback(
@@ -1216,7 +1261,10 @@ export default function AdminUpscVideoStudioPage() {
                 />
                 {scriptBusy && (
                   <span style={{ fontSize: 13, color: 'var(--c-ink-3)' }}>
-                    Rewriting the digest as spoken narration…
+                    {scriptProgress >= 50
+                      ? 'Rewriting the digest as spoken narration…'
+                      : 'Queued…'}{' '}
+                    ({scriptProgress}%) · runs in the background (~1 min)
                   </span>
                 )}
               </div>
