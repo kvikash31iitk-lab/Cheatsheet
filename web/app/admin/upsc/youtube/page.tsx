@@ -97,9 +97,9 @@ const SLIDE_STYLES: Array<{
   label: string;
   sub: string;
 }> = [
+  { id: 'clean', label: 'Branded deck (16:9)', sub: 'polished slides from the digest — default' },
   { id: 'digest', label: 'Digest pages', sub: 'rendered cheatsheet, letterboxed 1920×1080' },
-  { id: 'clean', label: 'Clean 16:9', sub: 'per-article generated slides' },
-  { id: 'animated', label: 'Animated', sub: 'motion-graphics' },
+  { id: 'animated', label: 'Animated', sub: 'motion-graphics (coming soon)' },
 ];
 
 const THEMES = ['amber', 'slate', 'forest', 'indigo', 'rose', 'mono'] as const;
@@ -119,7 +119,7 @@ const DEFAULT_CONFIG: VideoConfig = {
   engine: 'gemini',
   voice: '',
   lang: 'hi',
-  slide_style: 'digest',
+  slide_style: 'clean',
   theme: 'amber',
   privacy: 'unlisted',
 };
@@ -1386,10 +1386,11 @@ export default function AdminUpscVideoStudioPage() {
                     />
                   )}
                   <div style={{ fontSize: 11, color: 'var(--c-ink-3)', marginTop: 4 }}>
-                    First digest page — slides letterbox this to 1920×1080.
-                    {config.slide_style !== 'digest'
-                      ? ' (Clean/Animated render as digest pages for now.)'
-                      : ''}
+                    {config.slide_style === 'clean'
+                      ? 'Source digest. Your video uses the branded 16:9 deck (rendered from this content).'
+                      : config.slide_style === 'animated'
+                        ? 'First digest page. (Animated coming soon — renders as digest pages for now.)'
+                        : 'First digest page — slides letterbox this to 1920×1080.'}
                   </div>
                 </div>
               )}

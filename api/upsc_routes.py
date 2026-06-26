@@ -72,7 +72,7 @@ VIDEO_DEFAULTS_FALLBACK: dict[str, Any] = {
     "engine": "chirp",
     "voice": "hi-IN-Chirp3-HD-Alnilam",
     "lang": "hi",
-    "slide_style": "digest",
+    "slide_style": "clean",
     "theme": "amber",
     "privacy": "unlisted",
     "auto_publish": False,
@@ -876,7 +876,7 @@ class MakeVideoConfig(BaseModel):
     engine: Literal["gemini", "chirp"] = "chirp"
     voice: str
     lang: Literal["hi", "en"] = "hi"
-    slide_style: Literal["digest", "clean", "animated"] = "digest"
+    slide_style: Literal["digest", "clean", "animated"] = "clean"
     theme: str = "amber"
     privacy: Literal["public", "unlisted", "private"] = "unlisted"
     auto_publish: bool = False
@@ -1025,7 +1025,7 @@ class VideoDefaultsBody(BaseModel):
     engine: Literal["gemini", "chirp"] = "chirp"
     voice: str = "hi-IN-Chirp3-HD-Alnilam"
     lang: Literal["hi", "en"] = "hi"
-    slide_style: Literal["digest", "clean", "animated"] = "digest"
+    slide_style: Literal["digest", "clean", "animated"] = "clean"
     theme: str = "amber"
     privacy: Literal["public", "unlisted", "private"] = "unlisted"
     auto_publish: bool = False

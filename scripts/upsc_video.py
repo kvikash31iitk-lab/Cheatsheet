@@ -628,9 +628,18 @@ def build_video(issue_id: str, config: dict, sections: list) -> dict:
     out_mp4 = issue_dir / "digest.mp4"
 
     # ---------------------------------------------------------------- slides
+    slide_style = (config.get("slide_style") or "clean").lower()
     _set_video_status(issue_id, status="rendering", video_progress="slides")
-    print(f"[video] {issue_id}: rendering slides from {pdf_path.name}", flush=True)
-    slides = _render_slides(pdf_path, slides_dir)
+    md_path = issue_dir / "digest.md"
+    if slide_style == "clean" and md_path.exists():
+        # Branded 16:9 deck (matches the PPTX) rendered from the digest markdown.
+        print(f"[video] {issue_id}: rendering 'clean' branded slides from digest.md", flush=True)
+        from scripts import upsc_slides_html
+        slides = upsc_slides_html.render(md_path.read_text(encoding="utf-8"), slides_dir)
+    else:
+        # 'digest' (and 'animated'/fallback): rasterise the rendered cheatsheet PDF.
+        print(f"[video] {issue_id}: rendering digest pages from {pdf_path.name}", flush=True)
+        slides = _render_slides(pdf_path, slides_dir)
     n_pages = len(slides)
     print(f"[video] {issue_id}: {n_pages} slide pages", flush=True)
 
