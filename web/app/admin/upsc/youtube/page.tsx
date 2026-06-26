@@ -512,6 +512,10 @@ export default function AdminUpscVideoStudioPage() {
   /* ---- variant config (the four controls) ---- */
   const [config, setConfig] = useState<VideoConfig>(DEFAULT_CONFIG);
   const [sampleMode, setSampleMode] = useState(false);
+  const [thumbErr, setThumbErr] = useState(false);
+  useEffect(() => {
+    setThumbErr(false);
+  }, [selectedId]);
   const [coverSlide, setCoverSlide] = useState(true);
   const [introOutro, setIntroOutro] = useState(true);
 
@@ -1298,17 +1302,37 @@ export default function AdminUpscVideoStudioPage() {
               {issue?.has_cover_thumb && (
                 <div style={{ marginTop: 12 }}>
                   <FieldLabel>PREVIEW</FieldLabel>
-                  <img
-                    src={adminApi.thumbUrl(issue.id)}
-                    alt="slide preview"
-                    style={{
-                      width: '100%',
-                      maxWidth: 320,
-                      borderRadius: 10,
-                      border: '1px solid var(--c-line-2)',
-                      display: 'block',
-                    }}
-                  />
+                  {thumbErr ? (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: 'var(--c-ink-3)',
+                        padding: '14px 12px',
+                        background: 'var(--c-surface-2, #f5f1ea)',
+                        borderRadius: 10,
+                        border: '1px dashed var(--c-line-2)',
+                        maxWidth: 320,
+                      }}
+                    >
+                      Preview image isn&apos;t on disk for this issue (digest files were
+                      cleaned). The video still renders fine from the live digest — or
+                      re-render the issue to regenerate the cover.
+                    </div>
+                  ) : (
+                    <img
+                      key={issue.id}
+                      src={adminApi.thumbUrl(issue.id)}
+                      alt="slide preview"
+                      onError={() => setThumbErr(true)}
+                      style={{
+                        width: '100%',
+                        maxWidth: 320,
+                        borderRadius: 10,
+                        border: '1px solid var(--c-line-2)',
+                        display: 'block',
+                      }}
+                    />
+                  )}
                   <div style={{ fontSize: 11, color: 'var(--c-ink-3)', marginTop: 4 }}>
                     First digest page — slides letterbox this to 1920×1080.
                     {config.slide_style !== 'digest'
