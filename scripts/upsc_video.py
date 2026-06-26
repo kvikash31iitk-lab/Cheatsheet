@@ -514,6 +514,11 @@ def _set_video_status(issue_id: str, *, status: Optional[str] = None,
             row.video_progress = progress
         for k, v in fields.items():
             setattr(row, k, v)
+        # Clamp video_progress to its VARCHAR(32) width so an over-length label
+        # can't raise StringDataRightTruncation on Postgres (mirrors the guard in
+        # api/upsc_routes.py:_set_video_status). SQLite hides this in dev.
+        if row.video_progress and len(row.video_progress) > 32:
+            row.video_progress = row.video_progress[:32]
         session.commit()
 
 

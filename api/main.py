@@ -534,19 +534,34 @@ async def _periodic_script_job_sweep() -> None:
     partial-unique index so the admin's retry can create a fresh job instead of
     re-adopting a dead one."""
     GRACE_MIN = 15
+    PEND_GRACE_MIN = 10  # a 'pending' job is normally claimed within seconds
     INTERVAL_SEC = 300
     while True:
         try:
             await asyncio.sleep(INTERVAL_SEC)
-            cutoff = datetime.now(timezone.utc) - timedelta(minutes=GRACE_MIN)
+            now = datetime.now(timezone.utc)
+            cutoff = now - timedelta(minutes=GRACE_MIN)
+            pend_cutoff = now - timedelta(minutes=PEND_GRACE_MIN)
             async with AsyncSessionLocal() as s:
-                stuck = (
+                stuck = list((
                     await s.execute(
                         select(ScriptJob)
                         .where(ScriptJob.status == "processing")
                         .where(ScriptJob.started_at < cutoff)
                     )
-                ).scalars().all()
+                ).scalars().all())
+                # Also reap 'pending' jobs never claimed (the kicked worker died
+                # before reaching 'processing'); keyed on created_at since
+                # started_at is NULL. Otherwise the dead row holds the
+                # ux_script_jobs_active slot forever and blocks any new
+                # same-(digest, language) job — closes the 'can never dead-end' gap.
+                stuck += list((
+                    await s.execute(
+                        select(ScriptJob)
+                        .where(ScriptJob.status == "pending")
+                        .where(ScriptJob.created_at < pend_cutoff)
+                    )
+                ).scalars().all())
                 if not stuck:
                     continue
                 for job in stuck:
@@ -670,10 +685,15 @@ async def startup() -> None:
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_columns()
-    await _recover_stuck_jobs()
-    await _recover_stuck_upsc_issues()
-    await _recover_stuck_script_jobs()
-    await _recover_stuck_videos()
+    # Each recovery runs in its own guard: a single bad row (e.g. a DB error)
+    # must NOT abort boot — these run on the exact restart that left jobs
+    # in-flight, so a crash here would brick the app it exists to heal.
+    for _recover in (_recover_stuck_jobs, _recover_stuck_upsc_issues,
+                     _recover_stuck_script_jobs, _recover_stuck_videos):
+        try:
+            await _recover()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ERROR] startup recovery {_recover.__name__} failed: {exc}", flush=True)
     # Periodic orphan sweeps — catch in-process task deaths between restarts.
     asyncio.create_task(_periodic_orphan_sweep())
     asyncio.create_task(_periodic_upsc_orphan_sweep())

@@ -29,6 +29,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     UploadFile,
 )
 from fastapi.responses import FileResponse, Response
@@ -218,6 +219,12 @@ async def admin_upload(
     if pdf.content_type not in ("application/pdf", "application/x-pdf", "application/octet-stream"):
         # octet-stream is the lenient fallback some browsers send
         raise HTTPException(400, f"expected a PDF, got {pdf.content_type}")
+    # Bound against the column widths (source VARCHAR(64), title VARCHAR(255)) so
+    # an over-length value can't raise StringDataRightTruncation on the insert.
+    if len(source.strip()) > 64:
+        raise HTTPException(400, "source must be at most 64 characters")
+    if title and len(title.strip()) > 255:
+        raise HTTPException(400, "title must be at most 255 characters")
 
     # Unique key — only one published digest per date for now (admin can
     # delete + re-upload if they need to redo a day).
@@ -268,8 +275,8 @@ async def admin_upload(
 async def admin_list(
     s: AsyncSession = Depends(get_session),
     admin: User = Depends(require_admin),
-    limit: int = 30,
-    offset: int = 0,
+    limit: int = Query(30, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     q = (select(UpscIssue)
          .order_by(desc(UpscIssue.issue_date))
@@ -471,9 +478,20 @@ def _set_video_status(
                 row.error_message = error
             for k, v in fields.items():
                 setattr(row, k, v)
+            # Clamp width-limited columns so an over-length label can never raise
+            # StringDataRightTruncation on Postgres and silently lose the write
+            # (SQLite ignores VARCHAR length, which hid this in dev). video_progress
+            # is VARCHAR(32), youtube_id VARCHAR(20); error_message is Text (free).
+            if row.video_progress and len(row.video_progress) > 32:
+                row.video_progress = row.video_progress[:32]
+            if row.youtube_id and len(row.youtube_id) > 20:
+                row.youtube_id = row.youtube_id[:20]
             session.commit()
     except Exception as exc:  # noqa: BLE001
-        print(f"[upsc-video] status write failed for {issue_id}: {exc}")
+        # LOUD: a swallowed terminal status write leaves the row stuck in-flight
+        # (videoBusy locks the whole Slides/Voice UI) until a reaper fires. Make
+        # it greppable rather than a quiet print.
+        print(f"[ERROR] _set_video_status write FAILED for {issue_id}: {exc}", flush=True)
 
 
 def _kick_video(issue_id: str) -> None:
@@ -1057,6 +1075,13 @@ async def admin_make_video(
     row.video_status = "queued"
     row.video_progress = "queued"
     row.error_message = None
+    # Clear the previous render's artifacts so a re-render never serves the OLD
+    # mp4 (or shows a stale YouTube link) as if current — they're set again only
+    # on success. NOTE: re-rendering un-links a previously-published video; the
+    # new render supersedes it and must be re-published to get a fresh link.
+    row.video_path = None
+    row.youtube_id = None
+    row.youtube_url = None
     await _audit(s, admin, "upsc.make_video", target_id=issue_id, payload=config)
     await s.commit()
     await s.refresh(row)
@@ -1203,8 +1228,8 @@ async def admin_put_video_defaults(
 @router.get("/api/public/upsc/issues")
 async def public_list(
     s: AsyncSession = Depends(get_session),
-    limit: int = 30,
-    offset: int = 0,
+    limit: int = Query(30, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     q = (select(UpscIssue)
          .where(UpscIssue.status == "published")
