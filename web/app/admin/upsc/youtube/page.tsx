@@ -186,7 +186,13 @@ function parseVideoProgress(progress: string | null | undefined): {
   const stageIdx = activeStageIndex(progress);
   const m = (progress || '').match(/(\d+)\s*\/\s*(\d+)/);
   const frac = m && Number(m[2]) > 0 ? Math.min(1, Number(m[1]) / Number(m[2])) : 0;
-  if (stageIdx < 0) return { stageIdx, frac: 0, human: progress || '', overall: 0 };
+  if (stageIdx < 0) {
+    // Labels that don't name a stage ('rendered', 'preparing script', 'queued')
+    // — keep the bar sensible instead of snapping to 0%.
+    const p = (progress || '').toLowerCase();
+    const overall = p.includes('render') ? 96 : p.includes('prepar') || p.includes('queue') ? 3 : 0;
+    return { stageIdx, frac: 0, human: progress || 'Working…', overall };
+  }
   const stage = VIDEO_STAGES[stageIdx];
   const human = STAGE_VERB[stage] + (m ? ` · ${m[1]} / ${m[2]}` : '');
   const lo = STAGE_BOUNDS[stageIdx];
