@@ -1189,183 +1189,9 @@ export default function AdminUpscVideoStudioPage() {
 
       {selectedId && issue && (
         <>
-          {/* ---------------- VOICE + SLIDES (two-up grid) ---------------- */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
-              gap: 16,
-            }}
-          >
-            {/* ---- 1. VOICE ---- */}
-            <Section title="1 · Voice" description="Engine, language and the narration voice.">
-              <FieldLabel>ENGINE</FieldLabel>
-              <RadioRow
-                options={ENGINES}
-                value={config.engine}
-                onChange={(v) => setCfg('engine', v)}
-                disabled={videoBusy}
-              />
-              {config.engine === 'gemini' && !geminiBillingActive && (
-                <div
-                  style={{
-                    marginTop: 8,
-                    fontSize: 11.5,
-                    color: '#92400e',
-                    background: '#fef3c7',
-                    border: '1px solid #fde68a',
-                    borderRadius: 8,
-                    padding: '6px 10px',
-                  }}
-                >
-                  Gemini credits pending → falls back to Chirp3-HD at render time.
-                </div>
-              )}
-
-              <div style={{ height: 14 }} />
-              <FieldLabel>LANGUAGE</FieldLabel>
-              <RadioRow
-                options={LANGS}
-                value={config.lang}
-                onChange={(v) => setCfg('lang', v)}
-                disabled={videoBusy}
-              />
-
-              <div style={{ height: 14 }} />
-              <FieldLabel>VOICE</FieldLabel>
-              <ErrorBanner msg={voicesError} />
-              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                <select
-                  value={config.voice}
-                  onChange={(e) => setCfg('voice', e.target.value)}
-                  disabled={videoBusy || !voices || voices.length === 0}
-                  style={{ ...selectStyle, flex: 1 }}
-                >
-                  {voices === null && <option>Loading…</option>}
-                  {voices &&
-                    voices.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.label}
-                        {v.is_default ? ' (default)' : ''}
-                      </option>
-                    ))}
-                </select>
-                <Btn
-                  onClick={onPreviewVoice}
-                  disabled={previewBusy || !config.voice}
-                  tone="ghost"
-                >
-                  {previewBusy ? '…' : '▶ Preview'}
-                </Btn>
-              </div>
-              <ErrorBanner msg={previewError} />
-            </Section>
-
-            {/* ---- 2. SLIDES ---- */}
-            <Section title="2 · Slides" description="Visual style, accent theme and cover/intro slides.">
-              <FieldLabel>STYLE</FieldLabel>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {SLIDE_STYLES.map((s) => {
-                  const active = config.slide_style === s.id;
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      disabled={videoBusy}
-                      onClick={() => setCfg('slide_style', s.id)}
-                      style={{
-                        textAlign: 'left',
-                        padding: '10px 12px',
-                        borderRadius: 10,
-                        border: active
-                          ? '1px solid var(--c-accent, #2a5b3a)'
-                          : '1px solid var(--c-line-2)',
-                        background: active
-                          ? 'var(--c-accent-2, #eef5ef)'
-                          : 'var(--c-surface-2, #f5f1ea)',
-                        cursor: videoBusy ? 'not-allowed' : 'pointer',
-                        opacity: videoBusy ? 0.6 : 1,
-                      }}
-                    >
-                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-ink)' }}>
-                        {active ? '◉ ' : '○ '}
-                        {s.label}
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--c-ink-3)', marginTop: 1 }}>
-                        {s.sub}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {issue?.has_cover_thumb && (
-                <div style={{ marginTop: 12 }}>
-                  <FieldLabel>PREVIEW</FieldLabel>
-                  {thumbErr ? (
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: 'var(--c-ink-3)',
-                        padding: '14px 12px',
-                        background: 'var(--c-surface-2, #f5f1ea)',
-                        borderRadius: 10,
-                        border: '1px dashed var(--c-line-2)',
-                        maxWidth: 320,
-                      }}
-                    >
-                      Preview image isn&apos;t on disk for this issue (digest files were
-                      cleaned). The video still renders fine from the live digest — or
-                      re-render the issue to regenerate the cover.
-                    </div>
-                  ) : (
-                    <img
-                      key={issue.id}
-                      src={adminApi.thumbUrl(issue.id)}
-                      alt="slide preview"
-                      onError={() => setThumbErr(true)}
-                      style={{
-                        width: '100%',
-                        maxWidth: 320,
-                        borderRadius: 10,
-                        border: '1px solid var(--c-line-2)',
-                        display: 'block',
-                      }}
-                    />
-                  )}
-                  <div style={{ fontSize: 11, color: 'var(--c-ink-3)', marginTop: 4 }}>
-                    First digest page — slides letterbox this to 1920×1080.
-                    {config.slide_style !== 'digest'
-                      ? ' (Clean/Animated render as digest pages for now.)'
-                      : ''}
-                  </div>
-                </div>
-              )}
-
-              <div style={{ height: 14 }} />
-              <FieldLabel>THEME / ACCENT</FieldLabel>
-              <select
-                value={config.theme}
-                onChange={(e) => setCfg('theme', e.target.value)}
-                disabled={videoBusy}
-                style={selectStyle}
-              >
-                {THEMES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-
-              <div style={{ height: 12 }} />
-              <Toggle label="Cover slide" checked={coverSlide} onChange={setCoverSlide} />
-              <Toggle label="Intro / outro slides" checked={introOutro} onChange={setIntroOutro} />
-            </Section>
-          </div>
-
-          {/* ---------------- 3. SCRIPT ---------------- */}
+          {/* ---------------- 1. SCRIPT ---------------- */}
           <Section
-            title="3 · Script (confirm / edit)"
+            title="1 · Script (confirm / edit)"
             description="Spoken rewrite of the authored digest. Edit per-section, then confirm — TTS won't run until confirmed."
             right={
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1478,6 +1304,180 @@ export default function AdminUpscVideoStudioPage() {
               </div>
             )}
           </Section>
+
+          {/* ---------------- SLIDES + VOICE (two-up grid) ---------------- */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
+              gap: 16,
+            }}
+          >
+            {/* ---- 2. SLIDES ---- */}
+            <Section title="2 · Slides" description="Visual style, accent theme and cover/intro slides.">
+              <FieldLabel>STYLE</FieldLabel>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {SLIDE_STYLES.map((s) => {
+                  const active = config.slide_style === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      disabled={videoBusy}
+                      onClick={() => setCfg('slide_style', s.id)}
+                      style={{
+                        textAlign: 'left',
+                        padding: '10px 12px',
+                        borderRadius: 10,
+                        border: active
+                          ? '1px solid var(--c-accent, #2a5b3a)'
+                          : '1px solid var(--c-line-2)',
+                        background: active
+                          ? 'var(--c-accent-2, #eef5ef)'
+                          : 'var(--c-surface-2, #f5f1ea)',
+                        cursor: videoBusy ? 'not-allowed' : 'pointer',
+                        opacity: videoBusy ? 0.6 : 1,
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-ink)' }}>
+                        {active ? '◉ ' : '○ '}
+                        {s.label}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--c-ink-3)', marginTop: 1 }}>
+                        {s.sub}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {issue?.has_cover_thumb && (
+                <div style={{ marginTop: 12 }}>
+                  <FieldLabel>PREVIEW</FieldLabel>
+                  {thumbErr ? (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: 'var(--c-ink-3)',
+                        padding: '14px 12px',
+                        background: 'var(--c-surface-2, #f5f1ea)',
+                        borderRadius: 10,
+                        border: '1px dashed var(--c-line-2)',
+                        maxWidth: 320,
+                      }}
+                    >
+                      Preview image isn&apos;t on disk for this issue (digest files were
+                      cleaned). The video still renders fine from the live digest — or
+                      re-render the issue to regenerate the cover.
+                    </div>
+                  ) : (
+                    <img
+                      key={issue.id}
+                      src={adminApi.thumbUrl(issue.id)}
+                      alt="slide preview"
+                      onError={() => setThumbErr(true)}
+                      style={{
+                        width: '100%',
+                        maxWidth: 320,
+                        borderRadius: 10,
+                        border: '1px solid var(--c-line-2)',
+                        display: 'block',
+                      }}
+                    />
+                  )}
+                  <div style={{ fontSize: 11, color: 'var(--c-ink-3)', marginTop: 4 }}>
+                    First digest page — slides letterbox this to 1920×1080.
+                    {config.slide_style !== 'digest'
+                      ? ' (Clean/Animated render as digest pages for now.)'
+                      : ''}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ height: 14 }} />
+              <FieldLabel>THEME / ACCENT</FieldLabel>
+              <select
+                value={config.theme}
+                onChange={(e) => setCfg('theme', e.target.value)}
+                disabled={videoBusy}
+                style={selectStyle}
+              >
+                {THEMES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+
+              <div style={{ height: 12 }} />
+              <Toggle label="Cover slide" checked={coverSlide} onChange={setCoverSlide} />
+              <Toggle label="Intro / outro slides" checked={introOutro} onChange={setIntroOutro} />
+            </Section>
+            {/* ---- 3. VOICE ---- */}
+            <Section title="3 · Voice" description="Engine, language and the narration voice.">
+              <FieldLabel>ENGINE</FieldLabel>
+              <RadioRow
+                options={ENGINES}
+                value={config.engine}
+                onChange={(v) => setCfg('engine', v)}
+                disabled={videoBusy}
+              />
+              {config.engine === 'gemini' && !geminiBillingActive && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    fontSize: 11.5,
+                    color: '#92400e',
+                    background: '#fef3c7',
+                    border: '1px solid #fde68a',
+                    borderRadius: 8,
+                    padding: '6px 10px',
+                  }}
+                >
+                  Gemini credits pending → falls back to Chirp3-HD at render time.
+                </div>
+              )}
+
+              <div style={{ height: 14 }} />
+              <FieldLabel>LANGUAGE</FieldLabel>
+              <RadioRow
+                options={LANGS}
+                value={config.lang}
+                onChange={(v) => setCfg('lang', v)}
+                disabled={videoBusy}
+              />
+
+              <div style={{ height: 14 }} />
+              <FieldLabel>VOICE</FieldLabel>
+              <ErrorBanner msg={voicesError} />
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <select
+                  value={config.voice}
+                  onChange={(e) => setCfg('voice', e.target.value)}
+                  disabled={videoBusy || !voices || voices.length === 0}
+                  style={{ ...selectStyle, flex: 1 }}
+                >
+                  {voices === null && <option>Loading…</option>}
+                  {voices &&
+                    voices.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                        {v.is_default ? ' (default)' : ''}
+                      </option>
+                    ))}
+                </select>
+                <Btn
+                  onClick={onPreviewVoice}
+                  disabled={previewBusy || !config.voice}
+                  tone="ghost"
+                >
+                  {previewBusy ? '…' : '▶ Preview'}
+                </Btn>
+              </div>
+              <ErrorBanner msg={previewError} />
+            </Section>
+
+          </div>
 
           {/* ---------------- Generate video ---------------- */}
           <Section
