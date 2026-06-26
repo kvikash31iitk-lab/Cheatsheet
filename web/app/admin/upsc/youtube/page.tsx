@@ -270,6 +270,7 @@ function ErrorBanner({ msg }: { msg: string | null }) {
   if (!msg) return null;
   return (
     <div
+      role="alert"
       style={{
         color: '#b91c1c',
         fontSize: 13,
@@ -783,6 +784,13 @@ export default function AdminUpscVideoStudioPage() {
       for (;;) {
         if (scriptPollRef.current !== token) throw new Error('__cancelled__');
         const job = await adminApi.getScriptJob(job_id);
+        // Re-check AFTER the await: the issue may have switched (or the component
+        // unmounted) WHILE this GET was in flight. Without this, a poll that
+        // resolves 'done' on the same tick as an issue-switch would clobber the
+        // newly-selected issue's sections (and write a stale progress %). This
+        // single guard fixes the stale-clobber, stale-progress and
+        // setState-after-unmount races in one place.
+        if (scriptPollRef.current !== token) throw new Error('__cancelled__');
         setScriptProgress(job.progress);
         if (job.status === 'done') {
           const secs = job.result?.sections;
@@ -1260,7 +1268,12 @@ export default function AdminUpscVideoStudioPage() {
                   disabled={scriptBusy}
                 />
                 {scriptBusy && (
-                  <span style={{ fontSize: 13, color: 'var(--c-ink-3)' }}>
+                  <span
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    style={{ fontSize: 13, color: 'var(--c-ink-3)' }}
+                  >
                     {scriptProgress >= 50
                       ? 'Rewriting the digest as spoken narration…'
                       : 'Queued…'}{' '}
@@ -1301,7 +1314,7 @@ export default function AdminUpscVideoStudioPage() {
                           small
                           tone="ghost"
                           onClick={() => onRegenSection(idx)}
-                          disabled={regenIdx !== null}
+                          disabled={regenIdx !== null || scriptBusy}
                         >
                           {regenIdx === idx ? '↻ …' : '↻ Regen'}
                         </Btn>
@@ -1335,7 +1348,11 @@ export default function AdminUpscVideoStudioPage() {
                     gap: 12,
                   }}
                 >
-                  <Btn onClick={onGenerateScript} disabled={scriptBusy} tone="ghost">
+                  <Btn
+                    onClick={onGenerateScript}
+                    disabled={scriptBusy || regenIdx !== null}
+                    tone="ghost"
+                  >
                     {scriptBusy ? 'Regenerating…' : '↻ Regenerate all'}
                   </Btn>
                   <div style={{ display: 'flex', gap: 8 }}>

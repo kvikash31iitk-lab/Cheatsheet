@@ -34,6 +34,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api import settings as app_settings
@@ -913,7 +914,24 @@ async def admin_generate_script(
 
     job = ScriptJob(digest_id=issue_id, language=lang, status="pending")
     s.add(job)
-    await s.flush()  # assign job.id via the _uuid default before we reference it
+    try:
+        # flush assigns job.id; the partial unique index ux_script_jobs_active is
+        # the DB-level backstop if a concurrent request raced past the pre-check.
+        await s.flush()
+    except IntegrityError:
+        await s.rollback()
+        winner = (await s.execute(
+            select(ScriptJob)
+            .where(
+                ScriptJob.digest_id == issue_id,
+                ScriptJob.language == lang,
+                ScriptJob.status.in_(("pending", "processing")),
+            )
+            .order_by(desc(ScriptJob.created_at))
+        )).scalars().first()
+        if winner is not None:
+            return {"job_id": winner.id, "status": winner.status}
+        raise HTTPException(409, "could not create script job; please retry")
     job_id = job.id
     await _audit(s, admin, "upsc.script_generate", target_id=issue_id,
                  payload={"lang": lang, "job_id": job_id})

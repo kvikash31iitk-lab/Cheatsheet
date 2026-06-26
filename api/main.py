@@ -113,6 +113,7 @@ from api.models import (  # noqa: E402
     Generation,
     PromoCode,
     PromoRedemption,
+    ScriptJob,
     Transaction,
     UpscIssue,
     User,
@@ -499,6 +500,70 @@ async def _periodic_upsc_orphan_sweep() -> None:
             print(f"[recovery] upsc periodic sweep error: {exc}", flush=True)
 
 
+async def _recover_stuck_script_jobs() -> None:
+    """Startup recovery: no script-worker thread survives a restart, so any
+    script_jobs row still 'pending' or 'processing' is an orphan. The worker
+    writes narration_script only atomically at the very end, so an interrupted
+    job left nothing partial — reset to 'pending' and re-kick so the admin's
+    script completes without a manual retry. (A stuck 'processing' row would
+    otherwise block POST idempotency forever.)"""
+    from api.upsc_routes import _kick_script_job
+    async with AsyncSessionLocal() as s:
+        stuck = (
+            await s.execute(
+                select(ScriptJob).where(ScriptJob.status.in_(("pending", "processing")))
+            )
+        ).scalars().all()
+        if not stuck:
+            return
+        for job in stuck:
+            job.status = "pending"
+            job.started_at = None
+            job.error = None
+        await s.commit()
+        ids = [j.id for j in stuck]
+    for jid in ids:
+        _kick_script_job(jid)
+    print(f"[recovery] startup: re-kicked {len(ids)} stuck script job(s)", flush=True)
+
+
+async def _periodic_script_job_sweep() -> None:
+    """Every 5 min: fail script_jobs stuck in 'processing' past a 15-min grace
+    window (the sequential Groq rewrite is ~1-2 min, so 15 min means the worker
+    thread died in-process). Marking them 'failed' frees the ux_script_jobs_active
+    partial-unique index so the admin's retry can create a fresh job instead of
+    re-adopting a dead one."""
+    GRACE_MIN = 15
+    INTERVAL_SEC = 300
+    while True:
+        try:
+            await asyncio.sleep(INTERVAL_SEC)
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=GRACE_MIN)
+            async with AsyncSessionLocal() as s:
+                stuck = (
+                    await s.execute(
+                        select(ScriptJob)
+                        .where(ScriptJob.status == "processing")
+                        .where(ScriptJob.started_at < cutoff)
+                    )
+                ).scalars().all()
+                if not stuck:
+                    continue
+                for job in stuck:
+                    job.status = "failed"
+                    job.error = "worker timed out or died — please retry"
+                    job.completed_at = datetime.now(timezone.utc)
+                await s.commit()
+                print(
+                    f"[recovery] script-job periodic: failed {len(stuck)} stuck job(s)",
+                    flush=True,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[recovery] script-job sweep error: {exc}", flush=True)
+
+
 @app.on_event("startup")
 async def startup() -> None:
     async with async_engine.begin() as conn:
@@ -506,9 +571,11 @@ async def startup() -> None:
     await _migrate_columns()
     await _recover_stuck_jobs()
     await _recover_stuck_upsc_issues()
+    await _recover_stuck_script_jobs()
     # Periodic orphan sweeps — catch in-process task deaths between restarts.
     asyncio.create_task(_periodic_orphan_sweep())
     asyncio.create_task(_periodic_upsc_orphan_sweep())
+    asyncio.create_task(_periodic_script_job_sweep())
     # Seed the anonymous user for dev so /api/generate works without auth.
     async with AsyncSessionLocal() as s:
         result = await s.execute(select(User).where(User.email == ANON_USER_EMAIL))

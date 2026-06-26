@@ -451,6 +451,20 @@ Index(
     unique=True,
 )
 Index("ix_script_jobs_status", ScriptJob.status)
+# Partial UNIQUE index: at most one non-terminal (pending|processing) job per
+# (digest_id, language) — the DB-level backstop for POST idempotency under
+# concurrent double-clicks (the read-then-write pre-check alone can race). A
+# done/failed job falls outside the predicate, so it never blocks a fresh
+# request. The stuck-job reaper (api/main.py) flips dead 'processing' rows to
+# 'failed' so this index can never permanently dead-end an issue+language.
+Index(
+    "ux_script_jobs_active",
+    ScriptJob.digest_id,
+    ScriptJob.language,
+    unique=True,
+    sqlite_where=ScriptJob.status.in_(("pending", "processing")),
+    postgresql_where=ScriptJob.status.in_(("pending", "processing")),
+)
 Index("ix_upsc_issues_date", UpscIssue.issue_date.desc())
 Index("ix_upsc_issues_status", UpscIssue.status)
 Index("ix_pyq_year_paper", Pyq.year, Pyq.paper)
