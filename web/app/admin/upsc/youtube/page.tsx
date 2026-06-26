@@ -861,10 +861,17 @@ export default function AdminUpscVideoStudioPage() {
         // order, so a reordered/changed article set would splice a DIFFERENT
         // story's text into this slot. Stripping a leading "N. " makes it
         // survive renumbering; intro/overview/outro keep their stable labels.
+        // Only splice on an UNAMBIGUOUS single match. Labels are truncated to 80
+        // chars and headlines aren't guaranteed unique (the digest parser does
+        // not dedupe), so the content key CAN collide — in that case degrade to
+        // the graceful error rather than silently splice a different story's text
+        // into this slot. (Matching the old positional art-NN avoided collisions
+        // but mis-targeted on reorder; requiring exactly one match gets both.)
         const contentKey = (s: NarrationSection) =>
           s.label.replace(/^\s*\d+\.\s*/, '').trim();
         const target = contentKey(sections[idx]);
-        const fresh = secs.find((s) => contentKey(s) === target);
+        const matches = secs.filter((s) => contentKey(s) === target);
+        const fresh = matches.length === 1 ? matches[0] : undefined;
         if (fresh) {
           setSections((prev) => {
             if (!prev) return prev;
@@ -875,7 +882,11 @@ export default function AdminUpscVideoStudioPage() {
           setDirty(true);
           setScriptConfirmed(false);
         } else {
-          setScriptError('Could not find a matching section to regenerate.');
+          setScriptError(
+            matches.length > 1
+              ? 'This section’s headline isn’t unique enough to regenerate on its own — use “Regenerate all”.'
+              : 'Could not find a matching section to regenerate.',
+          );
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
