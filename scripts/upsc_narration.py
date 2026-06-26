@@ -75,9 +75,23 @@ say while explaining this story to aspirants. Rules:
 - Keep numbers, names, dates and places EXACTLY as written in the source.
 - Target roughly 45 to 90 seconds of speech for this article — about 120 to
   230 spoken words. Be tight; do not pad.
-- Use the same language as the digest markdown (Hindi/Hinglish stays Hindi,
-  English stays English). Do not translate.
 """
+
+# The digest markdown is English; the narration LANGUAGE is chosen by the user
+# (default Hindi). The article rewrite must output in that language, NOT the
+# source language — otherwise intro/outro (Hindi) and articles (English) mix.
+_LANG_DIRECTIVE = {
+    "hi": (
+        "OUTPUT LANGUAGE — write the entire narration in HINDI, as natural Hinglish in "
+        "Devanagari script, in the warm voice of an Indian UPSC teacher. Keep proper nouns "
+        "(people, places, organisations) and established English terms readable, "
+        "transliterating them into Devanagari where natural (e.g. ट्रांसशिपमेंट पोर्ट, करंट "
+        "अकाउंट सरप्लस). Spell numbers, money and acronyms out in Hindi words (इक्यासी हज़ार "
+        "करोड़ रुपये, जीडीपी, यूपीएससी). Write ONLY in Hindi/Devanagari — do NOT write the "
+        "narration in English."
+    ),
+    "en": "OUTPUT LANGUAGE — write the entire narration in clear, natural English.",
+}
 
 
 # =============================================================================
@@ -190,12 +204,13 @@ def _outro_text(lang: str) -> str:
 # Public API
 # =============================================================================
 
-def rewrite_article(headline: str, body_md: str) -> str:
-    """LLM spoken-rewrite of one article. Falls back to a deterministic strip
-    if the LLM call fails so the caller always gets usable prose."""
+def rewrite_article(headline: str, body_md: str, lang: str = "hi") -> str:
+    """LLM spoken-rewrite of one article in the target ``lang``. Falls back to a
+    deterministic strip if the LLM call fails so the caller always gets prose."""
+    system = SPOKEN_REWRITE_SYSTEM + "\n" + _LANG_DIRECTIVE.get(lang, _LANG_DIRECTIVE["hi"])
     prompt = f"Headline: {headline}\n\n=== Article markdown ===\n{body_md}\n"
     try:
-        raw = _pipeline_chat(SPOKEN_REWRITE_SYSTEM, prompt,
+        raw = _pipeline_chat(system, prompt,
                              max_tokens=900, temperature=0.4)
         text = (raw or "").strip()
         # Belt-and-braces: strip any stray markdown the model leaked through.
@@ -273,7 +288,7 @@ def generate_script(issue_id: str, *, lang: str = "hi") -> list[dict]:
     def _rewrite(task: tuple) -> dict:
         i, headline, body_md = task
         print(f"  spoken-rewrite {i}/{len(articles)}: {headline[:60]!r}", flush=True)
-        text = rewrite_article(headline, body_md)
+        text = rewrite_article(headline, body_md, lang)
         return {
             "section_id": f"art-{i:02d}",
             "label": f"{i}. {headline}"[:80],
