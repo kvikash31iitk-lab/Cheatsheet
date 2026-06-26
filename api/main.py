@@ -564,6 +564,97 @@ async def _periodic_script_job_sweep() -> None:
             print(f"[recovery] script-job sweep error: {exc}", flush=True)
 
 
+# Video in-flight states (mirror VIDEO_IN_FLIGHT in the youtube dashboard). A row
+# stuck in any of these makes the frontend `videoBusy` true, disabling the whole
+# Slides/Voice UI — so an interrupted render must be reaped or controls lock up.
+_VIDEO_FLIGHT_STATES = ("queued", "rendering", "uploading")
+
+
+def _resolve_stuck_video(issue: UpscIssue) -> tuple[str, str, str | None]:
+    """Decide how to resolve a stuck video: ->'ready' if the final MP4 actually
+    landed on disk (the build finished and only the status write was lost), else
+    ->'error' so the admin can re-run. Returns (video_status, video_progress,
+    video_path_or_None). Existence-only check, per the recovery design."""
+    from scripts import upsc_pipeline
+    mp4 = upsc_pipeline.WORK_ROOT / issue.id / "digest.mp4"
+    if (issue.video_path and Path(issue.video_path).exists()) or mp4.exists():
+        return "ready", "video ready", (issue.video_path or str(mp4))
+    return "error", "render interrupted — click Make video to retry", None
+
+
+async def _recover_stuck_videos() -> None:
+    """Startup recovery: on boot no video daemon threads are alive, so any issue
+    left in a video in-flight state (queued/rendering/uploading) is a guaranteed
+    orphan from a build the last restart killed. Reset by MP4 existence
+    (ready if the file landed, else error). Without this a stuck video_status
+    disables the whole Slides/Voice UI forever. (video_status only — the /script
+    route and dual-script logic are untouched.)"""
+    async with AsyncSessionLocal() as s:
+        stuck = (
+            await s.execute(
+                select(UpscIssue).where(UpscIssue.video_status.in_(_VIDEO_FLIGHT_STATES))
+            )
+        ).scalars().all()
+        if not stuck:
+            return
+        for issue in stuck:
+            vs, vp, path = _resolve_stuck_video(issue)
+            issue.video_status = vs
+            issue.video_progress = vp
+            if path:
+                issue.video_path = path
+            print(
+                f"[video-recovery] {issue.id}: reset rendering->{vs} "
+                f"({'MP4 found' if vs == 'ready' else 'no MP4'})",
+                flush=True,
+            )
+        await s.commit()
+        print(f"[video-recovery] startup: reset {len(stuck)} stuck video(s)", flush=True)
+
+
+async def _periodic_video_sweep() -> None:
+    """Every 5 min: reset videos stuck in an in-flight state whose build thread
+    died WITHOUT a restart (rare in-process crash). Mirrors
+    _periodic_upsc_orphan_sweep — a candidate whose issue_id is NOT in
+    _upsc_in_flight (the live-thread registry _kick_video populates) is an
+    orphan. We key off _upsc_in_flight rather than a created_at window because a
+    video starts long after the issue is created; this also PRECISELY excludes a
+    legitimately-long render (a 20-min build stays in the set the whole time, so
+    it is never touched). (video_status only — dual-script untouched.)"""
+    from api.upsc_routes import _upsc_in_flight
+    INTERVAL_SEC = 300
+    while True:
+        try:
+            await asyncio.sleep(INTERVAL_SEC)
+            async with AsyncSessionLocal() as s:
+                candidates = (
+                    await s.execute(
+                        select(UpscIssue).where(
+                            UpscIssue.video_status.in_(_VIDEO_FLIGHT_STATES)
+                        )
+                    )
+                ).scalars().all()
+                orphans = [i for i in candidates if i.id not in _upsc_in_flight]
+                if not orphans:
+                    continue
+                for issue in orphans:
+                    vs, vp, path = _resolve_stuck_video(issue)
+                    issue.video_status = vs
+                    issue.video_progress = vp
+                    if path:
+                        issue.video_path = path
+                    print(f"[video-recovery] periodic: {issue.id} reset -> {vs}", flush=True)
+                await s.commit()
+                print(
+                    f"[video-recovery] periodic: reset {len(orphans)} orphan video(s)",
+                    flush=True,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[video-recovery] periodic sweep error: {exc}", flush=True)
+
+
 @app.on_event("startup")
 async def startup() -> None:
     async with async_engine.begin() as conn:
@@ -572,10 +663,12 @@ async def startup() -> None:
     await _recover_stuck_jobs()
     await _recover_stuck_upsc_issues()
     await _recover_stuck_script_jobs()
+    await _recover_stuck_videos()
     # Periodic orphan sweeps — catch in-process task deaths between restarts.
     asyncio.create_task(_periodic_orphan_sweep())
     asyncio.create_task(_periodic_upsc_orphan_sweep())
     asyncio.create_task(_periodic_script_job_sweep())
+    asyncio.create_task(_periodic_video_sweep())
     # Seed the anonymous user for dev so /api/generate works without auth.
     async with AsyncSessionLocal() as s:
         result = await s.execute(select(User).where(User.email == ANON_USER_EMAIL))
