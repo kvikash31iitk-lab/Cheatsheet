@@ -297,7 +297,8 @@ def generate_script(issue_id: str, *, lang: str = "hi") -> list[dict]:
         }
 
     tasks = [(i, h, b) for i, (h, b) in enumerate(articles, start=1)]
-    with ThreadPoolExecutor(max_workers=min(5, len(tasks) or 1)) as ex:
+    # 3 workers: faster than sequential but gentle on Groq's RPM (5 tripped 429s).
+    with ThreadPoolExecutor(max_workers=min(3, len(tasks) or 1)) as ex:
         for sec in ex.map(_rewrite, tasks):
             sections.append(sec)
 
