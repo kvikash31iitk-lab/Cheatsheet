@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import time
 from dataclasses import dataclass, asdict
@@ -33,6 +34,9 @@ from pathlib import Path
 from typing import Optional
 
 from .config import CACHE_ROOT
+
+
+_CACHE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 # Canonical order of opt-in PDF features. The bot bitmask, the cache hash,
@@ -82,6 +86,8 @@ class CacheMeta:
 
 
 def slot(video_id: str) -> Path:
+    if not isinstance(video_id, str) or _CACHE_ID_RE.fullmatch(video_id) is None:
+        raise ValueError("Invalid cache identifier")
     return CACHE_ROOT / video_id
 
 
@@ -183,14 +189,19 @@ def adopt_pipeline_outputs(video_id: str, pipeline_result: dict) -> None:
         dst_dir = s / "frames"
         if dst_dir.exists():
             shutil.rmtree(dst_dir)
-        shutil.copytree(fd, dst_dir)
+        # _raw contains scene/grid candidates that were already distilled into
+        # final frames. Persisting it duplicates hundreds of large JPEGs.
+        shutil.copytree(
+            fd, dst_dir, ignore=shutil.ignore_patterns("_raw")
+        )
     # Meta
-    update_meta(
-        video_id,
-        title=pipeline_result.get("title", ""),
-        duration_seconds=pipeline_result.get("duration_seconds", 0.0),
-        transcribed_at=time.time(),
-    )
+    meta_fields = {
+        "title": pipeline_result.get("title", ""),
+        "duration_seconds": pipeline_result.get("duration_seconds", 0.0),
+    }
+    if pipeline_result.get("transcript_txt"):
+        meta_fields["transcribed_at"] = time.time()
+    update_meta(video_id, **meta_fields)
 
 
 def invalidate(video_id: str) -> None:

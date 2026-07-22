@@ -49,6 +49,18 @@ WHITELISTED_GROUP_IDS: list[int] = _id_list("WHITELISTED_GROUP_IDS")
 DAILY_CAP_CHEATSHEETS = _int_env("DAILY_CAP_CHEATSHEETS", 0)  # 0 = unlimited
 DAILY_CAP_BOOKS = _int_env("DAILY_CAP_BOOKS", 0)
 
+# Telegram's hosted Bot API only lets bots download files up to 20 MB. Keep a
+# little headroom so the rejection happens in our own preflight, with a useful
+# message, rather than halfway through Telegram's getFile/download flow.
+TELEGRAM_UPLOAD_MAX_MB = min(
+    19, max(1, _int_env("TELEGRAM_UPLOAD_MAX_MB", 19))
+)
+TELEGRAM_UPLOAD_MAX_BYTES = TELEGRAM_UPLOAD_MAX_MB * 1024 * 1024
+TELEGRAM_UPLOAD_MIN_FREE_MB = max(
+    256, _int_env("TELEGRAM_UPLOAD_MIN_FREE_MB", 1024)
+)
+TELEGRAM_UPLOAD_MIN_FREE_BYTES = TELEGRAM_UPLOAD_MIN_FREE_MB * 1024 * 1024
+
 # === backends ================================================================
 WHISPER_BACKEND = os.environ.get("WHISPER_BACKEND", "groq").strip().lower()
 AUTHORING_PROVIDER = os.environ.get("AUTHORING_PROVIDER", "groq").strip().lower()
@@ -59,10 +71,18 @@ CLAUDE_CODE_BIN = os.environ.get("CLAUDE_CODE_BIN", "").strip() or "claude"
 # === paths ===================================================================
 CACHE_ROOT = PROJECT_ROOT / "cache"
 WORK_ROOT = PROJECT_ROOT / "work"
+UPLOAD_ROOT = WORK_ROOT / "_telegram_uploads"
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 
 CACHE_ROOT.mkdir(parents=True, exist_ok=True)
 WORK_ROOT.mkdir(parents=True, exist_ok=True)
+UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+try:
+    # Uploaded media can be private. The bot service owns this directory on
+    # Linux; Windows ignores POSIX permission bits during local development.
+    UPLOAD_ROOT.chmod(0o700)
+except OSError:
+    pass
 
 
 def validate() -> list[str]:

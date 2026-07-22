@@ -13,7 +13,7 @@ from telegram.ext import (
     filters,
 )
 
-from . import handlers, worker
+from . import handlers, media_uploads, worker
 from .config import TELEGRAM_BOT_TOKEN, WHITELISTED_GROUP_IDS, validate
 
 logging.basicConfig(
@@ -25,6 +25,7 @@ logger = logging.getLogger("bot")
 
 async def post_init(app: Application) -> None:
     """Spin up the single-worker job loop alongside the bot."""
+    media_uploads.cleanup_orphaned_staging()
     asyncio.create_task(worker.worker_loop(app.bot))
 
 
@@ -44,6 +45,7 @@ def main() -> None:
         .build()
     )
     app.add_handler(CommandHandler("start", handlers.cmd_start))
+    app.add_handler(CommandHandler("help", handlers.cmd_help))
     app.add_handler(CommandHandler("cheat", handlers.cmd_cheat))
     app.add_handler(CommandHandler("book", handlers.cmd_book))
     app.add_handler(CommandHandler("refresh", handlers.cmd_refresh))
@@ -63,6 +65,14 @@ def main() -> None:
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND,
         handlers.on_youtube_link,
+    ))
+    app.add_handler(MessageHandler(
+        filters.AUDIO
+        | filters.VIDEO
+        | filters.VOICE
+        | filters.VIDEO_NOTE
+        | filters.Document.ALL,
+        handlers.on_media_upload,
     ))
     app.add_handler(CallbackQueryHandler(
         handlers.on_choice_callback, pattern=r"^gen:"

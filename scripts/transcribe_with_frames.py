@@ -75,6 +75,11 @@ MAX_LOCAL_MEDIA_SECONDS = 2 * 60 * 60
 LOCAL_MEDIA_PROBE_TIMEOUT_SECONDS = 30.0
 LOCAL_MEDIA_FFMPEG_TIMEOUT_SECONDS = 30 * 60.0
 LOCAL_MEDIA_PROTOCOL_WHITELIST = "file,crypto,data"
+LOCAL_MEDIA_FORMAT_WHITELIST = "mov,matroska,webm,mp3,wav,ogg,flac,aac"
+MAX_LOCAL_VIDEO_DIMENSION = 8192
+MAX_LOCAL_VIDEO_PIXELS = 33_554_432
+MAX_LOCAL_SCENE_FRAMES = 360
+MAX_LOCAL_GRID_FRAMES = MAX_LOCAL_MEDIA_SECONDS // FALLBACK_INTERVAL_S + 1
 # ============================================================================
 
 ProgressFn = Optional[Callable[[str], None]]
@@ -196,6 +201,7 @@ def _probe_local_media(path: Path) -> dict:
     cmd = [
         "ffprobe", "-v", "error",
         "-protocol_whitelist", LOCAL_MEDIA_PROTOCOL_WHITELIST,
+        "-format_whitelist", LOCAL_MEDIA_FORMAT_WHITELIST,
         "-print_format", "json",
         "-show_format", "-show_streams", str(path),
     ]
@@ -227,6 +233,20 @@ def _probe_local_media(path: Path) -> dict:
     video_streams = [s for s in streams if s.get("codec_type") == "video"]
     if not audio_streams:
         raise ValueError("Local media does not contain a playable audio stream")
+    for stream in video_streams:
+        try:
+            width = int(stream.get("width") or 0)
+            height = int(stream.get("height") or 0)
+        except (TypeError, ValueError):
+            raise ValueError("Local video has invalid frame dimensions")
+        if (
+            width < 0
+            or height < 0
+            or width > MAX_LOCAL_VIDEO_DIMENSION
+            or height > MAX_LOCAL_VIDEO_DIMENSION
+            or width * height > MAX_LOCAL_VIDEO_PIXELS
+        ):
+            raise ValueError("Local video frame dimensions exceed the safe limit")
 
     format_data = payload.get("format")
     if not isinstance(format_data, dict):
@@ -256,19 +276,27 @@ def _probe_local_media(path: Path) -> dict:
 
 
 def _ensure_local_audio(media_path: Path, work: Path,
-                        on_progress: ProgressFn = None) -> Path:
+                        on_progress: ProgressFn = None, *,
+                        duration_limit: float | None = None) -> Path:
     """Transcode validated local media to the pipeline's canonical MP3."""
+    work = Path(work)
+    work.mkdir(parents=True, exist_ok=True)
     audio_full = work / "session_full.mp3"
     if audio_full.exists() and audio_full.stat().st_size > 0:
         return audio_full
 
     _emit(on_progress, "Encoding uploaded media for Whisper...")
     temporary = work / "session_full.tmp.mp3"
+    safe_duration = min(
+        float(MAX_LOCAL_MEDIA_SECONDS),
+        max(1.0, float(duration_limit or MAX_LOCAL_MEDIA_SECONDS)) + 5.0,
+    )
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
         "-protocol_whitelist", LOCAL_MEDIA_PROTOCOL_WHITELIST,
+        "-format_whitelist", LOCAL_MEDIA_FORMAT_WHITELIST,
         "-i", str(media_path), "-vn", "-ac", "1", "-ar", "16000",
-        "-b:a", "64k", str(temporary),
+        "-b:a", "64k", "-t", f"{safe_duration:.3f}", str(temporary),
     ]
     try:
         result = _run(
@@ -286,6 +314,10 @@ def _ensure_local_audio(media_path: Path, work: Path,
         detail = (result.stderr or "").strip()
         suffix = f": {detail}" if detail else ""
         raise RuntimeError(f"ffmpeg could not decode the uploaded audio{suffix}")
+    max_audio_bytes = int(safe_duration * 64_000 / 8 * 1.5) + 1_048_576
+    if temporary.stat().st_size > max_audio_bytes:
+        temporary.unlink(missing_ok=True)
+        raise RuntimeError("Decoded uploaded audio exceeds the safe size limit")
     temporary.replace(audio_full)
     return audio_full
 
@@ -297,11 +329,21 @@ def extract_scene_frames(video: Path, duration: float, frames_dir: Path,
     raw_dir.mkdir(parents=True, exist_ok=True)
     input_options = []
     run_options = {}
+    scene_limit_options = []
+    grid_limit_options = []
+    duration_limit_options = []
     if local_only:
         input_options = [
             "-nostdin", "-protocol_whitelist", LOCAL_MEDIA_PROTOCOL_WHITELIST,
+            "-format_whitelist", LOCAL_MEDIA_FORMAT_WHITELIST,
         ]
         run_options["timeout"] = LOCAL_MEDIA_FFMPEG_TIMEOUT_SECONDS
+        scene_limit_options = ["-frames:v", str(MAX_LOCAL_SCENE_FRAMES)]
+        grid_limit_options = ["-frames:v", str(MAX_LOCAL_GRID_FRAMES)]
+        duration_limit_options = [
+            "-t",
+            f"{min(MAX_LOCAL_MEDIA_SECONDS, max(1.0, duration) + 5.0):.3f}",
+        ]
 
     # Pass 1: scene-change frames with showinfo timestamps.
     if not list(raw_dir.glob("scene_*.jpg")):
@@ -309,18 +351,23 @@ def extract_scene_frames(video: Path, duration: float, frames_dir: Path,
         scene_log = raw_dir / "scene.log"
         cmd = [
             "ffmpeg", "-hide_banner", "-y", *input_options, "-i", str(video),
+            *duration_limit_options,
             "-vf", (f"select='gt(scene,{SCENE_THRESHOLD})',showinfo,"
                     f"scale='min(iw,{FRAME_RESOLUTION})':-2:flags=lanczos"),
             "-vsync", "vfr", "-q:v", str(JPEG_QUALITY),
+            "-pix_fmt", "yuvj420p",
+            *scene_limit_options,
             str(raw_dir / "scene_%05d.jpg"),
         ]
         with open(scene_log, "w", encoding="utf-8") as f:
             try:
-                subprocess.run(
+                result = subprocess.run(
                     cmd, stderr=f, stdout=subprocess.DEVNULL, **run_options
                 )
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError("Timed out while extracting local frames") from exc
+        if local_only and result.returncode != 0:
+            raise RuntimeError("ffmpeg could not extract uploaded video frames")
 
     scene_times: list[float] = []
     log_path = raw_dir / "scene.log"
@@ -343,16 +390,50 @@ def extract_scene_frames(video: Path, duration: float, frames_dir: Path,
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             *input_options, "-i", str(video),
+            *duration_limit_options,
             "-vf", f"fps={fps},scale='min(iw,{FRAME_RESOLUTION})':-2:flags=lanczos",
-            "-q:v", str(JPEG_QUALITY), str(raw_dir / "grid_%05d.jpg"),
+            "-q:v", str(JPEG_QUALITY), "-pix_fmt", "yuvj420p",
+            *grid_limit_options,
+            str(raw_dir / "grid_%05d.jpg"),
         ]
         try:
-            subprocess.run(cmd, **run_options)
+            result = subprocess.run(cmd, **run_options)
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError("Timed out while sampling local frames") from exc
+        if local_only and result.returncode != 0:
+            raise RuntimeError("ffmpeg could not sample uploaded video frames")
 
     grid_files = sorted(raw_dir.glob("grid_*.jpg"))
     grid_times = [i * FALLBACK_INTERVAL_S for i in range(len(grid_files))]
+
+    # Very short or visually static videos may produce neither a scene-change
+    # frame nor a 60-second grid sample. Always capture one midpoint frame so
+    # Book Notes does not silently become an image-free document.
+    if not scene_files and not grid_files and duration > 0:
+        _emit(on_progress, "Capturing a representative frame...")
+        representative = raw_dir / "grid_00001.jpg"
+        midpoint = max(0.0, duration / 2.0)
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            *input_options, "-ss", f"{midpoint:.3f}", "-i", str(video),
+            "-frames:v", "1",
+            "-vf", f"scale='min(iw,{FRAME_RESOLUTION})':-2:flags=lanczos",
+            "-q:v", str(JPEG_QUALITY), "-pix_fmt", "yuvj420p",
+            str(representative),
+        ]
+        try:
+            result = subprocess.run(cmd, **run_options)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                "Timed out while capturing an uploaded video frame"
+            ) from exc
+        if local_only and result.returncode != 0:
+            raise RuntimeError(
+                "ffmpeg could not capture an uploaded video frame"
+            )
+        if representative.exists():
+            grid_files = [representative]
+            grid_times = [midpoint]
 
     all_frames = list(zip(scene_times, scene_files)) + list(zip(grid_times, grid_files))
     all_frames.sort(key=lambda x: x[0])
@@ -619,7 +700,12 @@ def run_local_media_pipeline(media_path: Path, work: Path, *, title: str,
         "transcript_with_frames": None,
     }
     if transcribe:
-        audio = _ensure_local_audio(media_path, work, on_progress=on_progress)
+        audio = _ensure_local_audio(
+            media_path,
+            work,
+            on_progress=on_progress,
+            duration_limit=media["duration"],
+        )
         chunks = split_audio(audio, work, on_progress=on_progress)
         segments = transcribe_chunks(chunks, on_progress=on_progress)
         outputs = write_outputs(segments, work, frames_index_data)

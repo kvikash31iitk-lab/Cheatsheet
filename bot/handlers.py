@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 
 import httpx
 from telegram import (
@@ -127,6 +128,25 @@ _VIDEO_ID_RE = re.compile(r"(?:youtu\.be/|v=|/shorts/)([A-Za-z0-9_-]{11})")
 
 INTERNAL_API_BASE = os.environ.get("INTERNAL_API_BASE", "http://127.0.0.1:8000")
 INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
+_SUBMITTED_CALLBACKS: dict[tuple[int, int], None] = {}
+_MAX_SUBMITTED_CALLBACKS = 4096
+
+
+def _claim_submission(chat_id: int, message_id: int) -> bool:
+    """Atomically consume one Generate prompt for this bot process."""
+
+    key = (chat_id, message_id)
+    if key in _SUBMITTED_CALLBACKS:
+        return False
+    if len(_SUBMITTED_CALLBACKS) >= _MAX_SUBMITTED_CALLBACKS:
+        oldest = next(iter(_SUBMITTED_CALLBACKS))
+        _SUBMITTED_CALLBACKS.pop(oldest, None)
+    _SUBMITTED_CALLBACKS[key] = None
+    return True
+
+
+def _release_submission(chat_id: int, message_id: int) -> None:
+    _SUBMITTED_CALLBACKS.pop((chat_id, message_id), None)
 
 
 def _whitelisted(chat_id: int) -> bool:
@@ -138,6 +158,75 @@ def _extract_url(text: str) -> str | None:
         return None
     m = URL_RE.search(text)
     return m.group(0) if m else None
+
+
+_VIDEO_SUFFIXES = frozenset({".mp4", ".mkv", ".mov", ".webm", ".m4v"})
+_AUDIO_SUFFIXES = frozenset(
+    {".mp3", ".m4a", ".wav", ".ogg", ".opus", ".aac", ".flac"}
+)
+
+
+def _clean_media_title(file_name: str | None, *, is_video: bool) -> str:
+    stem = Path(file_name or "").stem
+    stem = re.sub(r"[\x00-\x1f\x7f]+", " ", stem)
+    stem = re.sub(r"\s+", " ", stem).strip()
+    return stem[:120] or ("Uploaded video" if is_video else "Uploaded audio")
+
+
+def _extract_uploaded_media(message) -> worker.TelegramMedia | None:
+    """Return a safe immutable media descriptor without downloading anything."""
+
+    item = None
+    file_name = None
+    is_video = False
+
+    if getattr(message, "video", None) is not None:
+        item = message.video
+        file_name = getattr(item, "file_name", None) or "telegram-video.mp4"
+        is_video = True
+    elif getattr(message, "video_note", None) is not None:
+        item = message.video_note
+        file_name = "telegram-video-note.mp4"
+        is_video = True
+    elif getattr(message, "audio", None) is not None:
+        item = message.audio
+        file_name = getattr(item, "file_name", None) or "telegram-audio.m4a"
+    elif getattr(message, "voice", None) is not None:
+        item = message.voice
+        file_name = "telegram-voice.ogg"
+    elif getattr(message, "document", None) is not None:
+        item = message.document
+        file_name = getattr(item, "file_name", None) or ""
+        mime = (getattr(item, "mime_type", None) or "").casefold()
+        suffix = Path(file_name).suffix.casefold()
+        is_video = mime.startswith("video/") or suffix in _VIDEO_SUFFIXES
+        is_audio = mime.startswith("audio/") or suffix in _AUDIO_SUFFIXES
+        if not is_video and not is_audio:
+            return None
+    else:
+        return None
+
+    file_id = getattr(item, "file_id", None)
+    unique_id = getattr(item, "file_unique_id", None)
+    if not file_id or not unique_id:
+        return None
+    return worker.TelegramMedia(
+        file_id=file_id,
+        file_unique_id=unique_id,
+        file_name=file_name or ("video.mp4" if is_video else "audio.m4a"),
+        file_size=getattr(item, "file_size", None),
+        is_video=is_video,
+        title=_clean_media_title(file_name, is_video=is_video),
+    )
+
+
+def _caption_format(caption: str | None) -> str | None:
+    match = re.search(
+        r"(?:^|\s)/(cheat|book)(?:@[A-Za-z0-9_]+)?(?:\s|$)",
+        caption or "",
+        flags=re.IGNORECASE,
+    )
+    return match.group(1).casefold() if match else None
 
 
 async def _drop(update: Update) -> bool:
@@ -172,6 +261,30 @@ async def _enqueue_url(update: Update, fmt: str, url: str,
         fmt=fmt,
         refresh=refresh,
         features=list(features) if features else [],
+    )
+    return await worker.queue.put(job)
+
+
+async def _enqueue_media(
+    update: Update,
+    fmt: str,
+    media: worker.TelegramMedia,
+    *,
+    features: list[str] | None = None,
+) -> int:
+    """Build a local-media Job without placing its file id in callback data."""
+
+    user = update.effective_user
+    chat = update.effective_chat
+    job = worker.Job(
+        chat_id=chat.id,
+        user_id=user.id if user else 0,
+        user_name=(user.full_name if user else "unknown"),
+        url="",
+        fmt=fmt,
+        features=list(features) if features else [],
+        source_kind="telegram",
+        telegram_media=media,
     )
     return await worker.queue.put(job)
 
@@ -248,6 +361,20 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if await _drop(update):
+        return
+    await update.effective_message.reply_text(
+        "Send a YouTube link, or upload an audio/video file under 19 MB.\n\n"
+        "Commands:\n"
+        "/cheat <youtube-url>\n"
+        "/book <youtube-url>\n"
+        "/status\n\n"
+        "For an uploaded file, use the buttons I attach to it. "
+        "Book Notes requires video because it extracts screenshots."
+    )
+
+
 async def cmd_cheat(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if await _drop(update):
         return
@@ -278,10 +405,65 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     lines = []
     if s["current"]:
         cur = s["current"]
-        lines.append(f"Running: /{cur.fmt} {cur.url} (by {cur.user_name})")
+        source = ("uploaded media" if cur.source_kind == "telegram" else cur.url)
+        lines.append(f"Running: /{cur.fmt} {source} (by {cur.user_name})")
     for i, j in enumerate(s["queued"], 1):
-        lines.append(f"  {i}. /{j.fmt} {j.url} (by {j.user_name})")
+        source = ("uploaded media" if j.source_kind == "telegram" else j.url)
+        lines.append(f"  {i}. /{j.fmt} {source} (by {j.user_name})")
     await update.effective_message.reply_text("\n".join(lines))
+
+
+async def on_media_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Offer the normal format/options flow for an uploaded audio/video file."""
+
+    if await _drop(update):
+        return
+    msg = update.effective_message
+    if msg is None:
+        return
+    media = _extract_uploaded_media(msg)
+    if media is None:
+        return
+    from .media_uploads import MediaTooLargeError, check_size
+    try:
+        check_size(media.file_size)
+    except MediaTooLargeError as exc:
+        await msg.reply_text(str(exc), do_quote=True)
+        return
+
+    requested = _caption_format(msg.caption)
+    if requested == "book" and not media.is_video:
+        await msg.reply_text(
+            "Book Notes needs video for screenshots. "
+            "Choose Cheatsheet for this audio file.",
+            do_quote=True,
+        )
+        return
+
+    if requested in {"cheat", "book"}:
+        fmt_code = _FMT_CODE[(requested, False)]
+        label = "Cheatsheet" if requested == "cheat" else "Book Notes"
+        await msg.reply_text(
+            f"<b>{label}</b> — pick any extras then tap Generate.\n"
+            "This upload will be processed without contacting YouTube.",
+            reply_markup=_toggle_keyboard(fmt_code, "tg", 0),
+            parse_mode="HTML",
+            do_quote=True,
+        )
+        return
+
+    rows = [[
+        InlineKeyboardButton(
+            "📄 Cheatsheet", callback_data="gen:cheat:tg"),
+        InlineKeyboardButton(
+            "📕 Book Notes", callback_data="gen:book:tg"),
+    ]]
+    await msg.reply_text(
+        "Uploaded media detected. What should I create?\n"
+        "This path does not contact YouTube.",
+        reply_markup=InlineKeyboardMarkup(rows),
+        do_quote=True,
+    )
 
 
 # === inline-keyboard flow ===================================================
@@ -371,6 +553,39 @@ async def on_choice_callback(update: Update,
         return
     action = parts[1]
 
+    # Upload callbacks use the sentinel 'tg'. The keyboard message is a reply
+    # to the original media, so Telegram carries the file state across bot
+    # restarts and no file id is exposed in callback_data.
+    callback_media = None
+    identifier = None
+    if action in {"tog", "go"} and len(parts) >= 4:
+        identifier = parts[3]
+    elif len(parts) >= 3:
+        identifier = parts[2]
+    if identifier == "tg":
+        original = getattr(q.message, "reply_to_message", None)
+        callback_media = (
+            _extract_uploaded_media(original) if original is not None else None
+        )
+        if callback_media is None:
+            await q.answer("Please upload the file again.", show_alert=True)
+            return
+        uploader = getattr(original, "from_user", None)
+        clicker = q.from_user
+        if uploader is None:
+            await q.answer(
+                "Anonymous or channel uploads are not supported. "
+                "Please upload from your own account.",
+                show_alert=True,
+            )
+            return
+        if clicker is None or uploader.id != clicker.id:
+            await q.answer(
+                "Only the person who uploaded this file can start it.",
+                show_alert=True,
+            )
+            return
+
     # --- action: tog (flip a feature bit) -----------------------------------
     if action == "tog":
         # gen:tog:<fmt_code>:<vid>:<mask_hex>:<bit>
@@ -411,10 +626,35 @@ async def on_choice_callback(update: Update,
             mask = int(mask_hex, 16)
         except ValueError:
             await q.answer(); return
-        url = f"https://youtu.be/{vid}"
         features = _features_from_mask(mask)
-
-        position = await _enqueue_url(update, fmt, url, refresh, features=features)
+        if vid == "tg":
+            if callback_media is None:
+                await q.answer("Please upload the file again.", show_alert=True)
+                return
+            if fmt == "book" and not callback_media.is_video:
+                await q.answer(
+                    "Book Notes needs video for screenshots. Choose Cheatsheet.",
+                    show_alert=True,
+                )
+                return
+        submission_chat_id = q.message.chat_id
+        submission_message_id = q.message.message_id
+        if not _claim_submission(submission_chat_id, submission_message_id):
+            await q.answer("Already queued.", show_alert=False)
+            return
+        try:
+            if vid == "tg":
+                position = await _enqueue_media(
+                    update, fmt, callback_media, features=features
+                )
+            else:
+                url = f"https://youtu.be/{vid}"
+                position = await _enqueue_url(
+                    update, fmt, url, refresh, features=features
+                )
+        except Exception:
+            _release_submission(submission_chat_id, submission_message_id)
+            raise
         await q.answer(
             f"Queued · {fmt}{' · refresh' if refresh else ''}"
             + (f" · {len(features)} extras" if features else ""))
@@ -478,13 +718,24 @@ async def on_choice_callback(update: Update,
     if not vid:
         await q.answer(); return
     fmt, refresh = pick
+    if vid == "tg" and fmt == "book":
+        if callback_media is None or not callback_media.is_video:
+            await q.answer(
+                "Book Notes needs video for screenshots. Choose Cheatsheet.",
+                show_alert=True,
+            )
+            return
     fmt_code = _FMT_CODE[(fmt, refresh)]
 
     label = "Cheatsheet" if fmt == "cheat" else "Book Notes"
     suffix = " (rebuild)" if refresh else ""
     prompt = (
         f"<b>{label}{suffix}</b> — pick any extras then tap Generate.\n"
-        "All extras start OFF (default = the bare PDF)."
+        + (
+            "This upload will be processed without contacting YouTube."
+            if vid == "tg"
+            else "All extras start OFF (default = the bare PDF)."
+        )
     )
     await q.answer()
     try:

@@ -184,6 +184,8 @@ AUTHORING_MODEL=llama-3.3-70b-versatile
 WHISPER_BACKEND=groq
 DAILY_CAP_CHEATSHEETS=0
 DAILY_CAP_BOOKS=0
+TELEGRAM_UPLOAD_MAX_MB=19
+TELEGRAM_UPLOAD_MIN_FREE_MB=1024
 CLAUDE_CODE_BIN=
 EOF
   chown "$BOT_USER:$BOT_USER" "$ENV_FILE.example"
@@ -217,6 +219,7 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=$VENV/bin/python -u -m bot.main
 Restart=on-failure
 RestartSec=15
+UMask=0077
 Environment=PATH=$VENV/bin:/home/$BOT_USER/.npm-global/bin:/home/$BOT_USER/.deno/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StandardOutput=journal
 StandardError=journal

@@ -23,13 +23,25 @@ from pathlib import Path
 from telegram import Bot
 from telegram.constants import ParseMode
 
-from . import cache
-from .config import SCRIPTS_DIR, WORK_ROOT
+from . import cache, media_uploads
+from .config import SCRIPTS_DIR, TELEGRAM_UPLOAD_MAX_MB, WORK_ROOT
 from .progress import ProgressEditor
 
 # Make the existing scripts importable.
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+
+
+@dataclass(frozen=True)
+class TelegramMedia:
+    """Telegram identifiers and safe metadata; never rendered in status."""
+
+    file_id: str
+    file_unique_id: str
+    file_name: str
+    file_size: int | None
+    is_video: bool
+    title: str
 
 
 @dataclass
@@ -46,7 +58,19 @@ class Job:
     # Drives both the author prompt and the PDF builder's behaviour, and is
     # hashed into the cache key so different selections don't collide.
     features: list[str] = field(default_factory=list)
+    source_kind: str = "youtube"
+    telegram_media: TelegramMedia | None = None
     enqueued_at: float = field(default_factory=time.time)
+
+    def __post_init__(self) -> None:
+        if self.source_kind == "telegram":
+            if self.telegram_media is None:
+                raise ValueError("Telegram jobs require media metadata")
+        elif self.source_kind == "youtube":
+            if not self.url:
+                raise ValueError("YouTube jobs require a URL")
+        else:
+            raise ValueError("Unknown job source")
 
 
 class Queue:
@@ -97,14 +121,25 @@ async def run_job(bot: Bot, job: Job) -> None:
 
     started_at = time.time()
     try:
-        await editor.update("Resolving video...", force=True)
-        # 2. Pull video ID
-        from transcribe_with_frames import extract_video_id
-        try:
-            video_id = extract_video_id(job.url)
-        except ValueError:
-            await editor.update("Could not parse YouTube URL.", force=True)
-            return
+        is_upload = job.source_kind == "telegram"
+        if is_upload:
+            await editor.update("Preparing uploaded media...", force=True)
+            media = job.telegram_media
+            if media is None:
+                await editor.update("Please upload the file again.", force=True)
+                return
+            video_id = media_uploads.upload_cache_id(
+                job.chat_id, media.file_unique_id, job.url
+            )
+        else:
+            await editor.update("Resolving video...", force=True)
+            # 2. Pull video ID
+            from transcribe_with_frames import extract_video_id
+            try:
+                video_id = extract_video_id(job.url)
+            except ValueError:
+                await editor.update("Could not parse YouTube URL.", force=True)
+                return
 
         if job.refresh:
             cache.invalidate(video_id)
@@ -132,33 +167,89 @@ async def run_job(bot: Bot, job: Job) -> None:
         need_transcript = not cache.has_transcript(video_id)
         need_frames = (job.fmt == "book" and not cache.has_frames(video_id))
         if need_transcript or need_frames:
-            from transcribe_with_frames import run_pipeline
-            work_dir = WORK_ROOT / video_id
-
             def cb(msg_text: str):
                 editor.update_threadsafe(msg_text)
 
-            try:
-                pipeline_result = await asyncio.to_thread(
-                    run_pipeline,
-                    job.url,
-                    work_dir,
-                    extract_frames=(job.fmt == "book"),
-                    on_progress=cb,
-                )
-            except RuntimeError as exc:
-                # yt-dlp anti-bot, ffmpeg failures, etc.
-                msg_text = str(exc)
-                if "yt-dlp" in msg_text and ("Sign in" in msg_text
-                                              or "bot" in msg_text):
-                    await editor.update("This video can't be downloaded "
-                                        "(anti-bot challenge). Try another.",
-                                        force=True)
-                else:
-                    await editor.update(f"Pipeline failed: {msg_text[:200]}",
-                                        force=True)
-                return
-            cache.adopt_pipeline_outputs(video_id, pipeline_result)
+            if is_upload:
+                from transcribe_with_frames import run_local_media_pipeline
+
+                staging_dir = None
+                try:
+                    media = job.telegram_media
+                    if media is None:
+                        await editor.update(
+                            "Please upload the file again.", force=True
+                        )
+                        return
+                    staging_dir = media_uploads.create_staging_dir(video_id)
+                    source_path = staging_dir / (
+                        "source" + media_uploads.safe_media_suffix(media.file_name)
+                    )
+                    await editor.update(
+                        "Downloading uploaded media...", force=True
+                    )
+                    await media_uploads.download_media(
+                        bot,
+                        file_id=media.file_id,
+                        declared_size=media.file_size,
+                        destination=source_path,
+                    )
+                    pipeline_result = await asyncio.to_thread(
+                        run_local_media_pipeline,
+                        source_path,
+                        staging_dir / "pipeline",
+                        video_id=video_id,
+                        title=media.title,
+                        transcribe=need_transcript,
+                        extract_frames=need_frames,
+                        on_progress=cb,
+                    )
+                    cache.adopt_pipeline_outputs(video_id, pipeline_result)
+                except media_uploads.MediaUploadError as exc:
+                    await editor.update(str(exc), force=True)
+                    return
+                except (RuntimeError, ValueError):
+                    traceback.print_exc()
+                    await editor.update(
+                        "Uploaded-media processing failed. Make sure the file "
+                        "contains playable audio, or try again later.",
+                        force=True,
+                    )
+                    return
+                finally:
+                    media_uploads.remove_staging_dir(staging_dir)
+            else:
+                from transcribe_with_frames import run_pipeline
+                from scripts.ytdlp_client import YtDlpError
+
+                work_dir = WORK_ROOT / video_id
+                try:
+                    pipeline_result = await asyncio.to_thread(
+                        run_pipeline,
+                        job.url,
+                        work_dir,
+                        extract_frames=(job.fmt == "book"),
+                        on_progress=cb,
+                    )
+                except YtDlpError as exc:
+                    media_kind = "video" if job.fmt == "book" else "audio or video"
+                    await editor.update(
+                        f"{exc.public_message}\n\n"
+                        f"Fallback: send the actual {media_kind} file here "
+                        f"(under {TELEGRAM_UPLOAD_MAX_MB} MB), then choose "
+                        "the format and extras. That path does not contact YouTube.",
+                        force=True,
+                    )
+                    return
+                except RuntimeError:
+                    traceback.print_exc()
+                    await editor.update(
+                        "Video processing failed before transcription. "
+                        "Please try again later.",
+                        force=True,
+                    )
+                    return
+                cache.adopt_pipeline_outputs(video_id, pipeline_result)
 
         meta = cache.load_meta(video_id)
         title_hint = meta.title if meta else None
@@ -234,11 +325,13 @@ async def run_job(bot: Bot, job: Job) -> None:
         await editor.update(
             f"Done in {elapsed//60}m {elapsed%60}s.", force=True)
 
-    except Exception as exc:
+    except Exception:
         traceback.print_exc()
         try:
             await editor.update(
-                f"Failed: {str(exc)[:300]}", force=True)
+                "Generation failed unexpectedly. Please try again later.",
+                force=True,
+            )
         except Exception:
             pass
 

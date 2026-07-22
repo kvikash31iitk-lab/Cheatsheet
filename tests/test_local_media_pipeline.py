@@ -110,6 +110,33 @@ class LocalMediaProbeTests(unittest.TestCase):
                 pipeline._probe_local_media(source)
 
 
+class LocalMediaFrameTests(unittest.TestCase):
+    @patch("scripts.transcribe_with_frames.subprocess.run")
+    def test_short_static_video_gets_one_representative_frame(self, run_mock):
+        def fake_run(command, **_kwargs):
+            if "grid_00001.jpg" in str(command[-1]) and "-ss" in command:
+                Path(command[-1]).write_bytes(b"jpeg")
+            return completed(0)
+
+        run_mock.side_effect = fake_run
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "short.mp4"
+            source.write_bytes(b"media")
+            frames = pipeline.extract_scene_frames(
+                source,
+                3.0,
+                root / "frames",
+                local_only=True,
+            )
+
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(frames[0][0], 1.5)
+        representative_command = run_mock.call_args_list[-1].args[0]
+        self.assertIn("-frames:v", representative_command)
+        self.assertIn("yuvj420p", representative_command)
+
+
 class LocalMediaTranscodeTests(unittest.TestCase):
     @patch("scripts.transcribe_with_frames._run")
     def test_transcodes_to_canonical_session_mp3(self, run_mock):

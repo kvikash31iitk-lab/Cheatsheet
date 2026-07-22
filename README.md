@@ -7,13 +7,23 @@ Telegram bot that turns YouTube videos into PDF cheatsheets and illustrated stud
 - **`/refresh <url>`** — bust cache, regenerate from scratch
 - **`/status`** — show queue position
 
+If YouTube blocks the VPS route, send the actual audio/video file to the bot
+and use the buttons attached to that upload. Hosted Bot API uploads are capped
+at 19 MB and this local-media path never contacts YouTube.
+
+For bare links and media posted in a group, either make the bot a group admin
+or use BotFather → Bot Settings → Group Privacy → Turn off, then remove and
+re-add the bot to the group. Otherwise Telegram delivers commands but may hide
+ordinary group messages and uploads from the bot.
+
 ## Architecture
 
 ```
-Telegram → bot/main.py (long-poll) → bot/worker.py (single-worker queue)
+Telegram link/upload → bot/main.py (long-poll) → bot/worker.py (single-worker queue)
               │
               ▼
-        scripts/transcribe_with_frames.py   (yt-dlp + ffmpeg + Groq Whisper)
+        scripts/transcribe_with_frames.py
+        (links: yt-dlp; uploads: local file only; then ffmpeg + Whisper)
               │
               ▼
         bot/author.py  (Claude Code or Groq Llama writes markdown)
