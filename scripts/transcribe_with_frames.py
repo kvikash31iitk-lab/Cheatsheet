@@ -24,6 +24,11 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
+try:
+    from scripts.ytdlp_client import invalid_response_error, run_ytdlp
+except ModuleNotFoundError:  # Direct execution: python scripts/transcribe_with_frames.py
+    from ytdlp_client import invalid_response_error, run_ytdlp
+
 WATCH_SKILL_DIR = Path.home() / ".claude" / "skills" / "watch" / "scripts"
 if str(WATCH_SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(WATCH_SKILL_DIR))
@@ -92,51 +97,37 @@ def _run(cmd: list[str], **kw):
     return subprocess.run(cmd, **kw)
 
 
-def _ytdlp_base() -> list[str]:
-    """yt-dlp command prefix, with --cookies appended if a cookies file exists.
-
-    Cookies file location is configurable via ``YT_COOKIES_PATH`` (env var). On
-    a VPS where YouTube returns *"Sign in to confirm you're not a bot"*, dropping
-    a Netscape-format cookies.txt at that path lets yt-dlp authenticate as your
-    logged-in browser session and bypass the challenge.
-
-    Also forces ``player_client=default,android`` — the android client returns
-    stream URLs that don't require solving the JS-based "n challenge", which
-    needs deno/node and frequently fails on headless VPS environments.
-    """
-    import os
-    cmd = ["yt-dlp", "--extractor-args", "youtube:player_client=default,android"]
-    cookies_path = os.environ.get("YT_COOKIES_PATH", "/home/botuser/cookies.txt")
-    if cookies_path and Path(cookies_path).exists():
-        cmd += ["--cookies", cookies_path]
-    return cmd
-
-
 def fetch_metadata(url: str) -> dict:
     """Return {'id', 'title', 'duration'} via yt-dlp --print.
 
     Uses three separate ``--print`` flags so each field is on its own line —
     avoids brittle separator parsing when titles contain pipes / tabs / etc.
     """
-    cmd = _ytdlp_base() + ["--skip-download", "--no-playlist",
-           "--print", "%(id)s",
-           "--print", "%(title)s",
-           "--print", "%(duration)s",
-           url]
-    p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-    if p.returncode != 0:
-        raise RuntimeError(f"yt-dlp metadata failed:\n{p.stderr}")
+    p = run_ytdlp(
+        [
+            "--skip-download", "--no-playlist",
+            "--print", "%(id)s",
+            "--print", "%(title)s",
+            "--print", "%(duration)s",
+            url,
+        ],
+        operation="read video information",
+    )
     lines = [ln for ln in p.stdout.splitlines() if ln.strip()]
     if len(lines) < 3:
-        raise RuntimeError(f"unexpected yt-dlp output: {p.stdout!r}")
+        raise invalid_response_error(
+            "read video information",
+            f"Expected id/title/duration lines; output was:\n{p.stdout}",
+        )
     # Last 3 non-empty lines are id, title, duration (warnings come before).
     vid, title, duration = lines[-3], lines[-2], lines[-1]
     try:
         duration_f = float(duration or 0)
     except ValueError:
-        raise RuntimeError(
-            f"yt-dlp returned non-numeric duration {duration!r}; "
-            f"full output:\n{p.stdout}")
+        raise invalid_response_error(
+            "read video information",
+            f"Non-numeric duration {duration!r}; output was:\n{p.stdout}",
+        )
     return {"id": vid.strip(), "title": title.strip(), "duration": duration_f}
 
 
@@ -149,10 +140,13 @@ def ensure_audio(url: str, work: Path, on_progress: ProgressFn = None) -> Path:
     raw = work / "raw_audio.m4a"
     if not raw.exists():
         _emit(on_progress, "Downloading audio...")
-        cmd = _ytdlp_base() + ["-f", "bestaudio[ext=m4a]/bestaudio",
-               "--no-playlist", "-o", str(raw), url]
-        if _run(cmd).returncode != 0:
-            raise RuntimeError("yt-dlp audio download failed")
+        run_ytdlp(
+            [
+                "-f", "bestaudio[ext=m4a]/bestaudio",
+                "--no-playlist", "-o", str(raw), url,
+            ],
+            operation="download audio",
+        )
 
     _emit(on_progress, "Encoding audio for Whisper...")
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
@@ -168,13 +162,13 @@ def ensure_video(url: str, work: Path, on_progress: ProgressFn = None) -> Path:
     if raw_video.exists() and raw_video.stat().st_size > 0:
         return raw_video
     _emit(on_progress, "Downloading video for frame extraction...")
-    cmd = _ytdlp_base() + ["-f", "bestvideo[height<=720][ext=mp4]/best[height<=720]/worst",
-           "--no-playlist", "-o", str(raw_video), url]
-    if _run(cmd).returncode != 0:
-        cmd = _ytdlp_base() + ["-f", "worst", "--no-playlist",
-                               "-o", str(raw_video), url]
-        if _run(cmd).returncode != 0:
-            raise RuntimeError("yt-dlp video download failed")
+    run_ytdlp(
+        [
+            "-f", "bestvideo[height<=720][ext=mp4]/best[height<=720]/worst",
+            "--no-playlist", "-o", str(raw_video), url,
+        ],
+        operation="download video",
+    )
     return raw_video
 
 

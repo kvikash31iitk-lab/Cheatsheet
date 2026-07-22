@@ -199,8 +199,25 @@ export type AdminStorage = {
 };
 
 export type AdminCookiesStatus =
-  | { exists: false }
-  | { exists: true; path: string; size_bytes: number; modified_at: string };
+  | { exists: false; proxy_configured: boolean }
+  | {
+      exists: true;
+      proxy_configured: boolean;
+      path: string;
+      size_bytes: number;
+      modified_at: string;
+      valid_netscape: boolean;
+      cookie_count: number;
+      youtube_cookie_count: number;
+    };
+
+export type AdminYoutubeProbe = {
+  ok: true;
+  video_id: string;
+  title: string;
+  duration_seconds: number;
+  proxy_configured: boolean;
+};
 
 // --- endpoints ------------------------------------------------------------
 
@@ -255,6 +272,11 @@ export const adminApi = {
     req<{ ok: boolean; path: string; bytes: number }>('/api/admin/cookies', {
       method: 'POST',
       json: { cookies_txt },
+    }),
+  probeYoutube: (url: string) =>
+    req<AdminYoutubeProbe>('/api/admin/youtube/probe', {
+      method: 'POST',
+      json: { url },
     }),
 
   // broadcasts

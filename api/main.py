@@ -89,6 +89,7 @@ from scripts.transcribe_with_frames import (  # noqa: E402
     fetch_metadata,
     run_pipeline,
 )
+from scripts.ytdlp_client import YtDlpError  # noqa: E402
 from scripts.build_cheatsheet import build as build_cheatsheet  # noqa: E402
 from scripts.build_illustrated_book import build as build_book  # noqa: E402
 from bot.author import author_book, author_cheatsheet  # noqa: E402
@@ -121,6 +122,7 @@ from api.models import (  # noqa: E402
 from api import settings as app_settings  # noqa: E402
 from api.admin import router as admin_router  # noqa: E402
 from api.upsc_routes import router as upsc_router  # noqa: E402
+from api.youtube_urls import validate_public_youtube_url  # noqa: E402
 
 WORK_ROOT = PROJECT_ROOT / "web_work"
 WORK_ROOT.mkdir(exist_ok=True)
@@ -1136,13 +1138,22 @@ async def preview(
     """Cheap metadata lookup for a YouTube URL — used by the generate UI to
     show a thumbnail + title + duration + cost preview BEFORE the user
     commits to a generation."""
-    if req.url in _PREVIEW_CACHE:
-        out = dict(_PREVIEW_CACHE[req.url])
+    try:
+        url = validate_public_youtube_url(req.url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+    if url in _PREVIEW_CACHE:
+        out = dict(_PREVIEW_CACHE[url])
     else:
         try:
-            meta = await asyncio.to_thread(fetch_metadata, req.url)
-        except Exception as exc:
-            raise HTTPException(400, f"Could not read URL: {exc}")
+            meta = await asyncio.to_thread(fetch_metadata, url)
+        except YtDlpError as exc:
+            raise HTTPException(502, exc.public_message) from None
+        except Exception:
+            raise HTTPException(
+                502, "Could not read this YouTube video. Please try again."
+            ) from None
         out = {
             "video_id": meta["id"],
             "title": meta["title"],
@@ -1152,7 +1163,7 @@ async def preview(
         }
         if len(_PREVIEW_CACHE) > 256:
             _PREVIEW_CACHE.clear()
-        _PREVIEW_CACHE[req.url] = out
+        _PREVIEW_CACHE[url] = out
 
     await _check_block_rules(s, out.get("title"), out.get("channel"))
 
@@ -1202,6 +1213,11 @@ async def create_generation(
                 f"Rate limit: max {hourly_cap} generations per hour. Try later.",
             )
 
+    try:
+        url = validate_public_youtube_url(req.url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
     # Normalize features: dedupe, drop unknowns, keep canonical order. We
     # store the canonical list as JSON text so the cache hash is stable across
     # clients that submit features in different orders.
@@ -1211,7 +1227,7 @@ async def create_generation(
         id=uuid.uuid4().hex,
         user_id=user.id,
         kind=req.kind,
-        url=req.url,
+        url=url,
         status="queued",
         progress=0.0,
         was_free=False,   # placeholder — re-evaluated inside _run_job
@@ -1837,7 +1853,11 @@ async def _run_job(job_id: str) -> None:
     except Exception as exc:
         # Refund the wallet for paid jobs that fail mid-pipeline.
         notify_chat_id = None
-        notify_err = f"{type(exc).__name__}: {exc}"
+        notify_err = (
+            exc.public_message
+            if isinstance(exc, YtDlpError)
+            else f"{type(exc).__name__}: {exc}"
+        )
         with SyncSessionLocal() as s:
             gen = s.get(Generation, job_id)
             if gen:

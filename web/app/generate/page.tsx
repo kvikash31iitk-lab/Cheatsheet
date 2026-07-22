@@ -5,7 +5,16 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { AppBar } from '@/components/app-bar';
 import { Btn, Tag } from '@/components/ui';
 import { Ic } from '@/components/icons';
-import { createJob, getPreview, getMe, type JobKind, type Preview, type Me, type FeatureFlag } from '@/lib/api';
+import {
+  createJob,
+  friendlyGenerationError,
+  getPreview,
+  getMe,
+  type JobKind,
+  type Preview,
+  type Me,
+  type FeatureFlag,
+} from '@/lib/api';
 
 // Tile metadata for the optional-features section. Order matches the
 // backend's FEATURE_ORDER so the UI reads top-to-bottom in the same shape
@@ -91,7 +100,7 @@ function GenerateForm() {
           setPreviewLoading(false);
         })
         .catch((e) => {
-          setPreviewError(e instanceof Error ? e.message : String(e));
+          setPreviewError(friendlyGenerationError(e));
           setPreviewLoading(false);
         });
     }, 400);
@@ -116,7 +125,7 @@ function GenerateForm() {
       const { id } = await createJob(url, kind, Array.from(features));
       router.push(`/generate/${id}`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyGenerationError(e));
       setSubmitting(false);
     }
   }

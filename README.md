@@ -73,6 +73,9 @@ See `.env.example`. Key knobs:
 | `WHITELISTED_GROUP_IDS` | (required) | Comma-separated Telegram chat IDs. Bot ignores everyone else. |
 | `DAILY_CAP_CHEATSHEETS` | `0` | 0 = unlimited |
 | `DAILY_CAP_BOOKS` | `0` | 0 = unlimited |
+| `YTDLP_PROXY_URL` | (empty) | Authenticated production egress proxy used when YouTube blocks the VPS IP. URL-encode reserved characters in credentials. |
+| `YTDLP_PROXY_POOL` | (empty) | Optional comma-separated proxy failover pool; takes precedence over `YTDLP_PROXY_URL`. |
+| `YT_COOKIES_PATH` | `/home/botuser/cookies.txt` | Netscape cookies file used only for videos that genuinely require sign-in. Cookies do not bypass an IP-level HTTP 429 block. |
 
 ## Project layout
 

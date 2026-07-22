@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { AppBar } from '@/components/app-bar';
 import { Btn, Tag } from '@/components/ui';
 import { Ic } from '@/components/icons';
-import { getJob, type Job } from '@/lib/api';
+import { friendlyGenerationError, getJob, type Job } from '@/lib/api';
 
 export default function JobPage() {
   const params = useParams<{ jobId: string }>();
@@ -29,7 +29,7 @@ export default function JobPage() {
         }
       } catch (e: unknown) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e));
+        setError(friendlyGenerationError(e));
         timer = setTimeout(tick, 3000);
       }
     }
@@ -267,6 +267,8 @@ function DoneView({ job }: { job: Job }) {
 }
 
 function ErrorView({ message }: { message: string }) {
+  const friendlyMessage = friendlyGenerationError(message);
+
   return (
     <div
       style={{
@@ -277,7 +279,7 @@ function ErrorView({ message }: { message: string }) {
       }}
     >
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Generation failed</div>
-      <div style={{ fontSize: 13, marginBottom: 16, fontFamily: 'var(--font-mono)' }}>{message}</div>
+      <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>{friendlyMessage}</div>
       <Link href="/generate" style={{ textDecoration: 'none' }}>
         <Btn variant="secondary" size="md">
           Try again

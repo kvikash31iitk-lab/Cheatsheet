@@ -10,6 +10,7 @@ session is committed.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -23,8 +24,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.cookie_files import (
+    MAX_COOKIE_FILE_BYTES,
+    CookieFileTooLarge,
+    CookieFileValidationError,
+    atomic_write_private,
+    validate_cookie_file,
+)
 from api.db import get_session
 from api.deps import is_admin_email, require_admin
+from api.youtube_urls import validate_public_youtube_url
 from api.models import (
     AppSetting,
     AuditLog,
@@ -676,7 +685,16 @@ async def storage_health(
 # --- yt-dlp cookies refresh ------------------------------------------------
 
 class CookiesUpload(BaseModel):
-    cookies_txt: str = Field(..., min_length=10)
+    cookies_txt: str
+
+
+def _cookies_target() -> Path:
+    configured = os.environ.get("YT_COOKIES_PATH", "").strip()
+    if configured:
+        return Path(configured)
+    from api.main import PROJECT_ROOT  # noqa: WPS433
+
+    return PROJECT_ROOT / "cookies.txt"
 
 
 @router.post("/cookies")
@@ -685,39 +703,122 @@ async def upload_cookies(
     s: AsyncSession = Depends(get_session),
     admin: User = Depends(require_admin),
 ) -> dict[str, Any]:
-    from api.main import PROJECT_ROOT  # noqa: WPS433
+    target = _cookies_target()
+    try:
+        summary = validate_cookie_file(req.cookies_txt)
+    except CookieFileTooLarge as exc:
+        raise HTTPException(413, str(exc)) from None
+    except CookieFileValidationError as exc:
+        raise HTTPException(400, str(exc)) from None
 
-    target = Path(os.environ.get("YT_COOKIES_PATH") or (PROJECT_ROOT / "cookies.txt"))
-    if not req.cookies_txt.lstrip().startswith("# Netscape HTTP Cookie File"):
-        raise HTTPException(
-            400, "Cookies file must start with '# Netscape HTTP Cookie File'"
-        )
-    target.write_text(req.cookies_txt, encoding="utf-8")
+    try:
+        atomic_write_private(target, summary.normalized_text)
+    except OSError:
+        raise HTTPException(500, "Could not store cookies securely") from None
     os.environ["YT_COOKIES_PATH"] = str(target)
     await _audit(
-        s, admin, "cookies.upload", None, None, {"bytes": len(req.cookies_txt)}
+        s,
+        admin,
+        "cookies.upload",
+        None,
+        None,
+        {
+            "bytes": summary.size_bytes,
+            "cookie_count": summary.cookie_count,
+            "youtube_cookie_count": summary.youtube_cookie_count,
+        },
     )
     await s.commit()
-    return {"ok": True, "path": str(target), "bytes": len(req.cookies_txt)}
+    return {
+        "ok": True,
+        "path": str(target),
+        "bytes": summary.size_bytes,
+        "cookie_count": summary.cookie_count,
+        "youtube_cookie_count": summary.youtube_cookie_count,
+    }
 
 
 @router.get("/cookies/status")
 async def cookies_status(
     admin: User = Depends(require_admin),
 ) -> dict[str, Any]:
-    from api.main import PROJECT_ROOT  # noqa: WPS433
-
-    target = Path(os.environ.get("YT_COOKIES_PATH") or (PROJECT_ROOT / "cookies.txt"))
+    target = _cookies_target()
+    proxy_configured = bool(
+        os.environ.get("YTDLP_PROXY_POOL", "").strip()
+        or os.environ.get("YTDLP_PROXY_URL", "").strip()
+    )
     if not target.exists():
-        return {"exists": False}
-    stat = target.stat()
-    return {
+        return {"exists": False, "proxy_configured": proxy_configured}
+    try:
+        stat = target.stat()
+    except OSError:
+        return {"exists": False, "proxy_configured": proxy_configured}
+
+    response: dict[str, Any] = {
         "exists": True,
+        "proxy_configured": proxy_configured,
         "path": str(target),
         "size_bytes": stat.st_size,
         "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
     }
+    try:
+        if stat.st_size > MAX_COOKIE_FILE_BYTES:
+            raise CookieFileTooLarge("Cookies file is too large")
+        summary = validate_cookie_file(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, CookieFileValidationError):
+        response.update(
+            {
+                "valid_netscape": False,
+                "cookie_count": 0,
+                "youtube_cookie_count": 0,
+            }
+        )
+    else:
+        response.update(
+            {
+                "valid_netscape": True,
+                "cookie_count": summary.cookie_count,
+                "youtube_cookie_count": summary.youtube_cookie_count,
+            }
+        )
+    return response
 
+
+class YouTubeProbeRequest(BaseModel):
+    url: str = Field(..., min_length=20, max_length=2048)
+
+
+@router.post("/youtube/probe")
+async def youtube_probe(
+    req: YouTubeProbeRequest,
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Probe the configured YouTube route without exposing private diagnostics."""
+
+    try:
+        url = validate_public_youtube_url(req.url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+    from scripts.transcribe_with_frames import fetch_metadata  # noqa: WPS433
+    from scripts.ytdlp_client import YtDlpError, configured_proxies  # noqa: WPS433
+
+    try:
+        metadata = await asyncio.to_thread(fetch_metadata, url)
+    except YtDlpError as exc:
+        raise HTTPException(502, exc.public_message) from None
+    except Exception:
+        raise HTTPException(
+            502, "Could not verify the YouTube download route. Please try again."
+        ) from None
+
+    return {
+        "ok": True,
+        "video_id": metadata["id"],
+        "title": metadata["title"],
+        "duration_seconds": metadata["duration"],
+        "proxy_configured": bool(configured_proxies()),
+    }
 
 # --- broadcasts ------------------------------------------------------------
 

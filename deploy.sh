@@ -170,6 +170,12 @@ if [[ ! -f "$ENV_FILE" ]]; then
 TELEGRAM_BOT_TOKEN=
 WHITELISTED_GROUP_IDS=
 GROQ_API_KEY=
+# YouTube egress: configure at least one authenticated residential proxy on a
+# production VPS. URL-encode reserved characters in proxy credentials.
+YTDLP_PROXY_URL=
+# Optional comma-separated failover pool (takes precedence over the URL above).
+YTDLP_PROXY_POOL=
+YT_COOKIES_PATH=/home/botuser/cookies.txt
 AUTHORING_PROVIDER=claude_code
 # 70b-versatile has a 131K context window — needed for real transcripts.
 # The older 8b-instant default (6K TPM cap on the free tier) silently

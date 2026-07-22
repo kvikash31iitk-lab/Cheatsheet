@@ -44,6 +44,23 @@ echo "==> installing/upgrading Python deps..."
 sudo -u "$BOT_USER" "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade \
   -r "$INSTALL_DIR/requirements.txt"
 
+# Verify the downloader runtime before spending time on the frontend build.
+echo "==> downloader runtime..."
+sudo -u "$BOT_USER" "$INSTALL_DIR/.venv/bin/python" -m yt_dlp --version
+if ! command -v deno >/dev/null 2>&1; then
+  echo "ERROR: deno not found - rerun deploy.sh before deploy-web.sh" >&2
+  exit 1
+fi
+deno --version
+
+# Never print proxy values: authenticated URLs contain credentials.
+if [[ -f "$INSTALL_DIR/.env" ]] && grep -Eq '^YTDLP_PROXY_(URL|POOL)=.+' "$INSTALL_DIR/.env"; then
+  echo "==> YouTube egress proxy: configured"
+else
+  echo "WARN: YouTube egress proxy is not configured; datacenter-IP blocks may persist" >&2
+fi
+
+
 # --- 2. Next.js build (as bot user, with login shell so PATH has node) ---
 if ! command -v node >/dev/null 2>&1; then
   echo "ERROR: node not found — deploy.sh should have installed Node 20" >&2
