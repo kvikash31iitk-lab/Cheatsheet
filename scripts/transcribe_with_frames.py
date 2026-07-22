@@ -17,6 +17,7 @@ perceptual hash so the surviving set captures real visual events.
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 import sys
@@ -70,6 +71,10 @@ CHUNK_SECONDS = 8 * 60
 INTER_CALL_DELAY = 15.0
 CHUNK_RETRY_ATTEMPTS = 8
 CHUNK_RETRY_WAIT = 240.0
+MAX_LOCAL_MEDIA_SECONDS = 2 * 60 * 60
+LOCAL_MEDIA_PROBE_TIMEOUT_SECONDS = 30.0
+LOCAL_MEDIA_FFMPEG_TIMEOUT_SECONDS = 30 * 60.0
+LOCAL_MEDIA_PROTOCOL_WHITELIST = "file,crypto,data"
 # ============================================================================
 
 ProgressFn = Optional[Callable[[str], None]]
@@ -180,24 +185,142 @@ def probe_duration(path: Path) -> float:
     return float(json.loads(p.stdout)["format"]["duration"])
 
 
+def _probe_local_media(path: Path) -> dict:
+    """Validate a local media file and return its stream metadata."""
+    path = Path(path)
+    if not path.is_file():
+        raise ValueError(f"Local media file does not exist: {path}")
+    if path.stat().st_size <= 0:
+        raise ValueError("Local media file is empty")
+
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-protocol_whitelist", LOCAL_MEDIA_PROTOCOL_WHITELIST,
+        "-print_format", "json",
+        "-show_format", "-show_streams", str(path),
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=LOCAL_MEDIA_PROBE_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffprobe is required to process uploaded media") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("Timed out while validating local media") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise ValueError(f"Local media is not readable by ffprobe{suffix}")
+
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("ffprobe returned invalid metadata for local media") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("ffprobe returned invalid metadata for local media")
+    streams = payload.get("streams")
+    if not isinstance(streams, list):
+        streams = []
+    streams = [stream for stream in streams if isinstance(stream, dict)]
+    audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+    video_streams = [s for s in streams if s.get("codec_type") == "video"]
+    if not audio_streams:
+        raise ValueError("Local media does not contain a playable audio stream")
+
+    format_data = payload.get("format")
+    if not isinstance(format_data, dict):
+        format_data = {}
+    duration_values = [format_data.get("duration")]
+    duration_values.extend(stream.get("duration") for stream in audio_streams)
+    duration = 0.0
+    for raw_duration in duration_values:
+        try:
+            candidate = float(raw_duration)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(candidate) and candidate > duration:
+            duration = candidate
+    if duration <= 0:
+        raise ValueError("Local media audio has no playable duration")
+    if duration > MAX_LOCAL_MEDIA_SECONDS:
+        raise ValueError(
+            f"Local media exceeds the {MAX_LOCAL_MEDIA_SECONDS // 3600}-hour limit"
+        )
+
+    return {
+        "duration": duration,
+        "has_audio": True,
+        "has_video": bool(video_streams),
+    }
+
+
+def _ensure_local_audio(media_path: Path, work: Path,
+                        on_progress: ProgressFn = None) -> Path:
+    """Transcode validated local media to the pipeline's canonical MP3."""
+    audio_full = work / "session_full.mp3"
+    if audio_full.exists() and audio_full.stat().st_size > 0:
+        return audio_full
+
+    _emit(on_progress, "Encoding uploaded media for Whisper...")
+    temporary = work / "session_full.tmp.mp3"
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-protocol_whitelist", LOCAL_MEDIA_PROTOCOL_WHITELIST,
+        "-i", str(media_path), "-vn", "-ac", "1", "-ar", "16000",
+        "-b:a", "64k", str(temporary),
+    ]
+    try:
+        result = _run(
+            cmd, capture_output=True, text=True,
+            timeout=LOCAL_MEDIA_FFMPEG_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffmpeg is required to process uploaded media") from exc
+    except subprocess.TimeoutExpired as exc:
+        temporary.unlink(missing_ok=True)
+        raise RuntimeError("Timed out while decoding uploaded audio") from exc
+    output_missing = not temporary.exists() or temporary.stat().st_size <= 0
+    if result.returncode != 0 or output_missing:
+        temporary.unlink(missing_ok=True)
+        detail = (result.stderr or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(f"ffmpeg could not decode the uploaded audio{suffix}")
+    temporary.replace(audio_full)
+    return audio_full
+
+
 def extract_scene_frames(video: Path, duration: float, frames_dir: Path,
-                         on_progress: ProgressFn = None) -> list[tuple[float, Path]]:
+                         on_progress: ProgressFn = None, *,
+                         local_only: bool = False) -> list[tuple[float, Path]]:
     raw_dir = frames_dir / "_raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
+    input_options = []
+    run_options = {}
+    if local_only:
+        input_options = [
+            "-nostdin", "-protocol_whitelist", LOCAL_MEDIA_PROTOCOL_WHITELIST,
+        ]
+        run_options["timeout"] = LOCAL_MEDIA_FFMPEG_TIMEOUT_SECONDS
 
     # Pass 1: scene-change frames with showinfo timestamps.
     if not list(raw_dir.glob("scene_*.jpg")):
         _emit(on_progress, "Scanning for scene changes...")
         scene_log = raw_dir / "scene.log"
         cmd = [
-            "ffmpeg", "-hide_banner", "-y", "-i", str(video),
+            "ffmpeg", "-hide_banner", "-y", *input_options, "-i", str(video),
             "-vf", (f"select='gt(scene,{SCENE_THRESHOLD})',showinfo,"
                     f"scale='min(iw,{FRAME_RESOLUTION})':-2:flags=lanczos"),
             "-vsync", "vfr", "-q:v", str(JPEG_QUALITY),
             str(raw_dir / "scene_%05d.jpg"),
         ]
         with open(scene_log, "w", encoding="utf-8") as f:
-            subprocess.run(cmd, stderr=f, stdout=subprocess.DEVNULL)
+            try:
+                subprocess.run(
+                    cmd, stderr=f, stdout=subprocess.DEVNULL, **run_options
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("Timed out while extracting local frames") from exc
 
     scene_times: list[float] = []
     log_path = raw_dir / "scene.log"
@@ -218,11 +341,15 @@ def extract_scene_frames(video: Path, duration: float, frames_dir: Path,
         _emit(on_progress, "Sampling fallback frames...")
         fps = 1.0 / FALLBACK_INTERVAL_S
         cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(video),
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            *input_options, "-i", str(video),
             "-vf", f"fps={fps},scale='min(iw,{FRAME_RESOLUTION})':-2:flags=lanczos",
             "-q:v", str(JPEG_QUALITY), str(raw_dir / "grid_%05d.jpg"),
         ]
-        subprocess.run(cmd)
+        try:
+            subprocess.run(cmd, **run_options)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("Timed out while sampling local frames") from exc
 
     grid_files = sorted(raw_dir.glob("grid_*.jpg"))
     grid_times = [i * FALLBACK_INTERVAL_S for i in range(len(grid_files))]
@@ -437,6 +564,72 @@ def run_pipeline(url: str, work: Path, *, extract_frames: bool = True,
         "video_id": meta["id"],
         "title": meta["title"],
         "duration_seconds": meta["duration"],
+        "transcript_txt": outputs["transcript_txt"],
+        "transcript_json": outputs["transcript_json"],
+        "transcript_with_frames": outputs["transcript_with_frames"],
+        "frames_dir": frames_dir,
+        "frames_index": frames_index_path,
+        "frames_count": len(frames_index_data) if frames_index_data else 0,
+        "segments_count": len(segments),
+    }
+
+
+def run_local_media_pipeline(media_path: Path, work: Path, *, title: str,
+                             video_id: str, extract_frames: bool = True,
+                             transcribe: bool = True,
+                             on_progress: ProgressFn = None) -> dict:
+    """Run the transcript pipeline from an already-downloaded local file.
+
+    No yt-dlp helper is called on this path. The source must contain decodable
+    audio, and frame extraction additionally requires a real video stream.
+    With transcribe=False, transcript paths are None and no audio normalization
+    or Whisper work is performed.
+    """
+    media_path = Path(media_path)
+    work = Path(work)
+    work.mkdir(parents=True, exist_ok=True)
+
+    _emit(on_progress, "Validating uploaded media...")
+    media = _probe_local_media(media_path)
+    if extract_frames and not media["has_video"]:
+        raise ValueError(
+            "Frame extraction requires uploaded media with a video stream"
+        )
+
+    frames_index_data = None
+    frames_index_path = None
+    frames_dir = None
+    if extract_frames:
+        frames_dir = work / "frames"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        frames_index_path = work / "frames.json"
+        candidates = extract_scene_frames(
+            media_path, media["duration"], frames_dir,
+            on_progress=on_progress, local_only=True,
+        )
+        kept = dedupe_frames(candidates, on_progress=on_progress)
+        frames_index_data = write_final_frames(
+            kept, frames_dir, frames_index_path
+        )
+
+    segments = []
+    outputs = {
+        "transcript_txt": None,
+        "transcript_json": None,
+        "transcript_with_frames": None,
+    }
+    if transcribe:
+        audio = _ensure_local_audio(media_path, work, on_progress=on_progress)
+        chunks = split_audio(audio, work, on_progress=on_progress)
+        segments = transcribe_chunks(chunks, on_progress=on_progress)
+        outputs = write_outputs(segments, work, frames_index_data)
+    clean_title = str(title or "").strip() or media_path.stem
+    clean_video_id = str(video_id or "").strip() or media_path.stem
+
+    return {
+        "video_id": clean_video_id,
+        "title": clean_title,
+        "duration_seconds": media["duration"],
         "transcript_txt": outputs["transcript_txt"],
         "transcript_json": outputs["transcript_json"],
         "transcript_with_frames": outputs["transcript_with_frames"],
