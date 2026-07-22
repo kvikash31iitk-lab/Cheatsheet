@@ -71,6 +71,16 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+
+NEXT_BUILD_DIR="$INSTALL_DIR/web/.next"
+if [[ -L "$NEXT_BUILD_DIR" ]]; then
+  echo "ERROR: refusing to modify symlinked build directory: $NEXT_BUILD_DIR" >&2
+  exit 1
+fi
+if [[ -d "$NEXT_BUILD_DIR" ]]; then
+  echo "==> repairing .next ownership for $BOT_USER..."
+  chown -R "$BOT_USER:$BOT_USER" "$NEXT_BUILD_DIR"
+fi
 echo "==> installing npm deps + building web/ (this takes ~1 min)..."
 sudo -u "$BOT_USER" -H bash -c "
   set -e
