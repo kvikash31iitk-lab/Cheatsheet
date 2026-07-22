@@ -47,11 +47,15 @@ sudo -u "$BOT_USER" "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade \
 # Verify the downloader runtime before spending time on the frontend build.
 echo "==> downloader runtime..."
 sudo -u "$BOT_USER" "$INSTALL_DIR/.venv/bin/python" -m yt_dlp --version
-if ! command -v deno >/dev/null 2>&1; then
+DENO_BIN="$(command -v deno || true)"
+if [[ -z "$DENO_BIN" && -x "/home/$BOT_USER/.deno/bin/deno" ]]; then
+  DENO_BIN="/home/$BOT_USER/.deno/bin/deno"
+fi
+if [[ -z "$DENO_BIN" ]]; then
   echo "ERROR: deno not found - rerun deploy.sh before deploy-web.sh" >&2
   exit 1
 fi
-deno --version
+sudo -u "$BOT_USER" "$DENO_BIN" --version
 
 # Never print proxy values: authenticated URLs contain credentials.
 if [[ -f "$INSTALL_DIR/.env" ]] && grep -Eq '^YTDLP_PROXY_(URL|POOL)=.+' "$INSTALL_DIR/.env"; then
