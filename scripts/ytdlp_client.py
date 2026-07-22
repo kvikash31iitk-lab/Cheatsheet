@@ -17,23 +17,28 @@ written to application logs.
 """
 from __future__ import annotations
 
+import ipaddress
 import itertools
 import logging
 import os
 import re
 import subprocess
+import stat
 import threading
 import time
 from enum import Enum
 from pathlib import Path
 from typing import Mapping, Sequence
+from urllib.parse import urlsplit
 
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_COOKIES_PATH = "/home/botuser/cookies.txt"
+DEFAULT_PROXY_FILE = "/home/botuser/.config/cheetsheet/ytdlp_proxy_url"
 DEFAULT_REQUEST_INTERVAL_SECONDS = 1.0
 DEFAULT_HTTP_SLEEP_SECONDS = 0.75
+MAX_PROXY_FILE_BYTES = 2048
 
 
 class YtDlpFailureKind(str, Enum):
@@ -44,6 +49,7 @@ class YtDlpFailureKind(str, Enum):
     UNAVAILABLE = "unavailable"
     GEO_RESTRICTED = "geo_restricted"
     NETWORK = "network"
+    CONFIGURATION = "configuration"
     INVALID_RESPONSE = "invalid_response"
     UNKNOWN = "unknown"
 
@@ -79,11 +85,174 @@ _pace_lock = threading.Lock()
 _last_request_started = 0.0
 
 
+ALLOWED_PROXY_SCHEMES = frozenset({"http", "https", "socks5", "socks5h"})
+_MALFORMED_PERCENT_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_DNS_LABEL_RE = re.compile(
+    r"(?i)^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
+
+
+def _is_valid_proxy_hostname(hostname: str) -> bool:
+    """Validate a literal IP address or an IDNA-compatible DNS hostname."""
+
+    try:
+        ipaddress.ip_address(hostname)
+        return True
+    except ValueError:
+        pass
+
+    # Reject malformed dotted-numeric hosts rather than interpreting them as
+    # DNS names after strict IPv4 parsing fails.
+    if "." in hostname and all(
+        character.isdigit() or character == "." for character in hostname
+    ):
+        return False
+    if hostname.startswith(".") or hostname.endswith("."):
+        return False
+    try:
+        ascii_hostname = hostname.encode("idna").decode("ascii")
+    except UnicodeError:
+        return False
+    if not ascii_hostname or len(ascii_hostname) > 253:
+        return False
+    labels = ascii_hostname.split(".")
+    return all(_DNS_LABEL_RE.fullmatch(label) is not None for label in labels)
+
+
+def is_valid_proxy_url(value: str) -> bool:
+    """Return whether *value* is a supported, unambiguous proxy URL.
+
+    This helper is safe for the admin upload boundary as well as the runtime
+    reader. It never logs or returns any part of the supplied credential.
+    """
+
+    if not isinstance(value, str) or not value:
+        return False
+    if _MALFORMED_PERCENT_RE.search(value):
+        return False
+    if any(
+        character == "," or character.isspace() or ord(character) < 32
+        or ord(character) == 127
+        for character in value
+    ):
+        return False
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    return bool(
+        parsed.scheme.casefold() in ALLOWED_PROXY_SCHEMES
+        and parsed.hostname
+        and _is_valid_proxy_hostname(parsed.hostname)
+        and port is not None
+        and 0 < port <= 65535
+        and not parsed.path
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+_PROXY_FILE_ERROR_CODES = frozenset(
+    {
+        "stat_failed",
+        "symlink",
+        "not_regular_file",
+        "insecure_permissions",
+        "changed_during_read",
+        "read_failed",
+        "too_large",
+        "invalid_encoding",
+        "invalid_format",
+        "unknown",
+    }
+)
+
+
+def _proxy_configuration_error(reason: str) -> YtDlpError:
+    """Create a fail-closed error without exposing a path or file contents."""
+
+    code = reason if reason in _PROXY_FILE_ERROR_CODES else "unknown"
+    diagnostic = f"proxy_file:{code}"
+    logger.error("yt-dlp proxy secret file is unusable (%s)", code)
+    return YtDlpError(
+        operation="configure YouTube download proxy",
+        kind=YtDlpFailureKind.CONFIGURATION,
+        public_message=(
+            "The YouTube download proxy is unavailable. Contact an administrator."
+        ),
+        diagnostic=diagnostic,
+        returncode=None,
+    )
+
+
+def _proxy_from_secret_file(source: Mapping[str, str]) -> tuple[str, ...]:
+    """Read one private proxy URL, fresh for each logical yt-dlp operation."""
+
+    if "YTDLP_PROXY_FILE" in source:
+        raw_path = source.get("YTDLP_PROXY_FILE", "")
+        if not raw_path.strip():
+            return ()
+    else:
+        raw_path = DEFAULT_PROXY_FILE
+    path = Path(raw_path.strip())
+
+    try:
+        file_info = path.lstat()
+    except FileNotFoundError:
+        return ()
+    except OSError as exc:
+        raise _proxy_configuration_error("stat_failed") from exc
+
+    if stat.S_ISLNK(file_info.st_mode):
+        raise _proxy_configuration_error("symlink")
+    if not stat.S_ISREG(file_info.st_mode):
+        raise _proxy_configuration_error("not_regular_file")
+    if os.name != "nt" and stat.S_IMODE(file_info.st_mode) & 0o077:
+        raise _proxy_configuration_error("insecure_permissions")
+
+    try:
+        with path.open("rb") as handle:
+            opened_info = os.fstat(handle.fileno())
+            if (
+                not stat.S_ISREG(opened_info.st_mode)
+                or opened_info.st_dev != file_info.st_dev
+                or opened_info.st_ino != file_info.st_ino
+            ):
+                raise _proxy_configuration_error("changed_during_read")
+            raw = handle.read(MAX_PROXY_FILE_BYTES + 1)
+    except FileNotFoundError as exc:
+        raise _proxy_configuration_error("changed_during_read") from exc
+    except OSError as exc:
+        raise _proxy_configuration_error("read_failed") from exc
+
+    if len(raw) > MAX_PROXY_FILE_BYTES:
+        raise _proxy_configuration_error("too_large")
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise _proxy_configuration_error("invalid_encoding") from exc
+
+    if decoded.endswith("\r\n"):
+        proxy = decoded[:-2]
+    elif decoded.endswith("\n"):
+        proxy = decoded[:-1]
+    else:
+        proxy = decoded
+    if (
+        not proxy
+        or proxy != proxy.strip()
+        or not is_valid_proxy_url(proxy)
+    ):
+        raise _proxy_configuration_error("invalid_format")
+    return (proxy,)
+
+
 def configured_proxies(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
-    """Return configured proxy URLs, with the pool taking precedence.
+    """Return proxy routes in env-pool, env-URL, private-file precedence.
 
     Pool order is preserved and blank/duplicate entries are discarded.  Both
-    commas and line breaks are accepted so multiline secret values work too.
+    commas and line breaks are accepted so multiline environment secrets work.
+    The private file is consulted only when neither environment route is set.
     """
 
     source = os.environ if env is None else env
@@ -94,7 +263,9 @@ def configured_proxies(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
         return pool
 
     single = source.get("YTDLP_PROXY_URL", "").strip()
-    return (single,) if single else ()
+    if single:
+        return (single,)
+    return _proxy_from_secret_file(source)
 
 
 def _proxy_routes(env: Mapping[str, str] | None = None) -> tuple[str | None, ...]:
@@ -260,6 +431,9 @@ def _public_message(kind: YtDlpFailureKind, operation: str) -> str:
         YtDlpFailureKind.NETWORK: (
             "Could not reach YouTube through the configured download route. "
             "Please try again."
+        ),
+        YtDlpFailureKind.CONFIGURATION: (
+            "The YouTube download proxy is unavailable. Contact an administrator."
         ),
         YtDlpFailureKind.INVALID_RESPONSE: (
             "YouTube returned incomplete video information. Please try again."

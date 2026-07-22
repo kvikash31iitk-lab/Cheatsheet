@@ -75,7 +75,10 @@ See `.env.example`. Key knobs:
 | `DAILY_CAP_BOOKS` | `0` | 0 = unlimited |
 | `YTDLP_PROXY_URL` | (empty) | Authenticated production egress proxy used when YouTube blocks the VPS IP. URL-encode reserved characters in credentials. |
 | `YTDLP_PROXY_POOL` | (empty) | Optional comma-separated proxy failover pool; takes precedence over `YTDLP_PROXY_URL`. |
+| `YTDLP_PROXY_FILE` | `/home/botuser/.config/cheetsheet/ytdlp_proxy_url` | Private mode-0600 fallback containing one proxy URL. The admin UI can save/remove it when the environment proxy settings are empty. |
 | `YT_COOKIES_PATH` | `/home/botuser/cookies.txt` | Netscape cookies file used only for videos that genuinely require sign-in. Cookies do not bypass an IP-level HTTP 429 block. |
+
+Proxy precedence is `YTDLP_PROXY_POOL`, then `YTDLP_PROXY_URL`, then `YTDLP_PROXY_FILE`. Environment-managed proxies cannot be replaced from the admin UI, and the stored file URL is never returned by the API.
 
 ## Project layout
 

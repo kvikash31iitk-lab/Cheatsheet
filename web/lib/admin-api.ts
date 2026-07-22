@@ -211,6 +211,11 @@ export type AdminCookiesStatus =
       youtube_cookie_count: number;
     };
 
+export type AdminYoutubeProxyStatus = {
+  proxy_configured: boolean;
+  proxy_source: 'environment' | 'admin' | 'none';
+};
+
 export type AdminYoutubeProbe = {
   ok: true;
   video_id: string;
@@ -273,6 +278,15 @@ export const adminApi = {
       method: 'POST',
       json: { cookies_txt },
     }),
+  youtubeProxyStatus: () =>
+    req<AdminYoutubeProxyStatus>('/api/admin/youtube/proxy'),
+  saveYoutubeProxy: (proxy_url: string) =>
+    req<AdminYoutubeProxyStatus>('/api/admin/youtube/proxy', {
+      method: 'PUT',
+      json: { proxy_url },
+    }),
+  removeYoutubeProxy: () =>
+    req<AdminYoutubeProxyStatus>('/api/admin/youtube/proxy', { method: 'DELETE' }),
   probeYoutube: (url: string) =>
     req<AdminYoutubeProbe>('/api/admin/youtube/probe', {
       method: 'POST',

@@ -33,6 +33,14 @@ from api.cookie_files import (
 )
 from api.db import get_session
 from api.deps import is_admin_email, require_admin
+from api.proxy_config import (
+    ProxyConfigurationError,
+    ProxyFileManagementDisabled,
+    ProxyManagedByEnvironment,
+    managed_proxy_status,
+    remove_managed_proxy,
+    save_managed_proxy,
+)
 from api.youtube_urls import validate_public_youtube_url
 from api.models import (
     AppSetting,
@@ -743,10 +751,7 @@ async def cookies_status(
     admin: User = Depends(require_admin),
 ) -> dict[str, Any]:
     target = _cookies_target()
-    proxy_configured = bool(
-        os.environ.get("YTDLP_PROXY_POOL", "").strip()
-        or os.environ.get("YTDLP_PROXY_URL", "").strip()
-    )
+    proxy_configured = managed_proxy_status()["proxy_configured"]
     if not target.exists():
         return {"exists": False, "proxy_configured": proxy_configured}
     try:
@@ -788,6 +793,60 @@ class YouTubeProbeRequest(BaseModel):
     url: str = Field(..., min_length=20, max_length=2048)
 
 
+class YouTubeProxyUpdate(BaseModel):
+    # Manual validation prevents FastAPI/Pydantic from echoing the secret in a
+    # length or pattern validation error.
+    proxy_url: str
+
+
+@router.get("/youtube/proxy")
+async def youtube_proxy_status(
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    return managed_proxy_status()
+
+
+@router.put("/youtube/proxy")
+async def update_youtube_proxy(
+    req: YouTubeProxyUpdate,
+    s: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    try:
+        status = save_managed_proxy(req.proxy_url)
+    except (ProxyManagedByEnvironment, ProxyFileManagementDisabled) as exc:
+        raise HTTPException(409, str(exc)) from None
+    except ProxyConfigurationError as exc:
+        raise HTTPException(400, str(exc)) from None
+    except OSError:
+        raise HTTPException(
+            500, "Could not store proxy configuration securely"
+        ) from None
+
+    await _audit(s, admin, "youtube_proxy.save", "youtube_proxy")
+    await s.commit()
+    return status
+
+
+@router.delete("/youtube/proxy")
+async def delete_youtube_proxy(
+    s: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    try:
+        status = remove_managed_proxy()
+    except ProxyManagedByEnvironment as exc:
+        raise HTTPException(409, str(exc)) from None
+    except OSError:
+        raise HTTPException(
+            500, "Could not remove proxy configuration"
+        ) from None
+
+    await _audit(s, admin, "youtube_proxy.remove", "youtube_proxy")
+    await s.commit()
+    return status
+
+
 @router.post("/youtube/probe")
 async def youtube_probe(
     req: YouTubeProbeRequest,
@@ -819,6 +878,7 @@ async def youtube_probe(
         "duration_seconds": metadata["duration"],
         "proxy_configured": bool(configured_proxies()),
     }
+
 
 # --- broadcasts ------------------------------------------------------------
 

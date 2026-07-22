@@ -58,10 +58,13 @@ fi
 sudo -u "$BOT_USER" "$DENO_BIN" --version
 
 # Never print proxy values: authenticated URLs contain credentials.
-if [[ -f "$INSTALL_DIR/.env" ]] && grep -Eq '^YTDLP_PROXY_(URL|POOL)=.+' "$INSTALL_DIR/.env"; then
+MANAGED_PROXY_FILE="/home/$BOT_USER/.config/cheetsheet/ytdlp_proxy_url"
+if { [[ -f "$INSTALL_DIR/.env" ]] && grep -Eq '^YTDLP_PROXY_(URL|POOL)=.+' "$INSTALL_DIR/.env"; } \
+  || [[ -s "$MANAGED_PROXY_FILE" ]]; then
   echo "==> YouTube egress proxy: configured"
 else
-  echo "WARN: YouTube egress proxy is not configured; datacenter-IP blocks may persist" >&2
+  echo "WARN: YouTube egress proxy is not configured; datacenter-IP blocks may persist." >&2
+  echo "      Set YTDLP_PROXY_URL/POOL or configure it in Admin > yt-dlp cookies & storage." >&2
 fi
 
 
