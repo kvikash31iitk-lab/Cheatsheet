@@ -97,6 +97,13 @@ export function friendlyGenerationError(error: unknown): string {
 
   if (
     lower.includes('members-only') ||
+    lower.includes('members only')
+  ) {
+    return 'This video is members-only. The YouTube account in the uploaded cookies must be a paid member of this channel. Refresh the cookies only if that account has access.';
+  }
+
+  if (
+    lower.includes('members-only') ||
     lower.includes('members only') ||
     lower.includes('age-restricted') ||
     lower.includes('age restricted') ||

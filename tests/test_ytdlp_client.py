@@ -138,6 +138,85 @@ class YtDlpClientTests(unittest.TestCase):
         )
 
     @patch("scripts.ytdlp_client.subprocess.run")
+    def test_members_only_failure_has_precise_safe_message(self, run_mock):
+        run_mock.return_value = completed(
+            1,
+            stderr=(
+                "ERROR: [youtube] BeP_edbTOqk: Join this channel to get access "
+                "to members-only content like this video"
+            ),
+        )
+
+        with self.assertRaises(ytdlp_client.YtDlpError) as raised:
+            ytdlp_client.run_ytdlp(
+                ["URL"], operation="read video information", env=self.env()
+            )
+
+        self.assertEqual(
+            raised.exception.kind,
+            ytdlp_client.YtDlpFailureKind.MEMBERS_ONLY,
+        )
+        self.assertIn("paid member", raised.exception.public_message)
+        self.assertIn(
+            "Refresh the cookies only if that account has access",
+            raised.exception.public_message,
+        )
+        self.assertNotIn("BeP_edbTOqk", raised.exception.public_message)
+
+    @patch("scripts.ytdlp_client.subprocess.run")
+    def test_members_only_failure_retries_same_route_with_cookies(self, run_mock):
+        member_error = completed(
+            1,
+            stderr=(
+                "ERROR: This is members-only content. "
+                "Join this channel to get access"
+            ),
+        )
+        run_mock.side_effect = [member_error, member_error]
+        with tempfile.TemporaryDirectory() as directory:
+            cookies = Path(directory) / "cookies.txt"
+            cookies.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            env = self.env(
+                YTDLP_PROXY_URL="http://one:8000",
+                YT_COOKIES_PATH=str(cookies),
+            )
+
+            with self.assertRaises(ytdlp_client.YtDlpError) as raised:
+                ytdlp_client.run_ytdlp(
+                    ["URL"], operation="read video information", env=env
+                )
+
+        self.assertEqual(run_mock.call_count, 2)
+        first, second = [call.args[0] for call in run_mock.call_args_list]
+        self.assertNotIn("--cookies", first)
+        self.assertEqual(second[second.index("--cookies") + 1], str(cookies))
+        self.assertEqual(
+            raised.exception.kind,
+            ytdlp_client.YtDlpFailureKind.MEMBERS_ONLY,
+        )
+
+    def test_bot_challenge_takes_precedence_over_members_only_text(self):
+        kind = ytdlp_client._classify_failure(
+            "Sign in to confirm you're not a bot; members-only content"
+        )
+
+        self.assertEqual(kind, ytdlp_client.YtDlpFailureKind.RATE_LIMITED)
+    def test_common_members_only_wording_is_classified(self):
+        diagnostics = (
+            "This is member-only content",
+            "This video is available to this channel's members",
+            "Your account needs the required membership level",
+        )
+
+        for diagnostic in diagnostics:
+            with self.subTest(diagnostic=diagnostic):
+                self.assertEqual(
+                    ytdlp_client._classify_failure(diagnostic),
+                    ytdlp_client.YtDlpFailureKind.MEMBERS_ONLY,
+                )
+
+
+    @patch("scripts.ytdlp_client.subprocess.run")
     def test_cookie_retry_rate_limit_can_fail_over_but_next_route_is_anonymous(
         self, run_mock
     ):

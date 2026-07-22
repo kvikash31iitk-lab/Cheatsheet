@@ -45,6 +45,7 @@ class YtDlpFailureKind(str, Enum):
     """Stable failure categories callers may use without parsing yt-dlp text."""
 
     AUTH_REQUIRED = "auth_required"
+    MEMBERS_ONLY = "members_only"
     RATE_LIMITED = "rate_limited"
     UNAVAILABLE = "unavailable"
     GEO_RESTRICTED = "geo_restricted"
@@ -357,13 +358,29 @@ def _classify_failure(output: str) -> YtDlpFailureKind:
     if any(
         marker in message
         for marker in (
+            "members-only content",
+            "members only content",
+            "members-only video",
+            "members only video",
+            "join this channel to get access",
+            "available to channel members",
+            "member-only",
+            "member only",
+            "available to this channel's members",
+            "available to this channel?s members",
+            "membership level",
+        )
+    ):
+        return YtDlpFailureKind.MEMBERS_ONLY
+
+    if any(
+        marker in message
+        for marker in (
             "login required",
             "requires authentication",
             "use --cookies-from-browser or --cookies",
             "cookies for the authentication",
             "this video is private",
-            "members-only content",
-            "members only content",
             "confirm your age",
             "age-restricted",
         )
@@ -417,6 +434,11 @@ def _public_message(kind: YtDlpFailureKind, operation: str) -> str:
         YtDlpFailureKind.AUTH_REQUIRED: (
             "YouTube requires sign-in for this video. Refresh the YouTube "
             "cookies and try again."
+        ),
+        YtDlpFailureKind.MEMBERS_ONLY: (
+            "This YouTube video is members-only. The configured YouTube account "
+            "must be a paid member of this channel. Refresh the cookies only if "
+            "that account has access."
         ),
         YtDlpFailureKind.RATE_LIMITED: (
             "YouTube is temporarily rate-limiting this download route. "
@@ -562,7 +584,10 @@ def run_ytdlp(
 
         diagnostic = _diagnostic(process, proxy)
         kind = _classify_failure(diagnostic)
-        if kind is YtDlpFailureKind.AUTH_REQUIRED and cookies is not None:
+        if kind in {
+            YtDlpFailureKind.AUTH_REQUIRED,
+            YtDlpFailureKind.MEMBERS_ONLY,
+        } and cookies is not None:
             logger.warning(
                 "Anonymous yt-dlp %s requires authentication; retrying with "
                 "configured cookies. Full anonymous diagnostic:\n%s",
