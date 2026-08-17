@@ -165,6 +165,7 @@ def _calc_cost_paise_for(
 # tracker on /admin/generations — not the user's billing (that's the slab rate).
 # USD→INR conversion baked at ~₹85/USD; tweak if FX moves materially.
 LLM_RATES_PAISE_PER_MTOK = {
+    "codex_cli":   {"in": 0, "out": 0},          # ChatGPT/Codex subscription
     "claude_code": {"in": 0, "out": 0},          # subsidized by Max subscription
     "groq":        {"in": 0, "out": 0},          # free tier
     "openai":      {"in": 1275, "out": 5100},    # gpt-4o-mini @ $0.15 / $0.60

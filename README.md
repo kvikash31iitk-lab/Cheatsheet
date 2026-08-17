@@ -127,7 +127,7 @@ See `.env.example`. Key knobs:
 
 | Variable | Default | Note |
 |---|---|---|
-| `AUTHORING_PROVIDER` | `claude_code` | Or `ollama`/`groq`/`openai`/`anthropic`. `ollama` is fully local; `claude_code` uses your Max sub via the headless CLI. |
+| `AUTHORING_PROVIDER` | `claude_code` | Or `codex_cli`/`ollama`/`groq`/`openai`/`anthropic`. `codex_cli` and `claude_code` use signed-in CLIs; both can fall back to Groq for expired CLI auth. |
 | `AUTHORING_MODEL` | provider-specific | Use `qwen2.5:7b` with the local Ollama provider. |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Local Ollama API endpoint. |
 | `WHISPER_BACKEND` | `groq` | Free-tier Whisper. Falls back to queuing on rate limits. |

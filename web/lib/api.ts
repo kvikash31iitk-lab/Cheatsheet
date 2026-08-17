@@ -152,6 +152,15 @@ export function friendlyGenerationError(error: unknown): string {
     return 'Enter a valid YouTube video link and try again.';
   }
 
+  if (
+    lower.includes('authoring_provider') ||
+    lower.includes('notimplementederror') ||
+    lower.includes('authoring failed') ||
+    lower.includes('cli login or quota')
+  ) {
+    return 'The writing service is temporarily unavailable. Please retry shortly.';
+  }
+
   // Keep short application messages (billing, maintenance, limits, etc.),
   // but never fill the UI with downloader diagnostics or stack traces.
   if (

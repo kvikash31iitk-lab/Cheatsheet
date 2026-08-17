@@ -209,6 +209,7 @@ export default function AdminSettingsPage() {
               )
             }
           >
+            <option value="codex_cli">codex_cli (ChatGPT/Codex sign-in)</option>
             <option value="claude_code">claude_code (Max sub)</option>
             <option value="groq">groq (free, lossy)</option>
             <option value="openai">openai (paid)</option>

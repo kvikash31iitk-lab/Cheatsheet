@@ -20,7 +20,7 @@ from typing import Optional, Callable
 
 from .config import (AUTHORING_MODEL, AUTHORING_PROVIDER, GROQ_API_KEY,
                      ANTHROPIC_API_KEY, OPENAI_API_KEY, CLAUDE_CODE_BIN,
-                     OLLAMA_BASE_URL)
+                     CODEX_CLI_BIN, OLLAMA_BASE_URL)
 
 ProgressFn = Optional[Callable[[str], None]]
 
@@ -503,6 +503,10 @@ class ClaudeCodeUnrecoverableError(RuntimeError):
 ClaudeCodeAuthError = ClaudeCodeUnrecoverableError
 
 
+class CodexCliUnrecoverableError(RuntimeError):
+    """Codex CLI cannot recover without sign-in or a quota reset."""
+
+
 def _should_fallback_from_claude(stdout: str, stderr: str) -> bool:
     """Heuristic: does this CLI failure look like a 'won't recover in 11 min'
     error, where retrying with backoff is hopeless and we should fail fast +
@@ -526,6 +530,11 @@ def _should_fallback_from_claude(stdout: str, stderr: str) -> bool:
         ("401" in blob and ("authenticate" in blob or "credentials" in blob))
         or "invalid_api_key" in blob
         or "invalid authentication" in blob
+        or "invalid refresh token" in blob
+        or "access token could not be refreshed" in blob
+        or "authentication token is expired" in blob
+        or "token_expired" in blob
+        or "log out and sign in again" in blob
     ):
         return True
     # Quota / usage-cap failures. The Max plan's message is very stable:
@@ -621,6 +630,117 @@ def _author_claude_code(system: str, user: str, *, max_tokens: int = 8000,
                        f"Last error: {last_msg}")
 
 
+def _author_codex_cli(system: str, user: str, *, max_tokens: int = 8000,
+                      cost_sink: Optional[dict] = None) -> str:
+    """Invoke Codex CLI non-interactively and capture only its final message.
+
+    The transcript is untrusted input, so Codex runs in a fresh temporary
+    directory with a read-only sandbox and no project instructions. The child
+    environment intentionally omits application/API secrets; HOME and
+    CODEX_HOME remain available only so the CLI can use its own login.
+    """
+    import os
+    import subprocess
+    import tempfile
+
+    del max_tokens  # Codex CLI owns its completion budget.
+    full_prompt = (
+        "Return only the requested Markdown document. Do not inspect files, "
+        "run commands, or discuss your process.\n\n"
+        f"{system}\n\n---\n\n{user}"
+    )
+    child_env = {
+        key: value
+        for key in (
+            "HOME",
+            "PATH",
+            "LANG",
+            "LC_ALL",
+            "TERM",
+            "CODEX_HOME",
+            "SSL_CERT_FILE",
+        )
+        if (value := os.environ.get(key))
+    }
+    last_msg = ""
+
+    for attempt in range(1, 3):
+        with tempfile.TemporaryDirectory(prefix="cheetsheet-codex-") as temp_dir:
+            output_path = Path(temp_dir) / "last-message.md"
+            cmd = [
+                CODEX_CLI_BIN,
+                "exec",
+                "--ephemeral",
+                "--ignore-rules",
+                "--sandbox",
+                "read-only",
+                "--skip-git-repo-check",
+                "--color",
+                "never",
+                "-C",
+                temp_dir,
+                "-o",
+                str(output_path),
+                "-",
+            ]
+            try:
+                res = subprocess.run(
+                    cmd,
+                    input=full_prompt,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=900,
+                    env=child_env,
+                )
+                stdout = (res.stdout or "").strip()
+                stderr = (res.stderr or "").strip()
+                text = (
+                    output_path.read_text(encoding="utf-8", errors="replace").strip()
+                    if output_path.exists()
+                    else ""
+                )
+                if res.returncode == 0 and text:
+                    if cost_sink is not None:
+                        cost_sink["tokens_in"] = (
+                            cost_sink.get("tokens_in", 0) + est_tokens(full_prompt)
+                        )
+                        cost_sink["tokens_out"] = (
+                            cost_sink.get("tokens_out", 0) + est_tokens(text)
+                        )
+                    return _strip_reasoning(text)
+                if _should_fallback_from_claude(stdout, stderr):
+                    raise CodexCliUnrecoverableError(
+                        "Codex CLI login or quota is unavailable"
+                    )
+                last_msg = (
+                    f"exit={res.returncode} stdout={stdout[:240]!r} "
+                    f"stderr={stderr[:240]!r}"
+                )
+            except CodexCliUnrecoverableError:
+                raise
+            except FileNotFoundError as exc:
+                raise CodexCliUnrecoverableError(
+                    f"Codex CLI executable was not found: {exc}"
+                ) from exc
+            except subprocess.TimeoutExpired:
+                last_msg = "timed out after 900s"
+            except Exception as exc:
+                last_msg = f"{type(exc).__name__}: {exc}"
+
+        print(
+            f"[author] codex CLI attempt {attempt}/2 failed: {last_msg}",
+            flush=True,
+        )
+        if attempt < 2:
+            time.sleep(30)
+
+    raise RuntimeError(
+        f"Codex CLI authoring failed after 2 attempts. Last error: {last_msg}"
+    )
+
+
 def _author(system: str, user: str, *, max_tokens: int = 8000,
             cost_sink: Optional[dict] = None) -> str:
     """Dispatch to the configured authoring provider.
@@ -643,6 +763,24 @@ def _author(system: str, user: str, *, max_tokens: int = 8000,
         return _author_ollama(
             system, user, max_tokens=max_tokens, cost_sink=cost_sink
         )
+    if AUTHORING_PROVIDER == "codex_cli":
+        try:
+            return _author_codex_cli(
+                system, user, max_tokens=max_tokens, cost_sink=cost_sink
+            )
+        except CodexCliUnrecoverableError as exc:
+            if GROQ_API_KEY:
+                print(
+                    f"[author] codex CLI unavailable; falling back to groq: {exc}",
+                    flush=True,
+                )
+                if cost_sink is not None:
+                    cost_sink["fallback_used"] = "groq"
+                    cost_sink["fallback_reason"] = "codex_cli_unrecoverable"
+                return _author_groq(
+                    system, user, max_tokens=max_tokens, cost_sink=cost_sink
+                )
+            raise
     if AUTHORING_PROVIDER == "claude_code":
         try:
             return _author_claude_code(
@@ -663,7 +801,7 @@ def _author(system: str, user: str, *, max_tokens: int = 8000,
             raise  # no GROQ_API_KEY configured — let the error bubble
     raise NotImplementedError(
         f"AUTHORING_PROVIDER={AUTHORING_PROVIDER!r} not wired yet — switch to "
-        "'ollama' / 'groq' / 'claude_code' or extend bot/author.py"
+        "'ollama' / 'groq' / 'codex_cli' / 'claude_code' or extend bot/author.py"
     )
 
 

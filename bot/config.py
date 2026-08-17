@@ -75,6 +75,7 @@ OLLAMA_BASE_URL = os.environ.get(
 ).strip().rstrip("/")
 # Path to Claude Code binary. Empty = "claude" on PATH (Linux VPS default).
 CLAUDE_CODE_BIN = os.environ.get("CLAUDE_CODE_BIN", "").strip() or "claude"
+CODEX_CLI_BIN = os.environ.get("CODEX_CLI_BIN", "").strip() or "codex"
 
 # === paths ===================================================================
 CACHE_ROOT = PROJECT_ROOT / "cache"

@@ -118,7 +118,7 @@ ExecStart=$INSTALL_DIR/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1
 Restart=on-failure
 RestartSec=10
 $ENV_FILE_DIRECTIVE
-Environment=PATH=$INSTALL_DIR/.venv/bin:/home/$BOT_USER/.npm-global/bin:/home/$BOT_USER/.deno/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PATH=$INSTALL_DIR/.venv/bin:/home/$BOT_USER/.local/bin:/home/$BOT_USER/.npm-global/bin:/home/$BOT_USER/.deno/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=YT_COOKIES_PATH=/home/$BOT_USER/cookies.txt
 StandardOutput=journal
 StandardError=journal
