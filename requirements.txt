@@ -7,6 +7,9 @@ groq>=0.11.0
 # HTTPX SOCKS transport for authoring through a private relay when the VPS
 # egress IP is blocked by the provider.
 socksio>=1.0.0,<2
+# requests/youtube-transcript-api also inherits the VPS SOCKS proxy. Without
+# this adapter it raises InvalidSchema before making the caption request.
+PySocks>=1.7.1,<2
 
 # Transcription / video pipeline
 yt-dlp[default]>=2026.6.9
