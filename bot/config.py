@@ -70,6 +70,14 @@ _DEFAULT_AUTHORING_MODEL = (
 AUTHORING_MODEL = os.environ.get(
     "AUTHORING_MODEL", _DEFAULT_AUTHORING_MODEL
 ).strip()
+GROQ_FALLBACK_MODELS = tuple(
+    model.strip()
+    for model in os.environ.get(
+        "GROQ_FALLBACK_MODELS",
+        "qwen/qwen3.6-27b,openai/gpt-oss-20b",
+    ).split(",")
+    if model.strip()
+)
 OLLAMA_BASE_URL = os.environ.get(
     "OLLAMA_BASE_URL", "http://127.0.0.1:11434"
 ).strip().rstrip("/")

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional, Callable
 
 from .config import (AUTHORING_MODEL, AUTHORING_PROVIDER, GROQ_API_KEY,
+                     GROQ_FALLBACK_MODELS,
                      ANTHROPIC_API_KEY, OPENAI_API_KEY, CLAUDE_CODE_BIN,
                      CODEX_CLI_BIN, OLLAMA_BASE_URL)
 
@@ -383,47 +384,67 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
             f"{TPM_LIMIT_TOKENS}-token request ceiling"
         )
     request_max_tokens = min(max_tokens, available_out)
-    model_options = {}
-    if AUTHORING_MODEL.startswith("qwen/"):
-        # Qwen defaults to visible reasoning in <think> tags. It can consume
-        # the full completion budget without producing the requested document.
-        model_options = {
-            "reasoning_effort": "none",
-            "reasoning_format": "hidden",
-        }
-
     from groq import Groq
     client = Groq(api_key=GROQ_API_KEY)
     last_err = None
-    for attempt in range(1, 4):
-        try:
-            resp = client.chat.completions.create(
-                model=AUTHORING_MODEL,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=0.3,
-                max_tokens=request_max_tokens,
-                **model_options,
-            )
-            text = _strip_reasoning(resp.choices[0].message.content or "")
-            if not text:
-                raise RuntimeError("Groq returned an empty authoring response")
-            if cost_sink is not None and getattr(resp, "usage", None):
-                cost_sink["tokens_in"] = (
-                    cost_sink.get("tokens_in", 0) + int(resp.usage.prompt_tokens or 0)
+    models = list(dict.fromkeys((AUTHORING_MODEL, *GROQ_FALLBACK_MODELS)))
+    for model in models:
+        model_options = {}
+        if model.startswith("qwen/"):
+            # Qwen defaults to visible reasoning in <think> tags. It can
+            # consume the completion budget without the requested document.
+            model_options = {
+                "reasoning_effort": "none",
+                "reasoning_format": "hidden",
+            }
+        for attempt in range(1, 4):
+            try:
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=0.3,
+                    max_tokens=request_max_tokens,
+                    **model_options,
                 )
-                cost_sink["tokens_out"] = (
-                    cost_sink.get("tokens_out", 0)
-                    + int(resp.usage.completion_tokens or 0)
+                text = _strip_reasoning(resp.choices[0].message.content or "")
+                if not text:
+                    raise RuntimeError("Groq returned an empty authoring response")
+                if cost_sink is not None:
+                    cost_sink["authoring_model"] = model
+                    if getattr(resp, "usage", None):
+                        cost_sink["tokens_in"] = (
+                            cost_sink.get("tokens_in", 0)
+                            + int(resp.usage.prompt_tokens or 0)
+                        )
+                        cost_sink["tokens_out"] = (
+                            cost_sink.get("tokens_out", 0)
+                            + int(resp.usage.completion_tokens or 0)
+                        )
+                return text
+            except Exception as exc:
+                last_err = exc
+                error_text = str(exc).casefold()
+                if (
+                    "model_not_found" in error_text
+                    or "does not exist" in error_text
+                    or "do not have access" in error_text
+                ):
+                    print(
+                        f"[author] groq model {model!r} unavailable; "
+                        "trying the next configured model",
+                        flush=True,
+                    )
+                    break
+                wait = 10 * attempt
+                print(
+                    f"[author] groq {model} attempt {attempt}/3 failed: "
+                    f"{exc}; waiting {wait}s",
+                    flush=True,
                 )
-            return text
-        except Exception as exc:
-            last_err = exc
-            wait = 10 * attempt
-            print(f"[author] groq attempt {attempt}/3 failed: {exc}; waiting {wait}s")
-            time.sleep(wait)
+                time.sleep(wait)
     raise RuntimeError(f"Groq authoring failed after 3 attempts: {last_err}")
 
 

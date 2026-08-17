@@ -35,6 +35,31 @@ class AuthorLimitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "prompt is too large"):
             author._author_groq("system", oversized, max_tokens=1000)
 
+    @patch("bot.author.time.sleep")
+    @patch("groq.Groq")
+    def test_groq_skips_retired_model_without_backoff(self, groq_cls, sleep_mock):
+        response = MagicMock()
+        response.choices[0].message.content = "# Supported fallback"
+        response.usage = None
+        create = groq_cls.return_value.chat.completions.create
+        create.side_effect = [
+            RuntimeError("model_not_found: model does not exist"),
+            response,
+        ]
+
+        with (
+            patch.object(author, "AUTHORING_MODEL", "retired-model"),
+            patch.object(author, "GROQ_FALLBACK_MODELS", ("qwen/qwen3.6-27b",)),
+        ):
+            result = author._author_groq("system", "user", max_tokens=1000)
+
+        self.assertEqual(result, "# Supported fallback")
+        self.assertEqual(
+            [call.kwargs["model"] for call in create.call_args_list],
+            ["retired-model", "qwen/qwen3.6-27b"],
+        )
+        sleep_mock.assert_not_called()
+
     @patch("urllib.request.urlopen")
     def test_ollama_authoring_uses_local_chat_api(self, urlopen):
         payload = {
