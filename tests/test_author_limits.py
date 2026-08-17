@@ -60,6 +60,40 @@ class AuthorLimitTests(unittest.TestCase):
         )
         sleep_mock.assert_not_called()
 
+    @patch("bot.author.time.sleep")
+    @patch("groq.Groq")
+    def test_groq_skips_model_when_request_exceeds_its_tpm(self, groq_cls, sleep_mock):
+        response = MagicMock()
+        response.choices[0].message.content = "# Smaller fallback"
+        response.usage = None
+        create = groq_cls.return_value.chat.completions.create
+        create.side_effect = [
+            RuntimeError("Request too large: tokens per minute limit 8000"),
+            response,
+        ]
+
+        with (
+            patch.object(author, "AUTHORING_MODEL", "qwen/qwen3.6-27b"),
+            patch.object(author, "GROQ_FALLBACK_MODELS", ("openai/gpt-oss-20b",)),
+        ):
+            result = author._author_groq("system", "user", max_tokens=1000)
+
+        self.assertEqual(result, "# Smaller fallback")
+        sleep_mock.assert_not_called()
+
+    def test_cli_provider_precondenses_when_groq_is_backstop(self):
+        with (
+            patch.object(author, "AUTHORING_PROVIDER", "codex_cli"),
+            patch.object(author, "GROQ_API_KEY", "configured"),
+        ):
+            self.assertTrue(author._needs_condensation())
+
+        with (
+            patch.object(author, "AUTHORING_PROVIDER", "codex_cli"),
+            patch.object(author, "GROQ_API_KEY", ""),
+        ):
+            self.assertFalse(author._needs_condensation())
+
     @patch("urllib.request.urlopen")
     def test_ollama_authoring_uses_local_chat_api(self, urlopen):
         payload = {

@@ -375,7 +375,11 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
     # Groq rejects a request when prompt + requested completion exceeds the
     # model's TPM ceiling, even if the model would have stopped early. Clamp
     # the completion budget against the actual prompt before entering retries.
-    prompt_tokens = est_tokens(system) + est_tokens(user) + 96
+    # Groq enforces TPM using its own tokenizer. The generic char heuristic is
+    # reasonably close for English but can undercount Hindi/mixed-script
+    # transcripts substantially. A 2x prompt safety factor keeps the requested
+    # completion inside the account's real 8K request ceiling.
+    prompt_tokens = 2 * (est_tokens(system) + est_tokens(user)) + 96
     available_out = TPM_LIMIT_TOKENS - prompt_tokens
     if available_out < 256:
         raise ValueError(
@@ -431,6 +435,8 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                     "model_not_found" in error_text
                     or "does not exist" in error_text
                     or "do not have access" in error_text
+                    or "request too large" in error_text
+                    or "tokens per minute" in error_text
                 ):
                     print(
                         f"[author] groq model {model!r} unavailable; "
@@ -828,7 +834,16 @@ def _author(system: str, user: str, *, max_tokens: int = 8000,
 
 def _needs_condensation() -> bool:
     """Return True if the active provider has tight TPM limits (forcing map-reduce)."""
-    return AUTHORING_PROVIDER in {"groq", "ollama"}
+    if AUTHORING_PROVIDER in {"groq", "ollama"}:
+        return True
+    # CLI providers can accept the full transcript, but their automatic Groq
+    # backstop cannot. Pre-condense while that fallback is configured so an
+    # expired CLI login never converts a valid transcript into an oversized
+    # emergency request.
+    return (
+        AUTHORING_PROVIDER in {"codex_cli", "claude_code"}
+        and bool(GROQ_API_KEY)
+    )
 
 
 def _cheatsheet_quality_issues(
