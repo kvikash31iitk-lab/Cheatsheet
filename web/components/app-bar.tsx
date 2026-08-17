@@ -87,6 +87,7 @@ export function AppBar() {
         </div>
       )}
       <header
+        className="app-header"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -99,6 +100,7 @@ export function AppBar() {
           <CSLogo size={18} />
         </Link>
         <nav
+          className="app-nav"
           style={{
             display: 'flex',
             gap: 16,
@@ -143,11 +145,15 @@ export function AppBar() {
                   Admin
                 </Link>
               )}
-              <span style={{ color: 'var(--c-line-2)' }}>·</span>
-              <Avatar src={user.image} name={user.name} />
-              <Btn variant="ghost" size="sm" onClick={() => signOut({ callbackUrl: '/' })}>
-                Sign out
-              </Btn>
+              <span className="app-session-only" style={{ color: 'var(--c-line-2)' }}>·</span>
+              <span className="app-session-only" style={{ display: 'inline-flex' }}>
+                <Avatar src={user.image} name={user.name} />
+              </span>
+              <span className="app-session-only">
+                <Btn variant="ghost" size="sm" onClick={() => signOut({ callbackUrl: '/' })}>
+                  Sign out
+                </Btn>
+              </span>
             </>
           ) : (
             <>
@@ -163,6 +169,27 @@ export function AppBar() {
           )}
         </nav>
       </header>
+      <style jsx>{`
+        @media (max-width: 720px) {
+          .app-header {
+            align-items: flex-start !important;
+            flex-direction: column;
+            gap: 13px;
+            padding: 15px 18px !important;
+          }
+
+          .app-nav {
+            width: 100%;
+            gap: 12px !important;
+            font-size: 12px !important;
+            flex-wrap: wrap;
+          }
+
+          .app-session-only {
+            display: none !important;
+          }
+        }
+      `}</style>
     </>
   );
 }
