@@ -178,6 +178,18 @@ export async function createJob(
   return r.json();
 }
 
+export async function createNewEngineJob(url: string): Promise<{ id: string }> {
+  const r = await fetch('/api/new/generate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  if (!r.ok) {
+    throw new Error(await apiErrorMessage(r, 'Could not start the new engine.'));
+  }
+  return r.json();
+}
+
 export async function getJob(id: string): Promise<Job> {
   const r = await fetch(`/api/jobs/${id}`);
   if (!r.ok) throw new Error(await apiErrorMessage(r, 'Could not load generation.'));

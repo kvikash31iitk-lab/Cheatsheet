@@ -1,12 +1,12 @@
 """Render a compact 2-3 page cheat-sheet PDF from a markdown source.
 
-A stripped-down sibling of build_illustrated_book.py — same callout/markdown
+A stripped-down sibling of build_illustrated_book.py â€” same callout/markdown
 parser, same palette, but:
   - No cover page. Title sits inline at the top of page 1.
   - No automatic page break on h2; sections flow.
   - Tighter margins, smaller body font, denser leading.
   - Image references are silently skipped (this format is text-only).
-  - Page header / footer omitted to maximise content area.
+  - Subtle page header / footer retained for a professional finished look.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from pathlib import Path
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 from reportlab.lib import colors
 from reportlab.platypus import (
     BaseDocTemplate, PageTemplate, Frame, Paragraph, Spacer, PageBreak,
@@ -38,10 +38,10 @@ TITLE = "Agentic AI Workflows with Claude Code - Cheat Sheet"
 # ============================================================================
 
 PAGE_W, PAGE_H = A4
-MARGIN_L = 1.4 * cm
-MARGIN_R = 1.4 * cm
-MARGIN_T = 1.2 * cm
-MARGIN_B = 1.2 * cm
+MARGIN_L = 1.6 * cm
+MARGIN_R = 1.6 * cm
+MARGIN_T = 1.4 * cm
+MARGIN_B = 1.35 * cm
 BODY_W = PAGE_W - MARGIN_L - MARGIN_R
 
 INK = colors.HexColor("#1A1F36")
@@ -49,6 +49,7 @@ ACCENT = colors.HexColor("#3A6EA5")
 HIGHLIGHT = colors.HexColor("#D97706")
 MUTED = colors.HexColor("#5A6172")
 RULE = colors.HexColor("#D5DAE0")
+PAGE_RULE = colors.HexColor("#DCE3EB")
 
 CALLOUTS = {
     "def":     {"label": "DEF",  "bar": colors.HexColor("#3A6EA5"), "tint": colors.HexColor("#EAF1F8")},
@@ -67,39 +68,71 @@ CALLOUTS = {
 ss = getSampleStyleSheet()
 
 DOC_TITLE = ParagraphStyle("DocTitle", parent=ss["Title"], fontName="Helvetica-Bold",
-                           fontSize=15, leading=18, alignment=TA_LEFT,
-                           textColor=INK, spaceAfter=2)
+                           fontSize=16.2, leading=19, alignment=TA_LEFT,
+                           textColor=INK, spaceAfter=3, keepWithNext=1)
 DOC_SUB = ParagraphStyle("DocSub", parent=ss["Normal"], fontName="Helvetica-Oblique",
-                         fontSize=8.5, leading=11, textColor=MUTED, spaceAfter=8)
+                         fontSize=9.5, leading=12, textColor=MUTED, spaceAfter=7)
 
 H1 = ParagraphStyle("H1", parent=ss["Heading1"], fontName="Helvetica-Bold",
-                    fontSize=12, leading=15, textColor=ACCENT,
-                    spaceBefore=8, spaceAfter=3, keepWithNext=1,
-                    borderPadding=(0, 0, 2, 0), borderColor=ACCENT,
-                    borderWidth=0)
+                    fontSize=12.8, leading=16, textColor=ACCENT,
+                    spaceBefore=12, spaceAfter=4, keepWithNext=1,
+                    leftIndent=0, borderPadding=(0, 0, 2, 0),
+                    borderColor=ACCENT, borderWidth=0)
 H2 = ParagraphStyle("H2", parent=ss["Heading2"], fontName="Helvetica-Bold",
-                    fontSize=10, leading=13, textColor=INK,
-                    spaceBefore=4, spaceAfter=1, keepWithNext=1)
+                    fontSize=11, leading=14, textColor=INK,
+                    spaceBefore=8, spaceAfter=3, keepWithNext=1)
 
 BODY = ParagraphStyle("Body", parent=ss["BodyText"], fontName="Helvetica",
-                      fontSize=9.2, leading=12, textColor=INK,
-                      alignment=TA_JUSTIFY, spaceAfter=3,
+                      fontSize=9.8, leading=13.5, textColor=INK,
+                      alignment=TA_LEFT, spaceAfter=3.5,
                       allowOrphans=0, allowWidows=0)
 
 CO_LABEL = ParagraphStyle("CoLabel", parent=ss["Normal"], fontName="Helvetica-Bold",
-                          fontSize=7.5, leading=9, textColor=colors.white,
+                          fontSize=8, leading=9.5, textColor=colors.white,
                           spaceAfter=0, alignment=TA_LEFT)
-CO_BODY = ParagraphStyle("CoBody", parent=BODY, fontSize=9, leading=11.5,
+CO_BODY = ParagraphStyle("CoBody", parent=BODY, fontSize=9.2, leading=12.2,
                          spaceAfter=2, alignment=TA_LEFT)
 
 ACCENT_HEX = "#" + ACCENT.hexval()[2:]
 HIGHLIGHT_HEX = "#" + HIGHLIGHT.hexval()[2:]
 
 
+def _ascii_safe(text: str) -> str:
+    """Replace common model-produced Unicode with Helvetica-safe text."""
+    replacements = {
+        "\u00a0": " ",
+        "\u202f": " ",
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2212": "-",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2026": "...",
+        "\u2190": "<-",
+        "\u2192": "->",
+        "\u2194": "<->",
+        "\u2248": "~",
+        "\u2264": "<=",
+        "\u2265": ">=",
+        "\u00d7": "x",
+        "\u00b1": "+/-",
+        "\u20b9": "Rs. ",
+    }
+    return "".join(replacements.get(char, char) for char in text)
+
+
 def inline(text: str) -> str:
+    text = _ascii_safe(text)
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     text = re.sub(r"\*\*(.+?)\*\*",
                   rf'<font color="{HIGHLIGHT_HEX}"><b>\1</b></font>', text)
+    text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)",
+                  lambda m: f'<u>{m.group(1)}</u>', text)
     text = re.sub(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])", r"<i>\1</i>", text)
     text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)
     text = re.sub(r"`([^`]+?)`",
@@ -169,7 +202,7 @@ def parse_blocks(md: str):
 
 
 # === opt-in feature support ================================================
-# Mirrors the helpers in build_illustrated_book.py — same syntax, same
+# Mirrors the helpers in build_illustrated_book.py â€” same syntax, same
 # graceful-degradation contract (missing dependencies log a warning and
 # strip the affected block instead of killing the PDF build). See
 # bot/cache.py::FEATURE_ORDER for the canonical flag list.
@@ -183,11 +216,12 @@ MERMAID_FENCE_RE = re.compile(
     re.DOTALL | re.MULTILINE,
 )
 
-# Cover-side QR + URL — set by build() when the `chapters` feature is on AND
+# Cover-side QR + URL â€” set by build() when the `chapters` feature is on AND
 # source_url was provided. The page() callback reads these as globals
 # because ReportLab's PageTemplate callback signature is fixed.
 SHOW_QR: bool = False
 SOURCE_URL: str | None = None
+DOC_RUNTIME_TITLE: str = TITLE
 
 
 def _extract_summary_block(md: str) -> tuple[str | None, str]:
@@ -198,7 +232,13 @@ def _extract_summary_block(md: str) -> tuple[str | None, str]:
     return m.group(1).strip(), md[:m.start()] + md[m.end():]
 
 
-# Puppeteer config — see build_illustrated_book.py for the rationale.
+def _strip_summary_markers(md: str) -> str:
+    """Keep summary content while removing authoring-only HTML markers."""
+
+    return SUMMARY_BLOCK_RE.sub(lambda match: match.group(1).strip(), md)
+
+
+# Puppeteer config â€” see build_illustrated_book.py for the rationale.
 _MMDC_PUPPETEER_CONFIG = Path(__file__).resolve().parent / "mmdc-puppeteer.json"
 
 
@@ -268,7 +308,7 @@ def _make_qr_image_reader(url: str, *, box: int = 6, border: int = 2):
 
 
 def make_image_flowable(alt: str, path: str) -> list:
-    """Compact image rendering for the cheatsheet — caps at half body height
+    """Compact image rendering for the cheatsheet â€” caps at half body height
     so a single mermaid diagram never eats a whole page. Missing files fall
     back to an italic placeholder line so a broken ref never blocks the PDF.
     """
@@ -298,7 +338,7 @@ def make_summary_card_compact(summary_md: str) -> list:
     """Tight summary card sized for the cheatsheet's denser layout. Same
     parsing rules as the book builder's full-size version."""
     body_style = ParagraphStyle(
-        "SumBodyC", parent=BODY, fontSize=9, leading=12,
+        "SumBodyC", parent=BODY, fontSize=9.4, leading=12.5,
         textColor=INK, spaceAfter=2, alignment=TA_LEFT,
     )
     bullet_style = ParagraphStyle(
@@ -308,7 +348,7 @@ def make_summary_card_compact(summary_md: str) -> list:
     label = Paragraph(
         "AT A GLANCE",
         ParagraphStyle("SumLabelC", parent=CO_LABEL,
-                       textColor=colors.white, fontSize=7, leading=9),
+                       textColor=colors.white, fontSize=7.5, leading=9.5),
     )
     body_flowables: list = []
     for k, p in parse_blocks(summary_md):
@@ -317,13 +357,13 @@ def make_summary_card_compact(summary_md: str) -> list:
         elif k == "ul":
             for it in p:
                 body_flowables.append(Paragraph(
-                    f'<font color="{ACCENT_HEX}"><b>&#9642;</b></font>'
-                    f'&nbsp;{inline(it)}', bullet_style))
+                    f'<font color="{ACCENT_HEX}"><b>-</b></font> '
+                    f'{inline(it)}', bullet_style))
         elif k == "ol":
             for i, it in enumerate(p, 1):
                 body_flowables.append(Paragraph(
                     f'<b><font color="{ACCENT_HEX}">{i}.</font></b>'
-                    f'&nbsp;{inline(it)}', bullet_style))
+                    f' {inline(it)}', bullet_style))
     rows = [[label]] + [[fl] for fl in body_flowables]
     card = Table(rows, colWidths=[BODY_W - 0.2 * cm])
     card.setStyle(TableStyle([
@@ -344,7 +384,11 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
     spec = CALLOUTS.get(kind, CALLOUTS["note"])
     label = spec["label"]
     if title:
-        label = f"{label} - {title}"
+        # Callout headings are labels, not rich-text bodies. Models sometimes
+        # wrap them in Markdown emphasis, which would otherwise print as raw
+        # asterisks because this label previously bypassed ``inline``.
+        clean_title = re.sub(r"[*_`]", "", title)
+        label = f"{label} - {clean_title}"
     pseudo = "\n".join(body_lines)
     body_paras = []
     for k2, p2 in parse_blocks(pseudo):
@@ -353,27 +397,28 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
         elif k2 == "ul":
             for it in p2:
                 body_paras.append(Paragraph(
-                    f'<font color="{ACCENT_HEX}"><b>&#9642;</b></font>&nbsp;{inline(it)}',
+                    f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}',
                     ParagraphStyle("co_li", parent=CO_BODY, leftIndent=10,
                                    firstLineIndent=-10, spaceAfter=1)))
         elif k2 == "ol":
             for n, it in enumerate(p2, 1):
                 body_paras.append(Paragraph(
-                    f'<b>{n}.</b>&nbsp;{inline(it)}',
+                    f'<b>{n}.</b> {inline(it)}',
                     ParagraphStyle("co_oi", parent=CO_BODY, leftIndent=14,
                                    firstLineIndent=-12, spaceAfter=1)))
 
-    inner = Table([[Paragraph(label, CO_LABEL)]] + [[p] for p in body_paras],
+    inner = Table([[Paragraph(inline(label), CO_LABEL)]] + [[p] for p in body_paras],
                   colWidths=[BODY_W - 0.3 * cm])
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), spec["bar"]),
         ("BACKGROUND", (0, 1), (-1, -1), spec["tint"]),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, 0), 2),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
-        ("TOPPADDING", (0, 1), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6.5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6.5),
+        ("TOPPADDING", (0, 0), (-1, 0), 2.5),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 2.5),
+        ("TOPPADDING", (0, 1), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 3.5),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.3, colors.white),
     ]))
     outer = Table([[inner]], colWidths=[BODY_W])
     outer.setStyle(TableStyle([
@@ -388,10 +433,10 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
 
 def make_table(header, rows):
     th = ParagraphStyle("th", parent=BODY, fontName="Helvetica-Bold",
-                        fontSize=8.5, leading=10, textColor=colors.white,
+                        fontSize=9.4, leading=11.2, textColor=colors.white,
                         alignment=TA_LEFT, spaceAfter=0)
     td = ParagraphStyle("td", parent=BODY, fontName="Helvetica",
-                        fontSize=8.5, leading=10.5, alignment=TA_LEFT, spaceAfter=0)
+                        fontSize=9.2, leading=11.5, alignment=TA_LEFT, spaceAfter=0)
     data = [[Paragraph(inline(c), th) for c in header]]
     for r in rows:
         data.append([Paragraph(inline(c), td) for c in r])
@@ -413,49 +458,95 @@ def make_table(header, rows):
 
 
 def make_ul(items):
-    bs = ParagraphStyle("Bul", parent=BODY, leading=12, alignment=TA_LEFT,
-                        spaceAfter=1.5, leftIndent=12, firstLineIndent=-10)
+    bs = ParagraphStyle("Bul", parent=BODY, leading=13.2, alignment=TA_LEFT,
+                        spaceAfter=2.2, leftIndent=12, firstLineIndent=-9)
     return [Paragraph(
-        f'<font color="{ACCENT_HEX}"><b>&#9642;</b></font>&nbsp;{inline(it)}', bs)
+        f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}', bs)
         for it in items]
 
 
 def make_ol(items):
-    ns = ParagraphStyle("Num", parent=BODY, leading=12, alignment=TA_LEFT,
-                        spaceAfter=1.5, leftIndent=14, firstLineIndent=-12)
+    ns = ParagraphStyle("Num", parent=BODY, leading=13.2, alignment=TA_LEFT,
+                        spaceAfter=2.2, leftIndent=14, firstLineIndent=-12)
     return [Paragraph(
-        f'<b><font color="{ACCENT_HEX}">{n}.</font></b>&nbsp;{inline(it)}', ns)
+        f'<b><font color="{ACCENT_HEX}">{n}.</font></b> {inline(it)}', ns)
         for n, it in enumerate(items, 1)]
 
 
-def page(canv, doc):
-    # Footer page number only — no header.
-    canv.saveState()
-    canv.setFillColor(MUTED)
-    canv.setFont("Helvetica-Oblique", 7.5)
-    canv.drawCentredString(PAGE_W / 2, 0.6 * cm, f"page {doc.page}")
+def _rule() -> Table:
+    return Table(
+        [[""]],
+        colWidths=[BODY_W],
+        style=TableStyle([
+            ("LINEABOVE", (0, 0), (-1, -1), 0.45, PAGE_RULE),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]),
+    )
 
-    # Optional QR on page 1 only (top-right corner) — opt-in via the
+
+def page(canv, doc):
+    canv.saveState()
+
+    # Header band.
+    canv.setFillColor(PAGE_RULE)
+    canv.rect(
+        MARGIN_L,
+        PAGE_H - MARGIN_T + 0.13 * cm,
+        BODY_W,
+        0.35 * cm,
+        fill=1,
+        stroke=0,
+    )
+    canv.setFillColor(ACCENT)
+    canv.setFont("Helvetica-Bold", 8)
+    canv.drawString(
+        MARGIN_L + 0.12 * cm,
+        PAGE_H - MARGIN_T + 0.26 * cm,
+        "CHEETSHEET",
+    )
+    canv.setFont("Helvetica", 7.2)
+    canv.setFillColor(MUTED)
+    canv.drawRightString(
+        PAGE_W - MARGIN_R - 0.1 * cm,
+        PAGE_H - MARGIN_T + 0.24 * cm,
+        DOC_RUNTIME_TITLE[:48],
+    )
+
+    # Footer page number + subtle divider.
+    canv.setFillColor(RULE)
+    canv.setLineWidth(0.4)
+    canv.line(MARGIN_L, 0.95 * cm, PAGE_W - MARGIN_R, 0.95 * cm)
+    canv.setFillColor(MUTED)
+    canv.setFont("Helvetica-Oblique", 7.4)
+    canv.drawString(MARGIN_L, 0.58 * cm, "Generated by cheetsheet.tech")
+    canv.drawCentredString(PAGE_W / 2, 0.58 * cm, f"Page {doc.page}")
+    if DOC_RUNTIME_TITLE:
+        canv.drawRightString(PAGE_W - MARGIN_R, 0.58 * cm, DOC_RUNTIME_TITLE[:36])
+
+    # Optional QR on page 1 only (top-right corner) â€” opt-in via the
     # `chapters` feature. The cheatsheet is short so a single QR on page 1
     # is enough; repeating it on page 2/3 would just waste space.
     if SHOW_QR and SOURCE_URL and doc.page == 1:
         qr = _make_qr_image_reader(SOURCE_URL)
         if qr is not None:
-            size = 1.5 * cm
+            size = 1.4 * cm
             x = PAGE_W - MARGIN_R - size
-            y = PAGE_H - MARGIN_T - size + 0.1 * cm
+            y = PAGE_H - MARGIN_T - size + 0.05 * cm
             canv.drawImage(qr, x, y, width=size, height=size, mask="auto")
             canv.setFillColor(MUTED)
             canv.setFont("Helvetica", 5.5)
             canv.drawCentredString(x + size / 2, y - 0.22 * cm, "source video")
     canv.restoreState()
 
-
 def render_block(kind, payload, story):
     if kind == "h1":
         story.append(Paragraph(inline(payload), DOC_TITLE)); return
     if kind == "h2":
-        story.append(Paragraph(inline(payload), H1)); return
+        story.append(Paragraph(inline(payload), H1))
+        return
     if kind in ("h3", "h4", "h5", "h6"):
         story.append(Paragraph(inline(payload), H2)); return
     if kind == "p":
@@ -470,17 +561,22 @@ def render_block(kind, payload, story):
         story.extend(make_callout(*payload)); return
     if kind == "quote":
         q = ParagraphStyle("q", parent=BODY, fontName="Helvetica-Oblique",
-                           textColor=ACCENT, leftIndent=10, rightIndent=10,
-                           spaceBefore=2, spaceAfter=4, fontSize=9)
+                           textColor=ACCENT, leftIndent=12, rightIndent=12,
+                           spaceBefore=2, spaceAfter=4, fontSize=9.4)
         story.append(Paragraph(inline(payload), q)); return
     if kind == "table":
         story.append(Spacer(1, 1))
         story.append(make_table(*payload))
         story.append(Spacer(1, 2)); return
+    if kind == "hr":
+        story.append(Spacer(1, 2))
+        story.append(_rule())
+        story.append(Spacer(1, 2))
+        return
 
 
 def render(md: str, *, summary_md: str | None = None):
-    """Build the flowable list. ``summary_md`` — if non-None, render the
+    """Build the flowable list. ``summary_md`` â€” if non-None, render the
     compact summary card at the very top of page 1 (before the title)."""
     story: list = []
     if summary_md:
@@ -496,17 +592,17 @@ def build(src: Path | None = None, out: Path | None = None,
           source_url: str | None = None) -> Path:
     """Render the cheatsheet.
 
-    ``features`` — opt-in PDF enhancements. None / [] reproduces the
+    ``features`` â€” opt-in PDF enhancements. None / [] reproduces the
     pre-features PDF byte-for-byte. Supported flags:
-      - ``summary``  → extract `<!--SUMMARY-->` block, render at top of page 1
-      - ``mermaid``  → render `` ```mermaid``` `` code fences via `mmdc` to PNG
-      - ``chapters`` → QR code on page 1 (cheatsheet is too short for a TOC,
-        so we use the flag for the URL bridge only — same flag works on
+      - ``summary``  â†’ extract `<!--SUMMARY-->` block, render at top of page 1
+      - ``mermaid``  â†’ render `` ```mermaid``` `` code fences via `mmdc` to PNG
+      - ``chapters`` â†’ QR code on page 1 (cheatsheet is too short for a TOC,
+        so we use the flag for the URL bridge only â€” same flag works on
         both PDF kinds so the UI can stay consistent)
-      - ``tldr`` / ``qna`` → handled by the existing callout parser via the
+      - ``tldr`` / ``qna`` â†’ handled by the existing callout parser via the
         two new callout types added to ``CALLOUTS``
     """
-    global SHOW_QR, SOURCE_URL
+    global SHOW_QR, SOURCE_URL, DOC_RUNTIME_TITLE
     src = Path(src) if src else SRC
     out = Path(out) if out else OUT
     title = title or TITLE
@@ -514,6 +610,7 @@ def build(src: Path | None = None, out: Path | None = None,
 
     SHOW_QR = bool(source_url) and "chapters" in feats
     SOURCE_URL = source_url
+    DOC_RUNTIME_TITLE = title
 
     md = src.read_text(encoding="utf-8")
 
@@ -521,6 +618,8 @@ def build(src: Path | None = None, out: Path | None = None,
     summary_md: str | None = None
     if "summary" in feats:
         summary_md, md = _extract_summary_block(md)
+    else:
+        md = _strip_summary_markers(md)
 
     if "mermaid" in feats:
         md = _render_mermaid_blocks(md, out.parent / "_diagrams")
@@ -535,7 +634,9 @@ def build(src: Path | None = None, out: Path | None = None,
     )
     frame = Frame(MARGIN_L, MARGIN_B, BODY_W,
                   PAGE_H - MARGIN_T - MARGIN_B, id="body", showBoundary=0)
-    doc.addPageTemplates([PageTemplate(id="body", frames=[frame], onPage=page)])
+    # Draw furniture after flowables. Split tables/callouts can otherwise
+    # paint an opaque continuation background over header/footer elements.
+    doc.addPageTemplates([PageTemplate(id="body", frames=[frame], onPageEnd=page)])
     doc.build(story)
     print(f"OK: {out}  ({out.stat().st_size/1024:.1f} kB)")
     return out

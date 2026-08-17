@@ -58,6 +58,55 @@ cp .env.example .env
 python -m bot.main
 ```
 
+### One-paste local generator (Windows)
+
+Copy a YouTube link, then double-click `Generate YTSummary.cmd`. If the
+clipboard does not contain a link, the launcher asks you to paste one. The
+validated PDF is saved as `output/pdf/YTsummary-<video_id>.pdf`.
+When `.env` selects Ollama, the launcher starts the local Ollama service if it
+is stopped and pulls the configured model once if it is missing.
+
+The ingestion ladder is:
+
+1. reuse a completed transcript/PDF from cache;
+2. fetch a human or auto-generated caption track through the transcript API;
+3. fetch caption JSON through several supported yt-dlp YouTube clients;
+4. download resumable audio through the same client ladder and run Whisper;
+5. use a configured proxy/cookie route only when one is explicitly available.
+
+Each run records `data/local-runs/<video_id>/job.manifest.json`. A retry resumes
+from reusable artifacts. Markdown and PDF quality gates reject empty, corrupt,
+or leaked-reasoning output before the final PDF path is reported.
+
+PowerShell/terminal equivalents:
+
+```powershell
+.\Generate-YTSummary.ps1 "https://youtu.be/<VIDEO_ID>"
+python scripts/one_click_youtube.py "https://youtu.be/<VIDEO_ID>"
+```
+
+### Local end-to-end job runner (debug mode)
+
+You can bypass Telegram and execute the whole URL pipeline directly:
+
+```bash
+python scripts/run_local_job.py https://www.youtube.com/watch?v=<VIDEO_ID> \
+  --kind cheatsheet
+# or
+python scripts/run_local_job.py https://www.youtube.com/watch?v=<VIDEO_ID> \
+  --kind book --features summary,mermaid --out-pdf data/local-runs/notes.pdf
+```
+
+Options:
+- `--work-dir`: base folder for working files (`data/local-runs` by default)
+- `--features`: comma-separated feature toggles (`summary`, `tldr`, `qna`, `mermaid`, `chapters`)
+- `--force`: re-run transcript/frame stage even if cached artifacts are available
+- `--json`: print result metadata as JSON (including `pdf_path` and `markdown_path`)
+- `--no-progress`: quieter output
+
+This is useful when you want to inspect or override individual stages. The
+normal clipboard launcher above is the recommended path.
+
 ## VPS deployment
 
 `deploy.sh` is a one-shot installer for fresh Ubuntu 22.04/24.04. See the script header for details. Run as root:
@@ -78,13 +127,16 @@ See `.env.example`. Key knobs:
 
 | Variable | Default | Note |
 |---|---|---|
-| `AUTHORING_PROVIDER` | `claude_code` | Or `groq`/`openai`/`anthropic`. `claude_code` uses your Max sub via the headless CLI, no extra cost. |
+| `AUTHORING_PROVIDER` | `claude_code` | Or `ollama`/`groq`/`openai`/`anthropic`. `ollama` is fully local; `claude_code` uses your Max sub via the headless CLI. |
+| `AUTHORING_MODEL` | provider-specific | Use `qwen2.5:7b` with the local Ollama provider. |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Local Ollama API endpoint. |
 | `WHISPER_BACKEND` | `groq` | Free-tier Whisper. Falls back to queuing on rate limits. |
 | `WHITELISTED_GROUP_IDS` | (required) | Comma-separated Telegram chat IDs. Bot ignores everyone else. |
 | `DAILY_CAP_CHEATSHEETS` | `0` | 0 = unlimited |
 | `DAILY_CAP_BOOKS` | `0` | 0 = unlimited |
 | `YTDLP_PROXY_URL` | (empty) | Authenticated production egress proxy used when YouTube blocks the VPS IP. URL-encode reserved characters in credentials. |
 | `YTDLP_PROXY_POOL` | (empty) | Optional comma-separated proxy failover pool; takes precedence over `YTDLP_PROXY_URL`. |
+| `YTDLP_NETWORK_RETRY_DELAYS_SECONDS` | `12,24,48` | Retry delays for a single proxy route when the failure looks transient network-related. |
 | `YTDLP_PROXY_FILE` | `/home/botuser/.config/cheetsheet/ytdlp_proxy_url` | Private mode-0600 fallback containing one proxy URL. The admin UI can save/remove it when the environment proxy settings are empty. |
 | `YT_COOKIES_PATH` | `/home/botuser/cookies.txt` | Netscape cookies file used only for videos that genuinely require sign-in. Cookies do not bypass an IP-level HTTP 429 block. |
 

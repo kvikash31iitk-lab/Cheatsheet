@@ -4,9 +4,14 @@ python-dotenv>=1.0.0
 
 # LLM authoring (Groq Llama by default; OpenAI/Anthropic optional)
 groq>=0.11.0
+# HTTPX SOCKS transport for authoring through a private relay when the VPS
+# egress IP is blocked by the provider.
+socksio>=1.0.0,<2
 
 # Transcription / video pipeline
 yt-dlp[default]>=2026.6.9
+yt-dlp-ejs>=0.3.1
+youtube-transcript-api>=1.2.4
 
 # PDF / image processing
 reportlab>=4.0.0

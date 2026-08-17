@@ -1,10 +1,10 @@
 """Small, policy-driven wrapper around the :command:`yt-dlp` CLI.
 
 The wrapper deliberately starts every logical operation without browser
-cookies.  If (and only if) YouTube reports that authentication is required, it
-retries once with the configured Netscape cookie file.  This avoids needlessly
-sending account cookies with every request while still supporting restricted
-videos.
+cookies. If YouTube reports that authentication is required, or the final
+available route returns an explicit anti-bot sign-in challenge, it retries once
+with the configured Netscape cookie file. This avoids needlessly sending
+account cookies with every request while still supporting restricted videos.
 
 Proxy configuration is provider agnostic:
 
@@ -38,7 +38,24 @@ DEFAULT_COOKIES_PATH = "/home/botuser/cookies.txt"
 DEFAULT_PROXY_FILE = "/home/botuser/.config/cheetsheet/ytdlp_proxy_url"
 DEFAULT_REQUEST_INTERVAL_SECONDS = 1.0
 DEFAULT_HTTP_SLEEP_SECONDS = 0.75
+DEFAULT_SOCKET_TIMEOUT_SECONDS = 20.0
+DEFAULT_NETWORK_RETRY_DELAYS_SECONDS = (12.0, 24.0, 48.0)
+DEFAULT_CLIENT_PROFILES = (
+    "default",
+    "android",
+    "android_vr",
+    "web_embedded",
+    "tv",
+)
 MAX_PROXY_FILE_BYTES = 2048
+
+_CLIENT_PROFILE_ARGS: dict[str, tuple[str, ...]] = {
+    "default": (),
+    "android": ("--extractor-args", "youtube:player_client=android"),
+    "android_vr": ("--extractor-args", "youtube:player_client=android_vr"),
+    "web_embedded": ("--extractor-args", "youtube:player_client=web_embedded"),
+    "tv": ("--extractor-args", "youtube:player_client=tv"),
+}
 
 
 class YtDlpFailureKind(str, Enum):
@@ -289,6 +306,26 @@ def _positive_float(value: str | None, default: float) -> float:
     return max(0.0, parsed)
 
 
+def _network_retry_delays(
+    env: Mapping[str, str] | None = None,
+) -> tuple[float, ...]:
+    """Return bounded delays for retrying a temporarily unavailable route."""
+
+    source = os.environ if env is None else env
+    if "YTDLP_NETWORK_RETRY_DELAYS_SECONDS" not in source:
+        return DEFAULT_NETWORK_RETRY_DELAYS_SECONDS
+
+    values: list[float] = []
+    for item in source.get("YTDLP_NETWORK_RETRY_DELAYS_SECONDS", "").split(","):
+        try:
+            delay = float(item.strip())
+        except ValueError:
+            continue
+        if 0 <= delay <= 120:
+            values.append(delay)
+    return tuple(values[:3]) or DEFAULT_NETWORK_RETRY_DELAYS_SECONDS
+
+
 def _pace_requests(env: Mapping[str, str] | None = None) -> None:
     """Keep starts of separate yt-dlp processes a modest distance apart."""
 
@@ -429,6 +466,20 @@ def _classify_failure(output: str) -> YtDlpFailureKind:
     return YtDlpFailureKind.UNKNOWN
 
 
+def _is_explicit_bot_challenge(output: str) -> bool:
+    """Return whether YouTube explicitly asks this client to sign in as human."""
+
+    message = output.casefold()
+    return any(
+        marker in message
+        for marker in (
+            "sign in to confirm you're not a bot",
+            "sign in to confirm you are not a bot",
+            "sign in to confirm youâ€™re not a bot",
+        )
+    )
+
+
 def _public_message(kind: YtDlpFailureKind, operation: str) -> str:
     messages = {
         YtDlpFailureKind.AUTH_REQUIRED: (
@@ -483,8 +534,20 @@ def _base_command(env: Mapping[str, str] | None = None) -> list[str]:
         DEFAULT_HTTP_SLEEP_SECONDS,
     )
     command = ["yt-dlp", "--ignore-config"]
+    # Current YouTube extraction requires an external JS runtime plus the EJS
+    # solver component. Node 22+ is supported and already part of the local
+    # engine setup; an empty value explicitly disables this option.
+    js_runtime = source.get("YTDLP_JS_RUNTIME", "node").strip()
+    if js_runtime:
+        command += ["--js-runtimes", js_runtime]
     if http_sleep > 0:
         command += ["--sleep-requests", f"{http_sleep:g}"]
+    socket_timeout = _positive_float(
+        source.get("YTDLP_SOCKET_TIMEOUT_SECONDS"),
+        DEFAULT_SOCKET_TIMEOUT_SECONDS,
+    )
+    if socket_timeout > 0:
+        command += ["--socket-timeout", f"{socket_timeout:g}"]
     return command
 
 
@@ -560,8 +623,9 @@ def run_ytdlp(
 
     Every route starts anonymously. Cookies are tried only after an explicit
     authentication-required response, and only on that same route. Rate-limit
-    and network failures move to the next configured pool route; content-level
-    failures stop immediately.
+    and network failures move to the next configured pool route. When only one
+    route remains, transient network failures are retried after a delay so an
+    SSH relay has time to reconnect. Content-level failures stop immediately.
     """
 
     cookies = _cookies_path(env)
@@ -584,10 +648,41 @@ def run_ytdlp(
 
         diagnostic = _diagnostic(process, proxy)
         kind = _classify_failure(diagnostic)
-        if kind in {
+        has_another_route = route_index + 1 < len(routes)
+
+        if kind is YtDlpFailureKind.NETWORK and not has_another_route:
+            for delay in _network_retry_delays(env):
+                logger.warning(
+                    "yt-dlp %s route is temporarily unavailable; retrying "
+                    "the same route in %.1fs. Full diagnostic:\n%s",
+                    operation,
+                    delay,
+                    diagnostic,
+                )
+                time.sleep(delay)
+                process = _invoke(
+                    arguments,
+                    operation=operation,
+                    proxy=proxy,
+                    cookies=None,
+                    env=env,
+                )
+                if process.returncode == 0:
+                    return process
+                diagnostic = _diagnostic(process, proxy)
+                kind = _classify_failure(diagnostic)
+                if kind is not YtDlpFailureKind.NETWORK:
+                    break
+
+        cookie_retry_allowed = kind in {
             YtDlpFailureKind.AUTH_REQUIRED,
             YtDlpFailureKind.MEMBERS_ONLY,
-        } and cookies is not None:
+        } or (
+            kind is YtDlpFailureKind.RATE_LIMITED
+            and not has_another_route
+            and _is_explicit_bot_challenge(diagnostic)
+        )
+        if cookie_retry_allowed and cookies is not None:
             logger.warning(
                 "Anonymous yt-dlp %s requires authentication; retrying with "
                 "configured cookies. Full anonymous diagnostic:\n%s",
@@ -606,7 +701,6 @@ def run_ytdlp(
             diagnostic = _diagnostic(process, proxy)
             kind = _classify_failure(diagnostic)
 
-        has_another_route = route_index + 1 < len(routes)
         if kind in retryable_route_failures and has_another_route:
             logger.warning(
                 "yt-dlp %s route failed (%s); trying the next configured "
@@ -620,6 +714,67 @@ def run_ytdlp(
         _raise_failure(process, operation=operation, proxy=proxy)
 
     raise AssertionError("yt-dlp route sequence was unexpectedly empty")
+
+
+def youtube_client_profiles(
+    env: Mapping[str, str] | None = None,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Return the bounded YouTube extractor-client fallback sequence."""
+
+    source = os.environ if env is None else env
+    raw = source.get("YTDLP_CLIENT_PROFILES", "").strip()
+    names = [item.strip().lower() for item in raw.split(",") if item.strip()]
+    if not names:
+        names = list(DEFAULT_CLIENT_PROFILES)
+    ordered = tuple(dict.fromkeys(name for name in names if name in _CLIENT_PROFILE_ARGS))
+    if not ordered:
+        ordered = ("default",)
+    return tuple((name, _CLIENT_PROFILE_ARGS[name]) for name in ordered)
+
+
+def run_ytdlp_profiles(
+    arguments: Sequence[str],
+    *,
+    operation: str,
+    env: Mapping[str, str] | None = None,
+    on_profile=None,
+) -> subprocess.CompletedProcess[str]:
+    """Try safe extractor clients after a playback-route 403/429 failure.
+
+    Proxy/cookie handling remains inside :func:`run_ytdlp`. Content-level
+    failures stop immediately; only failures that another client can plausibly
+    repair advance to the next profile.
+    """
+
+    profiles = youtube_client_profiles(env)
+    last_error: YtDlpError | None = None
+    retryable = {
+        YtDlpFailureKind.RATE_LIMITED,
+        YtDlpFailureKind.INVALID_RESPONSE,
+        YtDlpFailureKind.UNKNOWN,
+    }
+    for index, (name, profile_args) in enumerate(profiles, 1):
+        if on_profile is not None:
+            on_profile(name, index, len(profiles))
+        try:
+            return run_ytdlp(
+                [*profile_args, *arguments],
+                operation=f"{operation} ({name} client)",
+                env=env,
+            )
+        except YtDlpError as exc:
+            last_error = exc
+            if exc.kind not in retryable or index >= len(profiles):
+                raise
+            logger.warning(
+                "yt-dlp %s failed with %s client (%s); trying the next "
+                "extractor client",
+                operation,
+                name,
+                exc.kind.value,
+            )
+    assert last_error is not None
+    raise last_error
 
 
 def invalid_response_error(operation: str, diagnostic: str) -> YtDlpError:

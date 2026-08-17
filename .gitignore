@@ -9,6 +9,11 @@ work/
 web_work/
 cache/
 output/
+data/
+tmp/
+transcripts/
+transcript_summary_*.md
+tests/*.pdf
 
 # UPSC pipeline scratch — downloaded PYQ PDFs, OCR intermediates, etc.
 # Keep the planning artifacts in .upsc_work/ tracked, but not the cache.

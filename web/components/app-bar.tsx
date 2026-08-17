@@ -115,6 +115,16 @@ export function AppBar() {
               <Link href="/generate" style={{ color: 'inherit', textDecoration: 'none' }}>
                 Generate
               </Link>
+              <Link
+                href="/new"
+                style={{
+                  color: 'var(--c-mint)',
+                  textDecoration: 'none',
+                  fontWeight: 600,
+                }}
+              >
+                New engine
+              </Link>
               <Link href="/library" style={{ color: 'inherit', textDecoration: 'none' }}>
                 Library
               </Link>

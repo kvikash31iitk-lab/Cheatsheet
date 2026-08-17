@@ -29,6 +29,7 @@ class YtDlpClientTests(unittest.TestCase):
         values = {
             "YTDLP_REQUEST_INTERVAL_SECONDS": "0",
             "YTDLP_HTTP_SLEEP_SECONDS": "0",
+            "YTDLP_NETWORK_RETRY_DELAYS_SECONDS": "",
             "YT_COOKIES_PATH": "",
         }
         values.update(overrides)
@@ -43,6 +44,20 @@ class YtDlpClientTests(unittest.TestCase):
         self.assertEqual(
             ytdlp_client.configured_proxies(env),
             ("http://one:8000", "socks5://two:9000"),
+        )
+
+    def test_default_network_retries_cover_watchdog_restart_window(self):
+        self.assertEqual(
+            ytdlp_client._network_retry_delays({}),
+            (12.0, 24.0, 48.0),
+        )
+
+    def test_invalid_network_retry_delay_values_fall_back_to_default(self):
+        self.assertEqual(
+            ytdlp_client._network_retry_delays(
+                {"YTDLP_NETWORK_RETRY_DELAYS_SECONDS": "a,b"}
+            ),
+            (12.0, 24.0, 48.0),
         )
 
     @patch("scripts.ytdlp_client.subprocess.run")
@@ -259,6 +274,81 @@ class YtDlpClientTests(unittest.TestCase):
         self.assertNotIn("--cookies", run_mock.call_args.args[0])
 
     @patch("scripts.ytdlp_client.subprocess.run")
+    def test_final_route_bot_challenge_retries_with_cookies(self, run_mock):
+        run_mock.side_effect = [
+            completed(
+                1,
+                stderr=(
+                    "WARNING: HTTP Error 429: Too Many Requests\n"
+                    "ERROR: Sign in to confirm you're not a bot"
+                ),
+            ),
+            completed(0, stdout="ok"),
+        ]
+        env = self.env(
+            YTDLP_PROXY_URL="http://one:8000",
+            YT_COOKIES_PATH=__file__,
+        )
+
+        result = ytdlp_client.run_ytdlp(
+            ["URL"], operation="read video information", env=env
+        )
+
+        self.assertEqual(result.stdout, "ok")
+        self.assertEqual(run_mock.call_count, 2)
+        first, second = [call.args[0] for call in run_mock.call_args_list]
+        self.assertNotIn("--cookies", first)
+        self.assertEqual(second[second.index("--cookies") + 1], __file__)
+        self.assertEqual(
+            first[first.index("--proxy") + 1],
+            second[second.index("--proxy") + 1],
+        )
+
+    @patch("scripts.ytdlp_client.time.sleep")
+    @patch("scripts.ytdlp_client.subprocess.run")
+    def test_single_network_route_recovers_after_reconnect(self, run_mock, sleep_mock):
+        run_mock.side_effect = [
+            completed(1, stderr="ERROR: ProxyError: connection refused"),
+            completed(0, stdout="ok"),
+        ]
+        env = self.env(
+            YTDLP_PROXY_URL="socks5://one:1",
+            YTDLP_NETWORK_RETRY_DELAYS_SECONDS="12,24",
+        )
+
+        result = ytdlp_client.run_ytdlp(
+            ["URL"], operation="read video information", env=env
+        )
+
+        self.assertEqual(result.stdout, "ok")
+        self.assertEqual(run_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(12.0)
+
+    @patch("scripts.ytdlp_client.time.sleep")
+    @patch("scripts.ytdlp_client.subprocess.run")
+    def test_single_network_route_stops_after_bounded_retries(
+        self, run_mock, sleep_mock
+    ):
+        run_mock.return_value = completed(
+            1, stderr="ERROR: ProxyError: connection refused"
+        )
+        env = self.env(
+            YTDLP_PROXY_URL="socks5://one:1",
+            YTDLP_NETWORK_RETRY_DELAYS_SECONDS="1,2,3",
+        )
+
+        with self.assertRaises(ytdlp_client.YtDlpError) as raised:
+            ytdlp_client.run_ytdlp(
+                ["URL"], operation="read video information", env=env
+            )
+
+        self.assertEqual(raised.exception.kind, ytdlp_client.YtDlpFailureKind.NETWORK)
+        self.assertEqual(run_mock.call_count, 4)
+        self.assertEqual(
+            [call.args[0] for call in sleep_mock.call_args_list], [1.0, 2.0, 3.0]
+        )
+
+    @patch("scripts.ytdlp_client.subprocess.run")
     def test_public_error_and_logs_never_expose_proxy_credentials(self, run_mock):
         proxy = "http://alice:super-secret@proxy.example:8000"
         run_mock.return_value = completed(
@@ -291,9 +381,60 @@ class YtDlpClientTests(unittest.TestCase):
 
         command = run_mock.call_args.args[0]
         self.assertIn("--ignore-config", command)
+        self.assertEqual(command[command.index("--js-runtimes") + 1], "node")
         self.assertIn("--sleep-requests", command)
         self.assertNotIn("--extractor-args", command)
         self.assertNotIn("--cookies", command)
+
+    def test_client_profiles_are_bounded_deduplicated_and_configurable(self):
+        profiles = ytdlp_client.youtube_client_profiles(
+            self.env(YTDLP_CLIENT_PROFILES="android,default,android,unknown")
+        )
+        self.assertEqual([name for name, _args in profiles], ["android", "default"])
+
+    @patch("scripts.ytdlp_client.run_ytdlp")
+    def test_profile_fallback_advances_after_403(self, run_mock):
+        blocked = ytdlp_client.YtDlpError(
+            operation="download audio",
+            kind=ytdlp_client.YtDlpFailureKind.RATE_LIMITED,
+            public_message="blocked",
+            diagnostic="HTTP Error 403",
+            returncode=1,
+        )
+        run_mock.side_effect = [blocked, completed(0, stdout="ok")]
+        seen = []
+
+        result = ytdlp_client.run_ytdlp_profiles(
+            ["URL"],
+            operation="download audio",
+            env=self.env(YTDLP_CLIENT_PROFILES="default,android"),
+            on_profile=lambda name, *_: seen.append(name),
+        )
+
+        self.assertEqual(result.stdout, "ok")
+        self.assertEqual(seen, ["default", "android"])
+        second_args = run_mock.call_args_list[1].args[0]
+        self.assertIn("youtube:player_client=android", second_args)
+
+    @patch("scripts.ytdlp_client.run_ytdlp")
+    def test_profile_fallback_stops_for_content_failure(self, run_mock):
+        unavailable = ytdlp_client.YtDlpError(
+            operation="metadata",
+            kind=ytdlp_client.YtDlpFailureKind.UNAVAILABLE,
+            public_message="gone",
+            diagnostic="Video unavailable",
+            returncode=1,
+        )
+        run_mock.side_effect = unavailable
+
+        with self.assertRaises(ytdlp_client.YtDlpError):
+            ytdlp_client.run_ytdlp_profiles(
+                ["URL"],
+                operation="metadata",
+                env=self.env(YTDLP_CLIENT_PROFILES="default,android"),
+            )
+
+        self.assertEqual(run_mock.call_count, 1)
 
 
 # transcribe_with_frames has an optional external Whisper helper at import time.
@@ -325,7 +466,7 @@ class PipelineYtDlpIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(run_mock.call_args.kwargs["operation"], "read video information")
 
-    @patch("scripts.transcribe_with_frames.run_ytdlp")
+    @patch("scripts.transcribe_with_frames.run_ytdlp_profiles")
     def test_video_download_uses_shared_runner(self, run_mock):
         run_mock.return_value = completed(0)
         with tempfile.TemporaryDirectory() as directory:

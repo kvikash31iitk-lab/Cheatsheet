@@ -17,6 +17,7 @@ perceptual hash so the surviving set captures real visual events.
 from __future__ import annotations
 
 import json
+import html
 import math
 import re
 import subprocess
@@ -24,17 +25,33 @@ import sys
 import time
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 try:
-    from scripts.ytdlp_client import invalid_response_error, run_ytdlp
+    from scripts.ytdlp_client import (
+        YtDlpError,
+        configured_proxies,
+        invalid_response_error,
+        run_ytdlp,
+        run_ytdlp_profiles,
+        youtube_client_profiles,
+    )
 except ModuleNotFoundError:  # Direct execution: python scripts/transcribe_with_frames.py
-    from ytdlp_client import invalid_response_error, run_ytdlp
+    from ytdlp_client import (
+        YtDlpError,
+        configured_proxies,
+        invalid_response_error,
+        run_ytdlp,
+        run_ytdlp_profiles,
+        youtube_client_profiles,
+    )
 
 WATCH_SKILL_DIR = Path.home() / ".claude" / "skills" / "watch" / "scripts"
 if str(WATCH_SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(WATCH_SKILL_DIR))
 try:
-    from whisper import _post_whisper, GROQ_ENDPOINT, GROQ_MODEL, load_api_key  # noqa: E402
+    from whisper import GROQ_MODEL, load_api_key  # noqa: E402
 except ImportError as exc:
     raise SystemExit(
         f"Could not import whisper client from {WATCH_SKILL_DIR}.\n"
@@ -71,6 +88,8 @@ CHUNK_SECONDS = 8 * 60
 INTER_CALL_DELAY = 15.0
 CHUNK_RETRY_ATTEMPTS = 8
 CHUNK_RETRY_WAIT = 240.0
+CAPTION_CONNECT_TIMEOUT_SECONDS = 8.0
+CAPTION_READ_TIMEOUT_SECONDS = 20.0
 MAX_LOCAL_MEDIA_SECONDS = 2 * 60 * 60
 LOCAL_MEDIA_PROBE_TIMEOUT_SECONDS = 30.0
 LOCAL_MEDIA_FFMPEG_TIMEOUT_SECONDS = 30 * 60.0
@@ -141,6 +160,254 @@ def fetch_metadata(url: str) -> dict:
     return {"id": vid.strip(), "title": title.strip(), "duration": duration_f}
 
 
+def fetch_metadata_resilient(url: str, on_progress: ProgressFn = None) -> dict:
+    """Fetch metadata across extractor clients, with a usable URL-only fallback."""
+
+    video_id = extract_video_id(url)
+    # oEmbed is a lightweight public metadata path.  It avoids invoking the
+    # media extractor merely to obtain a title, and therefore keeps a
+    # caption-first job independent from downloadable YouTube formats.
+    try:
+        endpoint = "https://www.youtube.com/oembed?" + urlencode(
+            {
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "format": "json",
+            }
+        )
+        request = Request(endpoint, headers={"User-Agent": "YTsummary/1.0"})
+        with urlopen(request, timeout=15) as response:
+            raw = response.read(128 * 1024)
+        payload = json.loads(raw.decode("utf-8"))
+        title = str(payload.get("title") or "").strip()
+        if title:
+            return {"id": video_id, "title": title, "duration": 0.0}
+    except Exception:
+        _emit(on_progress, "Lightweight title lookup unavailable; trying extractor metadata...")
+    try:
+        p = run_ytdlp_profiles(
+            [
+                "--skip-download", "--no-playlist",
+                "--print", "%(id)s",
+                "--print", "%(title)s",
+                "--print", "%(duration)s",
+                url,
+            ],
+            operation="read video information",
+            on_profile=lambda name, index, total: _emit(
+                on_progress,
+                f"Metadata route {index}/{total}: {name}",
+            ),
+        )
+        lines = [line for line in p.stdout.splitlines() if line.strip()]
+        if len(lines) >= 3:
+            try:
+                duration = float(lines[-1] or 0)
+            except ValueError:
+                duration = 0.0
+            return {
+                "id": lines[-3].strip() or video_id,
+                "title": lines[-2].strip(),
+                "duration": duration,
+            }
+    except YtDlpError as exc:
+        _emit(
+            on_progress,
+            "Metadata lookup was blocked; continuing with transcript-derived "
+            f"metadata ({exc.kind.value}).",
+        )
+    return {"id": video_id, "title": f"YouTube video {video_id}", "duration": 0.0}
+
+
+def _clean_caption_text(value: str) -> str:
+    text = html.unescape(re.sub(r"<[^>]+>", "", value or ""))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _caption_segments_from_items(items) -> list[dict]:
+    segments: list[dict] = []
+    previous = ""
+    for item in items:
+        if isinstance(item, dict):
+            text = item.get("text", "")
+            start = item.get("start", 0.0)
+            duration = item.get("duration", 0.0)
+        else:
+            text = getattr(item, "text", "")
+            start = getattr(item, "start", 0.0)
+            duration = getattr(item, "duration", 0.0)
+        clean = _clean_caption_text(str(text or ""))
+        if not clean or clean == previous:
+            continue
+        previous = clean
+        start_f = max(0.0, float(start or 0.0))
+        duration_f = max(0.0, float(duration or 0.0))
+        segments.append({
+            "start": round(start_f, 2),
+            "end": round(start_f + duration_f, 2),
+            "chunk": int(start_f // CHUNK_SECONDS) + 1,
+            "text": clean,
+        })
+    return segments
+
+
+def _caption_segments_are_useful(segments: list[dict]) -> bool:
+    text_chars = sum(len(segment.get("text", "")) for segment in segments)
+    return bool(segments) and text_chars >= 40
+
+
+def _api_for_proxy(proxy: str | None):
+    import requests
+    from youtube_transcript_api import YouTubeTranscriptApi
+
+    class _TimeoutSession(requests.Session):
+        def request(self, method, url, **kwargs):
+            kwargs.setdefault(
+                "timeout",
+                (CAPTION_CONNECT_TIMEOUT_SECONDS, CAPTION_READ_TIMEOUT_SECONDS),
+            )
+            return super().request(method, url, **kwargs)
+
+    session = _TimeoutSession()
+
+    if not proxy:
+        return YouTubeTranscriptApi(http_client=session)
+    from youtube_transcript_api.proxies import GenericProxyConfig
+
+    return YouTubeTranscriptApi(
+        proxy_config=GenericProxyConfig(http_url=proxy, https_url=proxy),
+        http_client=session,
+    )
+
+
+def _fetch_captions_with_transcript_api(video_id: str) -> list[dict]:
+    """Fetch the best caption track, preferring human/English tracks."""
+
+    routes: list[str | None] = [None]
+    try:
+        routes.extend(configured_proxies())
+    except Exception:
+        pass
+    last_error: Exception | None = None
+    for proxy in dict.fromkeys(routes):
+        try:
+            api = _api_for_proxy(proxy)
+            tracks = list(api.list(video_id))
+            if not tracks:
+                return []
+            english = [
+                track for track in tracks
+                if str(getattr(track, "language_code", "")).lower().startswith("en")
+            ]
+            pool = english or tracks
+            selected = next(
+                (track for track in pool if not getattr(track, "is_generated", True)),
+                pool[0],
+            )
+            if not english and getattr(selected, "is_translatable", False):
+                try:
+                    selected = selected.translate("en")
+                except Exception:
+                    pass
+            return _caption_segments_from_items(selected.fetch())
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    return []
+
+
+def _parse_json3_caption(path: Path) -> list[dict]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    rows = []
+    for event in payload.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        text = "".join(
+            str(segment.get("utf8") or "")
+            for segment in event.get("segs") or []
+            if isinstance(segment, dict)
+        )
+        start = float(event.get("tStartMs") or 0.0) / 1000.0
+        duration = float(event.get("dDurationMs") or 0.0) / 1000.0
+        rows.append({"text": text, "start": start, "duration": duration})
+    return _caption_segments_from_items(rows)
+
+
+def _fetch_captions_with_ytdlp(
+    url: str,
+    work: Path,
+    on_progress: ProgressFn = None,
+) -> list[dict]:
+    caption_dir = work / "captions"
+    caption_dir.mkdir(parents=True, exist_ok=True)
+    output_template = caption_dir / "caption.%(language)s.%(ext)s"
+    for index, (name, profile_args) in enumerate(youtube_client_profiles(), 1):
+        _emit(on_progress, f"Caption route {index}: yt-dlp {name}")
+        try:
+            run_ytdlp(
+                [
+                    *profile_args,
+                    "--skip-download", "--no-playlist",
+                    "--write-subs", "--write-auto-subs",
+                    "--sub-langs", "en.*,en,-live_chat",
+                    "--sub-format", "json3",
+                    "-o", str(output_template),
+                    url,
+                ],
+                operation=f"download captions ({name} client)",
+            )
+        except YtDlpError:
+            continue
+        for path in sorted(caption_dir.glob("caption*.json3")):
+            try:
+                segments = _parse_json3_caption(path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            if _caption_segments_are_useful(segments):
+                return segments
+    return []
+
+
+def try_caption_transcript(
+    url: str,
+    work: Path,
+    on_progress: ProgressFn = None,
+) -> dict | None:
+    """Try lightweight captions before downloading and transcribing media."""
+
+    video_id = extract_video_id(url)
+    transcript_path = work / "transcript.txt"
+    transcript_json = work / "transcript.json"
+    if transcript_path.exists() and transcript_path.stat().st_size > 40:
+        return {
+            "transcript_txt": transcript_path,
+            "transcript_json": transcript_json if transcript_json.exists() else None,
+            "transcript_with_frames": None,
+            "provider": "cache",
+        }
+
+    _emit(on_progress, "Trying YouTube caption API before media download...")
+    segments: list[dict] = []
+    provider = "youtube_transcript_api"
+    try:
+        segments = _fetch_captions_with_transcript_api(video_id)
+    except Exception as exc:
+        _emit(
+            on_progress,
+            f"Caption API unavailable ({type(exc).__name__}); trying yt-dlp captions...",
+        )
+    if not _caption_segments_are_useful(segments):
+        provider = "yt_dlp_captions"
+        segments = _fetch_captions_with_ytdlp(url, work, on_progress)
+    if not _caption_segments_are_useful(segments):
+        _emit(on_progress, "No usable captions found; falling back to local audio transcription.")
+        return None
+
+    outputs = write_outputs(segments, work, None)
+    _emit(on_progress, f"Using {provider.replace('_', ' ')} ({len(segments)} segments).")
+    return {**outputs, "provider": provider, "segments": segments}
+
+
 def ensure_audio(url: str, work: Path, on_progress: ProgressFn = None) -> Path:
     work.mkdir(parents=True, exist_ok=True)
     audio_full = work / "session_full.mp3"
@@ -150,12 +417,17 @@ def ensure_audio(url: str, work: Path, on_progress: ProgressFn = None) -> Path:
     raw = work / "raw_audio.m4a"
     if not raw.exists():
         _emit(on_progress, "Downloading audio...")
-        run_ytdlp(
+        run_ytdlp_profiles(
             [
-                "-f", "bestaudio[ext=m4a]/bestaudio",
+                "--continue",
+                "-f", "bestaudio[ext=m4a]/bestaudio/best[height<=360]/18",
                 "--no-playlist", "-o", str(raw), url,
             ],
             operation="download audio",
+            on_profile=lambda name, index, total: _emit(
+                on_progress,
+                f"Audio route {index}/{total}: {name}",
+            ),
         )
 
     _emit(on_progress, "Encoding audio for Whisper...")
@@ -172,12 +444,17 @@ def ensure_video(url: str, work: Path, on_progress: ProgressFn = None) -> Path:
     if raw_video.exists() and raw_video.stat().st_size > 0:
         return raw_video
     _emit(on_progress, "Downloading video for frame extraction...")
-    run_ytdlp(
+    run_ytdlp_profiles(
         [
+            "--continue",
             "-f", "bestvideo[height<=720][ext=mp4]/best[height<=720]/worst",
             "--no-playlist", "-o", str(raw_video), url,
         ],
         operation="download video",
+        on_profile=lambda name, index, total: _emit(
+            on_progress,
+            f"Video route {index}/{total}: {name}",
+        ),
     )
     return raw_video
 
@@ -520,8 +797,45 @@ def _make_whisper_runner():
     if backend_ != "groq":
         raise RuntimeError(f"Expected groq backend, got {backend_}")
 
+    # Use the Groq SDK instead of the legacy urllib uploader. The SDK uses
+    # HTTPX, so a bot-service-only HTTPS_PROXY can carry both authoring and
+    # transcription through the private SOCKS relay without proxying Telegram.
+    from groq import Groq
+
+    client = Groq(api_key=api_key)
+
     def _do(path):
-        return _post_whisper(GROQ_ENDPOINT, api_key, GROQ_MODEL, path)
+        source = Path(path)
+        with source.open("rb") as audio_file:
+            result = client.audio.transcriptions.create(
+                file=(source.name, audio_file.read()),
+                model=GROQ_MODEL,
+                response_format="verbose_json",
+                timestamp_granularities=["segment"],
+                temperature=0.0,
+            )
+
+        segments = []
+        for segment in getattr(result, "segments", None) or []:
+            if isinstance(segment, dict):
+                start = segment.get("start", 0.0)
+                end = segment.get("end", 0.0)
+                text = segment.get("text", "")
+            else:
+                start = getattr(segment, "start", 0.0)
+                end = getattr(segment, "end", 0.0)
+                text = getattr(segment, "text", "")
+            segments.append(
+                {
+                    "start": float(start or 0.0),
+                    "end": float(end or 0.0),
+                    "text": str(text or ""),
+                }
+            )
+        return {
+            "text": str(getattr(result, "text", "") or ""),
+            "segments": segments,
+        }
 
     return _do, False
 
@@ -613,15 +927,32 @@ def write_outputs(segments: list[dict], work: Path,
 
 def run_pipeline(url: str, work: Path, *, extract_frames: bool = True,
                  on_progress: ProgressFn = None) -> dict:
-    """Run download → (frame extraction) → audio chunking → transcription.
+    """Run captions/media ingestion → optional frames → transcription.
 
     Returns a dict with paths and metadata. Idempotent: re-running with the
-    same `work` directory reuses cached intermediates.
+    same `work` directory reuses cached intermediates.  Caption tracks are
+    deliberately attempted first because they are faster and do not depend on
+    YouTube exposing a downloadable media format.  Media + Whisper remains the
+    fallback for videos without useful captions.
     """
     work = Path(work); work.mkdir(parents=True, exist_ok=True)
 
-    meta = fetch_metadata(url)
-    audio = ensure_audio(url, work, on_progress=on_progress)
+    caption_result = try_caption_transcript(url, work, on_progress=on_progress)
+    meta = fetch_metadata_resilient(url, on_progress=on_progress)
+
+    segments: list[dict] = []
+    transcript_provider = "whisper"
+    if caption_result:
+        transcript_provider = str(caption_result.get("provider") or "captions")
+        segments = list(caption_result.get("segments") or [])
+        transcript_json = caption_result.get("transcript_json")
+        if not segments and transcript_json and Path(transcript_json).exists():
+            try:
+                payload = json.loads(Path(transcript_json).read_text(encoding="utf-8"))
+                if isinstance(payload, list):
+                    segments = [row for row in payload if isinstance(row, dict)]
+            except (OSError, json.JSONDecodeError):
+                segments = []
 
     frames_index_data = None
     frames_index_path = None
@@ -637,14 +968,46 @@ def run_pipeline(url: str, work: Path, *, extract_frames: bool = True,
         kept = dedupe_frames(candidates, on_progress=on_progress)
         frames_index_data = write_final_frames(kept, frames_dir, frames_index_path)
 
-    chunks = split_audio(audio, work, on_progress=on_progress)
-    segments = transcribe_chunks(chunks, on_progress=on_progress)
-    outputs = write_outputs(segments, work, frames_index_data)
+    if caption_result:
+        if frames_index_data is not None and segments:
+            outputs = write_outputs(segments, work, frames_index_data)
+        else:
+            outputs = {
+                "transcript_txt": Path(caption_result["transcript_txt"]),
+                "transcript_json": (
+                    Path(caption_result["transcript_json"])
+                    if caption_result.get("transcript_json")
+                    else None
+                ),
+                "transcript_with_frames": None,
+            }
+    else:
+        audio = ensure_audio(url, work, on_progress=on_progress)
+        chunks = split_audio(audio, work, on_progress=on_progress)
+        segments = transcribe_chunks(chunks, on_progress=on_progress)
+        outputs = write_outputs(segments, work, frames_index_data)
+
+    duration = float(meta.get("duration") or 0.0)
+    if duration <= 0 and segments:
+        duration = max(float(row.get("end") or row.get("start") or 0.0) for row in segments)
+
+    source_record = {
+        "url": url,
+        "video_id": meta["id"],
+        "title": meta["title"],
+        "duration_seconds": duration,
+        "transcript_provider": transcript_provider,
+        "segments_count": len(segments),
+    }
+    (work / "source.json").write_text(
+        json.dumps(source_record, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     return {
         "video_id": meta["id"],
         "title": meta["title"],
-        "duration_seconds": meta["duration"],
+        "duration_seconds": duration,
         "transcript_txt": outputs["transcript_txt"],
         "transcript_json": outputs["transcript_json"],
         "transcript_with_frames": outputs["transcript_with_frames"],
@@ -652,6 +1015,7 @@ def run_pipeline(url: str, work: Path, *, extract_frames: bool = True,
         "frames_index": frames_index_path,
         "frames_count": len(frames_index_data) if frames_index_data else 0,
         "segments_count": len(segments),
+        "transcript_provider": transcript_provider,
     }
 
 

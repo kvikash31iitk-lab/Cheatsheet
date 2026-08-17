@@ -92,6 +92,7 @@ from scripts.transcribe_with_frames import (  # noqa: E402
 from scripts.ytdlp_client import YtDlpError  # noqa: E402
 from scripts.build_cheatsheet import build as build_cheatsheet  # noqa: E402
 from scripts.build_illustrated_book import build as build_book  # noqa: E402
+from scripts.run_local_job import run_url_job  # noqa: E402
 from bot.author import author_book, author_cheatsheet  # noqa: E402
 from bot import cache as bot_cache  # noqa: E402
 
@@ -1094,6 +1095,18 @@ class PreviewRequest(BaseModel):
     url: str = Field(..., min_length=10)
 
 
+class NewEngineRequest(BaseModel):
+    """One-input contract for the quality-gated `/new` workflow."""
+
+    url: str = Field(..., min_length=10)
+
+
+# `/new` intentionally removes configuration decisions from the form. These
+# features produce the reviewed, study-ready layout established by the local
+# engine while avoiding Mermaid/Chromium as an unnecessary failure surface.
+NEW_ENGINE_FEATURES = ["summary", "tldr", "qna", "chapters"]
+
+
 # Tiny in-memory cache so refreshing the page or trying multiple kinds for the
 # same URL doesn't re-spawn yt-dlp every time. Keyed by URL, capped at 256.
 _PREVIEW_CACHE: dict[str, dict[str, Any]] = {}
@@ -1239,6 +1252,67 @@ async def create_generation(
     await s.refresh(gen)
 
     bg.add_task(_run_job, gen.id)
+    return {"id": gen.id}
+
+
+@app.post("/api/new/generate")
+async def create_new_engine_generation(
+    req: NewEngineRequest,
+    bg: BackgroundTasks,
+    user: User = Depends(current_user),
+    s: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    """Queue a professional cheatsheet through the resumable v2 engine.
+
+    Unlike `/api/preview`, this route does not perform an yt-dlp metadata
+    preflight. The job goes straight to the caption-first pipeline; source
+    policy and wallet checks run at the post-ingest boundary, before
+    authoring. This removes one fragile YouTube request without weakening the
+    existing account, quota, block-rule, or billing controls.
+    """
+    if not (user.is_admin or is_admin_email(user.email)):
+        if bool(await app_settings.get(s, "maintenance_mode")):
+            msg = await app_settings.get(s, "maintenance_message")
+            raise HTTPException(503, str(msg))
+
+    hourly_cap = int(await app_settings.get(s, "max_generations_per_hour_per_user"))
+    if hourly_cap > 0:
+        hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+        recent = (
+            await s.execute(
+                select(func.count(Generation.id))
+                .where(Generation.user_id == user.id)
+                .where(Generation.created_at >= hour_ago)
+            )
+        ).scalar_one()
+        if int(recent) >= hourly_cap:
+            raise HTTPException(
+                429,
+                f"Rate limit: max {hourly_cap} generations per hour. Try later.",
+            )
+
+    try:
+        url = validate_public_youtube_url(req.url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+    gen = Generation(
+        id=uuid.uuid4().hex,
+        user_id=user.id,
+        kind="cheatsheet",
+        url=url,
+        status="queued",
+        step="Waiting for the new engine",
+        progress=0.0,
+        was_free=False,
+        cost_paise=0,
+        features=json.dumps(NEW_ENGINE_FEATURES),
+    )
+    s.add(gen)
+    await s.commit()
+    await s.refresh(gen)
+
+    bg.add_task(_run_new_engine_job, gen.id)
     return {"id": gen.id}
 
 
@@ -1584,6 +1658,197 @@ def _price_and_charge(job_id: str, kind: str, duration_seconds: float,
 def _user_id_for_job(s: Any, job_id: str) -> str | None:
     gen = s.get(Generation, job_id)
     return gen.user_id if gen else None
+
+
+async def _run_new_engine_job(job_id: str) -> None:
+    """Run `/new` through the resumable, artifact-validating local engine."""
+    _in_flight_jobs.add(job_id)
+    progress_state = {"p": 0.03, "step": "Starting the new engine"}
+
+    def emit(step: str, p: float) -> None:
+        progress_state["p"] = max(progress_state["p"], min(0.96, p))
+        progress_state["step"] = step
+        _update_sync(
+            job_id,
+            status="running",
+            step=step,
+            progress=round(progress_state["p"], 3),
+        )
+
+    def on_progress(message: str) -> None:
+        """Map detailed engine logs to short, public-safe UI milestones."""
+        lower = message.casefold()
+        if "url validated" in lower:
+            emit("Validating the YouTube link", 0.08)
+        elif "cached" in lower or "cache" in lower:
+            emit("Checking reusable captions", 0.18)
+        elif "caption" in lower or "transcript" in lower or "ingestion" in lower:
+            emit("Getting the transcript", 0.34)
+        elif "repair" in lower or "lightweight" in lower or "expanding" in lower:
+            emit("Improving note depth", 0.76)
+        elif "author" in lower or "draft" in lower or "writing" in lower:
+            emit("Writing structured notes", 0.58)
+        elif "render" in lower:
+            emit("Rendering the PDF", 0.88)
+        elif "done" in lower:
+            emit("Running final quality checks", 0.96)
+
+    work = WORK_ROOT / "new" / job_id
+    work.mkdir(parents=True, exist_ok=True)
+
+    for env_key, settings_key in (
+        ("AUTHORING_PROVIDER", "authoring_provider"),
+        ("WHISPER_BACKEND", "whisper_backend"),
+    ):
+        val = app_settings.get_sync(settings_key)
+        if val:
+            os.environ[env_key] = str(val)
+
+    with SyncSessionLocal() as s:
+        gen = s.get(Generation, job_id)
+        if not gen:
+            _in_flight_jobs.discard(job_id)
+            return
+        url = gen.url
+
+    cost_sink: dict[str, int] = {"tokens_in": 0, "tokens_out": 0}
+    ingest_meta: dict[str, Any] = {}
+
+    def on_ingest(meta: dict[str, Any]) -> None:
+        ingest_meta.update(meta)
+        title = str(meta.get("title") or "YouTube cheatsheet")
+        duration = float(meta.get("duration_seconds") or 0.0)
+        video_id = str(meta.get("video_id") or "")
+        _update_sync(
+            job_id,
+            video_id=video_id,
+            title=title,
+            duration_seconds=duration,
+            channel="",
+            thumbnail_url=(
+                f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+                if video_id
+                else ""
+            ),
+        )
+        emit("Checking access and reserving credit", 0.46)
+        _price_and_charge(job_id, "cheatsheet", duration, title, "")
+
+    try:
+        emit("Starting the caption-first pipeline", 0.05)
+        result = await asyncio.to_thread(
+            run_url_job,
+            url,
+            kind="cheatsheet",
+            work_root=work / "pipeline",
+            output_md=work / "output.md",
+            output_pdf=work / "output.pdf",
+            features=NEW_ENGINE_FEATURES,
+            use_cached_pipeline=True,
+            progress=False,
+            on_progress=on_progress,
+            on_ingest=on_ingest,
+            cost_sink=cost_sink,
+        )
+
+        md_path = Path(result["markdown_path"])
+        pdf_path = Path(result["pdf_path"])
+        md_text = md_path.read_text(encoding="utf-8")
+        title = str(result.get("title") or ingest_meta.get("title") or "YouTube cheatsheet")
+        duration = float(
+            result.get("duration_seconds")
+            or ingest_meta.get("duration_seconds")
+            or 0.0
+        )
+        video_id = str(result.get("video_id") or ingest_meta.get("video_id") or "")
+        provider = str(app_settings.get_sync("authoring_provider") or "claude_code")
+        transcript_provider = str(result.get("transcript_provider") or "")
+        backend = str(app_settings.get_sync("whisper_backend") or "local")
+        tokens_in = int(cost_sink.get("tokens_in", 0))
+        tokens_out = int(cost_sink.get("tokens_out", 0))
+        llm_cost = _llm_cost_paise(provider, tokens_in, tokens_out)
+        transcription_cost = (
+            0
+            if transcript_provider in {
+                "cache",
+                "shared_cache",
+                "youtube_transcript_api",
+                "youtube_captions",
+            }
+            else _whisper_cost_paise(backend, duration)
+        )
+
+        notify_chat_id: str | None = None
+        with SyncSessionLocal() as s:
+            gen = s.get(Generation, job_id)
+            if gen:
+                gen.status = "done"
+                gen.step = "done"
+                gen.progress = 1.0
+                gen.video_id = video_id
+                gen.title = title
+                gen.duration_seconds = duration
+                gen.thumbnail_url = (
+                    f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+                    if video_id
+                    else ""
+                )
+                gen.markdown = md_text
+                gen.pdf_path = str(pdf_path)
+                gen.completed_at = datetime.now(timezone.utc)
+                gen.llm_tokens_in = tokens_in
+                gen.llm_tokens_out = tokens_out
+                gen.llm_cost_paise = llm_cost
+                gen.transcription_cost_paise = transcription_cost
+                s.commit()
+                user_row = s.get(User, gen.user_id)
+                notify_chat_id = user_row.telegram_chat_id if user_row else None
+
+        if notify_chat_id:
+            await asyncio.to_thread(
+                _send_telegram_message,
+                notify_chat_id,
+                f"*New-engine cheatsheet ready* ✓\n_{title}_\n\nOpen: {WEB_PUBLIC_URL}/library",
+            )
+    except Exception as exc:
+        notify_err = (
+            exc.public_message
+            if isinstance(exc, YtDlpError)
+            else f"{type(exc).__name__}: {exc}"
+        )
+        notify_chat_id = None
+        with SyncSessionLocal() as s:
+            gen = s.get(Generation, job_id)
+            if gen:
+                gen.status = "error"
+                gen.error_message = notify_err
+                gen.completed_at = datetime.now(timezone.utc)
+                if gen.cost_paise and not gen.was_free:
+                    user_row = s.get(User, gen.user_id)
+                    if user_row:
+                        user_row.wallet_balance_paise += gen.cost_paise
+                        s.add(
+                            Transaction(
+                                user_id=user_row.id,
+                                kind="refund",
+                                amount_paise=gen.cost_paise,
+                                generation_id=gen.id,
+                                status="success",
+                                note="Auto-refund: new-engine generation failed",
+                            )
+                        )
+                s.commit()
+                user_row = s.get(User, gen.user_id)
+                notify_chat_id = user_row.telegram_chat_id if user_row else None
+
+        if notify_chat_id:
+            await asyncio.to_thread(
+                _send_telegram_message,
+                notify_chat_id,
+                "*New-engine generation failed* ✗\nWallet auto-refunded if paid.",
+            )
+    finally:
+        _in_flight_jobs.discard(job_id)
 
 
 async def _run_job(job_id: str) -> None:

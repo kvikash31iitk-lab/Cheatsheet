@@ -4,7 +4,8 @@ Provider-agnostic: the active provider is set via env (AUTHORING_PROVIDER).
 Today we ship the Groq path; OpenAI/Anthropic stubs are left for easy switch.
 
 Map-reduce summarisation: Groq's free tier limits a single request to
-~12K tokens, but real-world transcripts run 12-50K. So we split the
+8K tokens for the current Qwen authoring model, but real-world transcripts
+run 12-50K. So we split the
 transcript on its existing ``## Chunk N`` markers, summarise each chunk
 to a tight bullet list, then ask the model to author the final document
 from the combined summaries.
@@ -18,7 +19,8 @@ from pathlib import Path
 from typing import Optional, Callable
 
 from .config import (AUTHORING_MODEL, AUTHORING_PROVIDER, GROQ_API_KEY,
-                     ANTHROPIC_API_KEY, OPENAI_API_KEY, CLAUDE_CODE_BIN)
+                     ANTHROPIC_API_KEY, OPENAI_API_KEY, CLAUDE_CODE_BIN,
+                     OLLAMA_BASE_URL)
 
 ProgressFn = Optional[Callable[[str], None]]
 
@@ -76,7 +78,25 @@ RULES:
 4. Strip transcript filler ("uh", "you know", repeated phrases).
 5. Do not refer to "the video", "the speaker", "the transcript". Write as if you are explaining the topic directly.
 6. Output ONLY the markdown content. No preamble. No code-fence wrappers around the whole document.
-7. Use `->` not `→` for arrows (the renderer is ASCII-friendly).
+7. Use ASCII punctuation only. Write `->`, `~`, `Rs.`, straight quotes, and
+   ordinary `-`; never use Unicode arrows, `≈`, `₹`, smart quotes, or Unicode
+   dashes/non-breaking hyphens.
+8. Keep callout titles plain text. Do not put `**bold**`, `_italic_`, or
+   backticks inside the `[!type] Title` portion.
+
+QUALITY FLOOR FOR SUBSTANTIVE VIDEOS:
+- For a source of 8-15 minutes with enough factual material, target roughly
+  650-1,000 words and 2 balanced A4 pages. For 15-30 minutes, target roughly
+  900-1,400 words and 2-3 full A4 pages. Compact means information-dense, not
+  a one-page list of generic summaries.
+- Include at least one useful comparison/decision table and at least three
+  callouts drawn from two or more callout types when the source supports them.
+- Preserve concrete numbers, examples, decision rules, sequences, caveats,
+  and the reasoning behind recommendations.
+- Write directly. Avoid empty phrases such as "is discussed", "is mentioned",
+  or "the importance of" when a concrete explanation can be given instead.
+- If a transcript fragment is garbled or uncertain, omit it. Never invent a
+  definition for an unclear word merely to fill the glossary.
 """
 
 BOOK_SYSTEM = """You are a technical writer producing a chapter-by-chapter illustrated book from a video transcript and a list of available image frames.
@@ -292,8 +312,9 @@ def _compose_system_prompt(
 
 
 CHUNK_RE = re.compile(r"^##\s+Chunk\s+\d+", re.MULTILINE)
-TPM_LIMIT_TOKENS = 10000   # safe budget per request on Groq free tier
-INTER_CALL_DELAY_S = 8     # space requests so we stay under TPM windows
+TPM_LIMIT_TOKENS = 8000    # qwen/qwen3.6-27b free-tier request/TPM ceiling
+FINAL_BODY_BUDGET_TOKENS = 2400
+INTER_CALL_DELAY_S = 25    # several transcript chunks must share one TPM window
 
 
 # --- post-processing ---------------------------------------------------------
@@ -341,10 +362,36 @@ def strip_wrappers(md: str) -> str:
     return md
 
 
+def _strip_reasoning(md: str) -> str:
+    """Remove reasoning text if a reasoning model emits it despite settings."""
+    return re.sub(r"<think>.*?</think>\s*", "", md, flags=re.DOTALL).strip()
+
+
 # --- providers ---------------------------------------------------------------
 
 def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                  cost_sink: Optional[dict] = None) -> str:
+    # Groq rejects a request when prompt + requested completion exceeds the
+    # model's TPM ceiling, even if the model would have stopped early. Clamp
+    # the completion budget against the actual prompt before entering retries.
+    prompt_tokens = est_tokens(system) + est_tokens(user) + 96
+    available_out = TPM_LIMIT_TOKENS - prompt_tokens
+    if available_out < 256:
+        raise ValueError(
+            "Groq authoring prompt is too large after condensation: "
+            f"~{prompt_tokens} prompt tokens for an "
+            f"{TPM_LIMIT_TOKENS}-token request ceiling"
+        )
+    request_max_tokens = min(max_tokens, available_out)
+    model_options = {}
+    if AUTHORING_MODEL.startswith("qwen/"):
+        # Qwen defaults to visible reasoning in <think> tags. It can consume
+        # the full completion budget without producing the requested document.
+        model_options = {
+            "reasoning_effort": "none",
+            "reasoning_format": "hidden",
+        }
+
     from groq import Groq
     client = Groq(api_key=GROQ_API_KEY)
     last_err = None
@@ -357,9 +404,12 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                     {"role": "user", "content": user},
                 ],
                 temperature=0.3,
-                max_tokens=max_tokens,
+                max_tokens=request_max_tokens,
+                **model_options,
             )
-            text = resp.choices[0].message.content or ""
+            text = _strip_reasoning(resp.choices[0].message.content or "")
+            if not text:
+                raise RuntimeError("Groq returned an empty authoring response")
             if cost_sink is not None and getattr(resp, "usage", None):
                 cost_sink["tokens_in"] = (
                     cost_sink.get("tokens_in", 0) + int(resp.usage.prompt_tokens or 0)
@@ -375,6 +425,70 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
             print(f"[author] groq attempt {attempt}/3 failed: {exc}; waiting {wait}s")
             time.sleep(wait)
     raise RuntimeError(f"Groq authoring failed after 3 attempts: {last_err}")
+
+
+def _author_ollama(system: str, user: str, *, max_tokens: int = 8000,
+                   cost_sink: Optional[dict] = None) -> str:
+    """Author through the local Ollama HTTP API; no cloud key is required."""
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, urlopen
+
+    prompt_tokens = est_tokens(system) + est_tokens(user) + 96
+    num_ctx = max(8192, min(32768, prompt_tokens + max_tokens + 1024))
+    payload = json.dumps({
+        "model": AUTHORING_MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": max_tokens,
+            "num_ctx": num_ctx,
+        },
+    }).encode("utf-8")
+    request = Request(
+        f"{OLLAMA_BASE_URL}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    last_err = None
+    for attempt in range(1, 3):
+        try:
+            with urlopen(request, timeout=900) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            text = _strip_reasoning(
+                ((result.get("message") or {}).get("content") or "")
+            )
+            if not text:
+                raise RuntimeError("Ollama returned an empty authoring response")
+            if cost_sink is not None:
+                cost_sink["tokens_in"] = (
+                    cost_sink.get("tokens_in", 0)
+                    + int(result.get("prompt_eval_count") or prompt_tokens)
+                )
+                cost_sink["tokens_out"] = (
+                    cost_sink.get("tokens_out", 0)
+                    + int(result.get("eval_count") or est_tokens(text))
+                )
+            return text
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError,
+                RuntimeError) as exc:
+            last_err = exc
+            if attempt < 2:
+                print(
+                    f"[author] ollama attempt {attempt}/2 failed: {exc}; "
+                    "waiting 3s",
+                    flush=True,
+                )
+                time.sleep(3)
+    raise RuntimeError(
+        "Local Ollama authoring failed. Ensure Ollama is running and model "
+        f"{AUTHORING_MODEL!r} is installed. Last error: {last_err}"
+    )
 
 
 class ClaudeCodeUnrecoverableError(RuntimeError):
@@ -525,6 +639,10 @@ def _author(system: str, user: str, *, max_tokens: int = 8000,
     """
     if AUTHORING_PROVIDER == "groq":
         return _author_groq(system, user, max_tokens=max_tokens, cost_sink=cost_sink)
+    if AUTHORING_PROVIDER == "ollama":
+        return _author_ollama(
+            system, user, max_tokens=max_tokens, cost_sink=cost_sink
+        )
     if AUTHORING_PROVIDER == "claude_code":
         try:
             return _author_claude_code(
@@ -545,13 +663,32 @@ def _author(system: str, user: str, *, max_tokens: int = 8000,
             raise  # no GROQ_API_KEY configured — let the error bubble
     raise NotImplementedError(
         f"AUTHORING_PROVIDER={AUTHORING_PROVIDER!r} not wired yet — switch to "
-        "'groq' / 'claude_code' or extend bot/author.py"
+        "'ollama' / 'groq' / 'claude_code' or extend bot/author.py"
     )
 
 
 def _needs_condensation() -> bool:
     """Return True if the active provider has tight TPM limits (forcing map-reduce)."""
-    return AUTHORING_PROVIDER == "groq"
+    return AUTHORING_PROVIDER in {"groq", "ollama"}
+
+
+def _cheatsheet_quality_issues(
+    markdown: str, duration_seconds: Optional[float]
+) -> list[str]:
+    """Return structural reasons a substantive cheatsheet is too lightweight."""
+    if not duration_seconds or duration_seconds < 8 * 60:
+        return []
+
+    issues: list[str] = []
+    word_count = len(re.findall(r"\b\w+[\w'-]*\b", markdown))
+    minimum_words = 650 if duration_seconds < 15 * 60 else 800
+    if word_count < minimum_words:
+        issues.append(f"only {word_count} words")
+    if not re.search(r"(?m)^\s*\|.+\|\s*$\n\s*\|\s*:?-{3,}", markdown):
+        issues.append("no useful markdown table")
+    if markdown.count("> [!") < 3:
+        issues.append("fewer than three callouts")
+    return issues
 
 
 # --- map-reduce condensation ------------------------------------------------
@@ -583,8 +720,8 @@ def split_transcript(transcript: str, max_chunk_tokens: int) -> list[str]:
 
 def condense(transcript: str, on_progress: ProgressFn = None) -> str:
     """Map-reduce: summarise each chunk to bullets, then return concatenation."""
-    # Reserve room for the system prompt (~1.2K tokens) and output (~600).
-    chunk_budget = TPM_LIMIT_TOKENS - 1800
+    # Reserve room for instructions, response, and API message overhead.
+    chunk_budget = TPM_LIMIT_TOKENS - 1200
     chunks = split_transcript(transcript, chunk_budget)
     if len(chunks) == 1 and est_tokens(chunks[0]) < chunk_budget - 1500:
         # Already small enough — no condensation needed.
@@ -594,11 +731,32 @@ def condense(transcript: str, on_progress: ProgressFn = None) -> str:
     for i, c in enumerate(chunks, 1):
         if on_progress:
             on_progress(f"Summarising chunk {i}/{len(chunks)}...")
+        # 300 tokens regularly collapsed an eight-minute transcript chunk to
+        # a handful of generic bullets. 600 still keeps map-reduce bounded but
+        # preserves enough names, numbers, caveats, and causal reasoning for a
+        # substantial final document.
         s = _author(SUMMARISE_SYSTEM, c, max_tokens=600)
         summaries.append(f"### Section {i}\n{s.strip()}")
-        if i < len(chunks):
+        if i < len(chunks) and AUTHORING_PROVIDER == "groq":
             time.sleep(INTER_CALL_DELAY_S)
-    return "\n\n".join(summaries)
+    combined = "\n\n".join(summaries)
+    if est_tokens(combined) <= FINAL_BODY_BUDGET_TOKENS:
+        return combined
+
+    # A long recording can yield individually valid summaries whose combined
+    # size still makes the final document request invalid. Run one bounded
+    # reduce pass so authoring always receives a predictable-size source.
+    if on_progress:
+        on_progress("Combining section summaries...")
+    reduce_system = """Condense the supplied section summaries into a single,
+information-dense markdown outline. Preserve names, numbers, examples,
+comparisons, causal reasoning, caveats, and recommendations. Remove repetition.
+Use short headings and bullets only. Do not add facts or a preamble."""
+    reduced = _author(reduce_system, combined, max_tokens=1800)
+    if est_tokens(reduced) > FINAL_BODY_BUDGET_TOKENS:
+        # This is a final safety valve for providers that ignore max_tokens.
+        reduced = reduced[:FINAL_BODY_BUDGET_TOKENS * 3]
+    return reduced
 
 
 # --- public API --------------------------------------------------------------
@@ -655,6 +813,31 @@ def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None
         max_tokens=max_out,
         cost_sink=cost_sink,
     )
+    quality_issues = _cheatsheet_quality_issues(raw, duration_seconds)
+    if quality_issues:
+        if on_progress:
+            on_progress("Expanding a lightweight first draft...")
+        repair_system = full_prompt + """
+
+QUALITY REPAIR - REPLACE THE FIRST DRAFT COMPLETELY:
+The first draft failed the required density/structure checks. Produce a richer
+replacement using only facts supported by the source. Add concrete detail,
+decision rules, examples, at least one useful table, and at least three varied
+callouts. Do not pad with generic prose and do not define garbled terms.
+"""
+        repair_user = (
+            user_msg
+            + "\n\nFIRST DRAFT (replace, do not merely comment on it):\n"
+            + raw
+            + "\n\nFAILED CHECKS: "
+            + "; ".join(quality_issues)
+        )
+        raw = _author(
+            repair_system,
+            repair_user,
+            max_tokens=max_out,
+            cost_sink=cost_sink,
+        )
     return strip_wrappers(raw)
 
 

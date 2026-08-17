@@ -64,7 +64,15 @@ TELEGRAM_UPLOAD_MIN_FREE_BYTES = TELEGRAM_UPLOAD_MIN_FREE_MB * 1024 * 1024
 # === backends ================================================================
 WHISPER_BACKEND = os.environ.get("WHISPER_BACKEND", "groq").strip().lower()
 AUTHORING_PROVIDER = os.environ.get("AUTHORING_PROVIDER", "groq").strip().lower()
-AUTHORING_MODEL = os.environ.get("AUTHORING_MODEL", "llama-3.3-70b-versatile").strip()
+_DEFAULT_AUTHORING_MODEL = (
+    "qwen2.5:7b" if AUTHORING_PROVIDER == "ollama" else "llama-3.3-70b-versatile"
+)
+AUTHORING_MODEL = os.environ.get(
+    "AUTHORING_MODEL", _DEFAULT_AUTHORING_MODEL
+).strip()
+OLLAMA_BASE_URL = os.environ.get(
+    "OLLAMA_BASE_URL", "http://127.0.0.1:11434"
+).strip().rstrip("/")
 # Path to Claude Code binary. Empty = "claude" on PATH (Linux VPS default).
 CLAUDE_CODE_BIN = os.environ.get("CLAUDE_CODE_BIN", "").strip() or "claude"
 
@@ -90,7 +98,7 @@ def validate() -> list[str]:
     problems: list[str] = []
     if not TELEGRAM_BOT_TOKEN:
         problems.append("TELEGRAM_BOT_TOKEN missing in .env")
-    if not GROQ_API_KEY:
+    if WHISPER_BACKEND == "groq" and not GROQ_API_KEY:
         problems.append("GROQ_API_KEY missing — needed for Whisper transcription")
     if AUTHORING_PROVIDER == "groq" and not GROQ_API_KEY:
         problems.append("AUTHORING_PROVIDER=groq but GROQ_API_KEY is empty")

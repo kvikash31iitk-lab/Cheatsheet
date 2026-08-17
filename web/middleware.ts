@@ -3,6 +3,7 @@ import { auth } from '@/auth';
 
 const PROTECTED_PREFIXES = [
   '/generate',
+  '/new',
   '/library',
   '/dashboard',
   '/wallet',
