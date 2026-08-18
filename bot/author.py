@@ -776,9 +776,9 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
     
     model = AUTHORING_MODEL
     if not model.startswith("gemini-"):
-        model = "gemini-1.5-flash"
+        model = "gemini-2.5-flash"
         
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={GEMINI_API_KEY}"
     
     payload = {
         "contents": [
