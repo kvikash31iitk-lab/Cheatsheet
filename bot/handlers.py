@@ -115,7 +115,7 @@ URL_RE = re.compile(r"https?://\S+")
 # Tracking-param suffixes (?si=..., &t=..., #...) are allowed because the
 # regex doesn't anchor at end-of-string.
 YOUTUBE_RE = re.compile(
-    r"https?://(?:youtu\.be/|(?:www\.)?youtube\.com/(?:watch\?v=|shorts/))"
+    r"https?://(?:youtu\.be/|(?:www\.)?youtube\.com/(?:watch\?v=|shorts/|live/|embed/))"
     r"[A-Za-z0-9_-]+",
     re.IGNORECASE,
 )
@@ -124,7 +124,7 @@ YOUTUBE_RE = re.compile(
 # captures the id itself. Used to keep ``callback_data`` short — Telegram
 # caps callback_data at 64 bytes; an 11-char id leaves plenty of headroom
 # for our "gen:<action>:" prefix.
-_VIDEO_ID_RE = re.compile(r"(?:youtu\.be/|v=|/shorts/)([A-Za-z0-9_-]{11})")
+_VIDEO_ID_RE = re.compile(r"(?:youtu\.be/|v=|/shorts/|/live/|/embed/)([A-Za-z0-9_-]{11})")
 
 INTERNAL_API_BASE = os.environ.get("INTERNAL_API_BASE", "http://127.0.0.1:8000")
 INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")

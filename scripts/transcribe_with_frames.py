@@ -102,7 +102,7 @@ MAX_LOCAL_GRID_FRAMES = MAX_LOCAL_MEDIA_SECONDS // FALLBACK_INTERVAL_S + 1
 # ============================================================================
 
 ProgressFn = Optional[Callable[[str], None]]
-YOUTUBE_ID_RE = re.compile(r"(?:v=|youtu\.be/|/embed/|/shorts/)([A-Za-z0-9_-]{11})")
+YOUTUBE_ID_RE = re.compile(r"(?:v=|youtu\.be/|/embed/|/shorts/|/live/)([A-Za-z0-9_-]{11})")
 
 
 def extract_video_id(url: str) -> str:
