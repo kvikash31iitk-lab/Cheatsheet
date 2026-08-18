@@ -12,7 +12,7 @@ import {
   type Job,
 } from '@/lib/api';
 
-const YT_RE = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)[\w-]{11}/i;
+const YT_RE = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|live\/)|youtu\.be\/)[\w-]{11}/i;
 
 const AUTOMATIC_FEATURES = [
   'Caption-first extraction',
@@ -45,10 +45,17 @@ function NewEngineFlow() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const jobId = searchParams?.get('job') ?? '';
-  const [url, setUrl] = useState('');
+  const queryUrl = searchParams?.get('url') ?? '';
+  const [url, setUrl] = useState(queryUrl);
   const [submitting, setSubmitting] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (queryUrl) {
+      setUrl(queryUrl);
+    }
+  }, [queryUrl]);
 
   useEffect(() => {
     if (!jobId) {

@@ -31,7 +31,7 @@ const FEATURE_TILES: ReadonlyArray<{
   { flag: 'chapters',title: 'Index + QR',       sub: 'Chapter index page and a QR back to the video.' },
 ];
 
-const YT_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)[\w-]{11}/;
+const YT_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/(?:shorts|live)\/)[\w-]{11}/;
 
 export default function GeneratePage() {
   return (

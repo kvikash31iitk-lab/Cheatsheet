@@ -355,9 +355,13 @@ function QuickGenerate() {
   const [url, setUrl] = useState('');
   const valid = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)/.test(url);
 
-  function go(kind: 'cheatsheet' | 'book') {
+  function go(kind: 'cheatsheet' | 'book' | 'new') {
     if (!valid) return;
-    router.push(`/generate?url=${encodeURIComponent(url)}&kind=${kind}`);
+    if (kind === 'new') {
+      router.push(`/new?url=${encodeURIComponent(url)}`);
+    } else {
+      router.push(`/generate?url=${encodeURIComponent(url)}&kind=${kind}`);
+    }
   }
 
   return (
@@ -436,6 +440,15 @@ function QuickGenerate() {
           onClick={() => go('book')}
         >
           Book Notes
+        </Btn>
+        <Btn
+          variant="accent"
+          size="md"
+          icon={<Ic.sparkle size={13} />}
+          disabled={!valid}
+          onClick={() => go('new')}
+        >
+          Antigravity Engine
         </Btn>
       </div>
     </div>

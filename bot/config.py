@@ -41,6 +41,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
 
 # === access ==================================================================
 WHITELISTED_GROUP_IDS: list[int] = _id_list("WHITELISTED_GROUP_IDS")
@@ -115,6 +116,8 @@ def validate() -> list[str]:
         problems.append("AUTHORING_PROVIDER=anthropic but ANTHROPIC_API_KEY is empty")
     if AUTHORING_PROVIDER == "openai" and not OPENAI_API_KEY:
         problems.append("AUTHORING_PROVIDER=openai but OPENAI_API_KEY is empty")
+    if AUTHORING_PROVIDER == "gemini" and not GEMINI_API_KEY:
+        problems.append("AUTHORING_PROVIDER=gemini but GEMINI_API_KEY is empty")
     if not WHITELISTED_GROUP_IDS:
         problems.append("WHITELISTED_GROUP_IDS is empty — bot would respond nowhere")
     return problems

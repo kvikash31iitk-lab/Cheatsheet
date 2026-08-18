@@ -34,7 +34,7 @@ export type AdminSettings = {
   min_topup_paise: number;
   maintenance_mode: boolean;
   maintenance_message: string;
-  authoring_provider: 'claude_code' | 'groq' | 'openai' | 'anthropic';
+  authoring_provider: 'claude_code' | 'groq' | 'openai' | 'anthropic' | 'gemini';
   whisper_backend: 'local' | 'groq' | 'openai';
   max_generations_per_hour_per_user: number;
   referral_credit_paise: number;

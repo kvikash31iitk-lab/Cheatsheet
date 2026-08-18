@@ -214,6 +214,7 @@ export default function AdminSettingsPage() {
             <option value="groq">groq (free, lossy)</option>
             <option value="openai">openai (paid)</option>
             <option value="anthropic">anthropic (paid)</option>
+            <option value="gemini">gemini (Google Cloud / AI Studio)</option>
           </Select>
           <Select
             label="WHISPER BACKEND"
