@@ -362,8 +362,6 @@ Output a JSON object with this shape:
     {
       "idx": <int — the candidate's idx as given>,
       "headline": "<clean headline>",
-      "lede": "<first 2-3 sentences of the article>",
-      "body": "<the article body, lightly normalised>",
       "paper": "GS-1 | GS-2 | GS-3 | GS-4 | essay",
       "static_topics": ["<2-4 syllabus tags like 'Polity/Federalism'>"],
       "static_link": "<one-line context tying the news to a static topic>"
@@ -401,10 +399,18 @@ def _classify_via_groq(candidates: list[dict], pool: list["Article"]) -> None:
         rows = _safe_json_array(raw)
         for r in rows:
             try:
+                idx = int(r["idx"])
+                if idx < 0 or idx >= len(candidates):
+                    continue
+                c = candidates[idx]
+                body = c["body"].strip()
+                headline = str(r.get("headline", c["headline"])).strip()
+                sentences = [s.strip() for s in body.split(".") if s.strip()]
+                lede = ". ".join(sentences[:3]) + "." if sentences else body[:300]
                 pool.append(Article(
-                    headline=str(r["headline"]).strip(),
-                    lede=str(r.get("lede", "")).strip(),
-                    body=str(r.get("body", "")).strip(),
+                    headline=headline,
+                    lede=lede,
+                    body=body,
                     paper=str(r.get("paper", "GS-2")).strip(),
                     static_topics=[str(t).strip() for t in (r.get("static_topics") or [])][:4],
                     static_link=str(r.get("static_link", "")).strip(),
