@@ -226,8 +226,7 @@ CLASSIFY_SYSTEM = """You are sorting raw newspaper text into UPSC-exam-relevant 
 Input: the full extracted text of a newspaper issue (multiple pages, ads mixed
 in with stories, headers and bylines included).
 
-Output your decision strictly as a JSON markdown block inside triple backticks:
-```json
+Output a JSON object with this shape:
 {
   "articles": [
     {
@@ -240,7 +239,6 @@ Output your decision strictly as a JSON markdown block inside triple backticks:
     }
   ]
 }
-```
 
 Rules:
 - DROP advertisements, classifieds, sports scores, page-fillers, weather, market
@@ -250,7 +248,7 @@ Rules:
 - KEEP every editorial / op-ed / explainer / policy story / verdict / treaty /
   scheme launch / report release / investigation that touches the syllabus.
 - Output AT MOST 15 articles. Order by exam relevance, not by page order.
-- Output ONLY the JSON block. Do not add explanations or prose outside the code block.
+- Output ONLY a JSON object. No prose, no markdown fences.
 """
 
 
@@ -358,8 +356,7 @@ For EACH candidate, decide if it's UPSC Civil Services exam-relevant.
 - KEEP: editorials, op-eds, explainers, policy stories, court verdicts, treaties, scheme launches, report releases, investigations, foreign-policy news — anything touching GS-1 (history/geography/society/art-culture), GS-2 (polity/IR/social justice), GS-3 (economy/environment/S&T/security), GS-4 (ethics).
 - DROP: ads, classifieds, sports, weather, market tickers, horoscopes, recipes, lifestyle fluff, page-fillers, anything that doesn't touch the syllabus.
 
-Output your decision strictly as a JSON markdown block inside triple backticks:
-```json
+Output a JSON object with this shape:
 {
   "articles": [
     {
@@ -373,10 +370,9 @@ Output your decision strictly as a JSON markdown block inside triple backticks:
     }
   ]
 }
-```
 
 Order by exam relevance (most useful first). If NONE are relevant, return {"articles": []}.
-Output ONLY the JSON block. Do not add explanations or prose outside the code block.
+Output ONLY a JSON object. No prose, no markdown fences.
 """
 
 
