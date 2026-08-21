@@ -442,6 +442,7 @@ def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Artic
 
     pool: list[Article] = []
 
+    run_chunk_fallback = False
     if len(candidates) >= 5:
         # If claude_code is configured, do all candidates in ONE call (200K
         # context handles it easily). Otherwise batch 4-at-a-time through
@@ -471,10 +472,17 @@ def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Artic
                 _classify_via_groq(candidates, pool)
         else:
             _classify_via_groq(candidates, pool)
+            
+        if not pool:
+            print("  heuristic batch classify produced 0 articles; triggering fallback chunk classify")
+            run_chunk_fallback = True
     else:
+        print(f"  heuristic found <5 candidates; falling back to chunk path")
+        run_chunk_fallback = True
+
+    if run_chunk_fallback:
         # Fallback: old chunk-and-classify approach. Used when the heuristic
         # can't find bylines (Hindu, ToI, vernacular layouts, OCR damage).
-        print(f"  heuristic found <5 candidates; falling back to chunk path")
         chunks = _chunk_text(extracted_text, target_chars=4_500)
         chunks = [c for c in chunks if len(c.strip()) >= 400]
         for i, chunk in enumerate(chunks):
