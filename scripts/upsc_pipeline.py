@@ -69,11 +69,11 @@ from scripts.seed_pyq_corpus import (  # noqa: E402
 from scripts import build_illustrated_book as B  # noqa: E402
 from scripts.digest_styles import STYLES  # noqa: E402
 
-# Pin classify + author to qwen/qwen3.6-27b. The 70B model has tight
-# TPM on the Groq free tier (~6K TPM); qwen/qwen3.6-27b has ~30K TPM, plenty for
+# Pin classify + author to openai/gpt-oss-20b. The 70B model has tight
+# TPM on the Groq free tier (~6K TPM); openai/gpt-oss-20b has ~30K TPM, plenty for
 # our structured JSON / per-article extraction. Quality difference is
 # unnoticeable for these tasks.
-PIPELINE_LLM = "qwen/qwen3.6-27b"
+PIPELINE_LLM = "openai/gpt-oss-20b"
 
 
 # If Groq hints a wait longer than this, treat as a daily-quota wall (TPD)
@@ -401,7 +401,7 @@ def _classify_via_groq(candidates: list[dict], pool: list["Article"]) -> None:
         print(f"  batch classify {start+1}-{start+len(batch)}/{len(candidates)}")
         prompt = _format_candidates_for_llm(batch, start_idx=start)
         raw = _pipeline_chat(BATCH_CLASSIFY_SYSTEM, prompt,
-                             max_tokens=2500, temperature=0.2)
+                             max_tokens=2500, temperature=0.2, json_mode=True)
         rows = _safe_json_array(raw)
         for r in rows:
             try:
@@ -488,7 +488,7 @@ def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Artic
         for i, chunk in enumerate(chunks):
             print(f"  classify chunk {i+1}/{len(chunks)} ({len(chunk):,} chars)")
             raw = _pipeline_chat(CLASSIFY_SYSTEM, chunk,
-                                 max_tokens=1500, temperature=0.2)
+                                 max_tokens=1500, temperature=0.2, json_mode=True)
             rows = _safe_json_array(raw)
             for r in rows:
                 try:
