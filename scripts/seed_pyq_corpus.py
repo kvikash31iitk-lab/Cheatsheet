@@ -532,21 +532,37 @@ def _strip_fence(s: str) -> str:
 
 def _safe_json_array(raw: str) -> list[dict]:
     text = _strip_fence(raw)
-    # Try strict parse first
     try:
         parsed = json.loads(text)
-        return parsed if isinstance(parsed, list) else []
+        if isinstance(parsed, dict) and "articles" in parsed:
+            return parsed["articles"]
+        if isinstance(parsed, list):
+            return parsed
+        return []
     except json.JSONDecodeError:
         pass
-    # Last-ditch: find the first [...] block and try again
+    
+    # Try finding first [...]
     m = re.search(r"\[.*\]", text, re.DOTALL)
-    if not m:
-        return []
-    try:
-        parsed = json.loads(m.group(0))
-        return parsed if isinstance(parsed, list) else []
-    except json.JSONDecodeError:
-        return []
+    if m:
+        try:
+            parsed = json.loads(m.group(0))
+            return parsed if isinstance(parsed, list) else []
+        except json.JSONDecodeError:
+            pass
+            
+    # Try finding first {...}
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if m:
+        try:
+            parsed = json.loads(m.group(0))
+            if isinstance(parsed, dict) and "articles" in parsed:
+                return parsed["articles"]
+            return []
+        except json.JSONDecodeError:
+            pass
+            
+    return []
 
 
 # =============================================================================

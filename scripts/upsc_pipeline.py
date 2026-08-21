@@ -84,7 +84,7 @@ PIPELINE_LONG_WAIT_THRESHOLD = 90.0
 
 
 def _pipeline_chat(system: str, user: str, *, max_tokens: int = 2500,
-                   temperature: float = 0.2) -> str:
+                   temperature: float = 0.2, json_mode: bool = False) -> str:
     """Groq call pinned to ``PIPELINE_LLM`` (faster + higher TPM than 70B).
     Same retry / 429-hint logic as seed_pyq_corpus._groq_chat — but bails out
     early if Groq returns a long wait hint (means daily-quota wall, not TPM)."""
@@ -94,15 +94,18 @@ def _pipeline_chat(system: str, user: str, *, max_tokens: int = 2500,
     last_err = None
     for attempt in range(1, 7):
         try:
-            resp = client.chat.completions.create(
-                model=PIPELINE_LLM,
-                messages=[
+            kwargs = {
+                "model": PIPELINE_LLM,
+                "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
+            resp = client.chat.completions.create(**kwargs)
             return resp.choices[0].message.content or ""
         except Exception as exc:
             last_err = exc
@@ -223,16 +226,18 @@ CLASSIFY_SYSTEM = """You are sorting raw newspaper text into UPSC-exam-relevant 
 Input: the full extracted text of a newspaper issue (multiple pages, ads mixed
 in with stories, headers and bylines included).
 
-Output: a JSON array of UPSC-relevant article objects, ordered by exam
-relevance (most useful first), with this shape:
-
+Output a JSON object with this shape:
 {
-  "headline":   "<the article's headline, cleaned>",
-  "lede":       "<first 2-3 sentences of the article — what happened>",
-  "body":       "<the rest of the article, normalised whitespace>",
-  "paper":      "GS-1 | GS-2 | GS-3 | GS-4 | essay",
-  "static_topics": ["<2-4 tags from the UPSC syllabus, e.g. 'Polity/Federalism'>"],
-  "static_link": "<one-line context: which static topic this anchors to>"
+  "articles": [
+    {
+      "headline":   "<the article's headline, cleaned>",
+      "lede":       "<first 2-3 sentences of the article — what happened>",
+      "body":       "<the rest of the article, normalised whitespace>",
+      "paper":      "GS-1 | GS-2 | GS-3 | GS-4 | essay",
+      "static_topics": ["<2-4 tags from the UPSC syllabus, e.g. 'Polity/Federalism'>"],
+      "static_link": "<one-line context: which static topic this anchors to>"
+    }
+  ]
 }
 
 Rules:
@@ -243,7 +248,7 @@ Rules:
 - KEEP every editorial / op-ed / explainer / policy story / verdict / treaty /
   scheme launch / report release / investigation that touches the syllabus.
 - Output AT MOST 15 articles. Order by exam relevance, not by page order.
-- Output ONLY a JSON array. No prose, no markdown fences.
+- Output ONLY a JSON object. No prose, no markdown fences.
 """
 
 
@@ -351,19 +356,23 @@ For EACH candidate, decide if it's UPSC Civil Services exam-relevant.
 - KEEP: editorials, op-eds, explainers, policy stories, court verdicts, treaties, scheme launches, report releases, investigations, foreign-policy news — anything touching GS-1 (history/geography/society/art-culture), GS-2 (polity/IR/social justice), GS-3 (economy/environment/S&T/security), GS-4 (ethics).
 - DROP: ads, classifieds, sports, weather, market tickers, horoscopes, recipes, lifestyle fluff, page-fillers, anything that doesn't touch the syllabus.
 
-For each KEEP, output one JSON object:
+Output a JSON object with this shape:
 {
-  "idx": <int — the candidate's idx as given>,
-  "headline": "<clean headline>",
-  "lede": "<first 2-3 sentences of the article>",
-  "body": "<the article body, lightly normalised>",
-  "paper": "GS-1 | GS-2 | GS-3 | GS-4 | essay",
-  "static_topics": ["<2-4 syllabus tags like 'Polity/Federalism'>"],
-  "static_link": "<one-line context tying the news to a static topic>"
+  "articles": [
+    {
+      "idx": <int — the candidate's idx as given>,
+      "headline": "<clean headline>",
+      "lede": "<first 2-3 sentences of the article>",
+      "body": "<the article body, lightly normalised>",
+      "paper": "GS-1 | GS-2 | GS-3 | GS-4 | essay",
+      "static_topics": ["<2-4 syllabus tags like 'Polity/Federalism'>"],
+      "static_link": "<one-line context tying the news to a static topic>"
+    }
+  ]
 }
 
-Output ONLY a JSON array of the KEEP objects. No prose, no markdown fences.
-Order by exam relevance (most useful first). If NONE are relevant, output [].
+Order by exam relevance (most useful first). If NONE are relevant, return {"articles": []}.
+Output ONLY a JSON object. No prose, no markdown fences.
 """
 
 
@@ -388,7 +397,7 @@ def _classify_via_groq(candidates: list[dict], pool: list["Article"]) -> None:
         print(f"  batch classify {start+1}-{start+len(batch)}/{len(candidates)}")
         prompt = _format_candidates_for_llm(batch, start_idx=start)
         raw = _pipeline_chat(BATCH_CLASSIFY_SYSTEM, prompt,
-                             max_tokens=2500, temperature=0.2)
+                             max_tokens=2500, temperature=0.2, json_mode=True)
         rows = _safe_json_array(raw)
         for r in rows:
             try:
@@ -467,7 +476,7 @@ def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Artic
         for i, chunk in enumerate(chunks):
             print(f"  classify chunk {i+1}/{len(chunks)} ({len(chunk):,} chars)")
             raw = _pipeline_chat(CLASSIFY_SYSTEM, chunk,
-                                 max_tokens=1500, temperature=0.2)
+                                 max_tokens=1500, temperature=0.2, json_mode=True)
             rows = _safe_json_array(raw)
             for r in rows:
                 try:
