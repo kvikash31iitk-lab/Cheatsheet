@@ -226,7 +226,8 @@ CLASSIFY_SYSTEM = """You are sorting raw newspaper text into UPSC-exam-relevant 
 Input: the full extracted text of a newspaper issue (multiple pages, ads mixed
 in with stories, headers and bylines included).
 
-Output a JSON object with this shape:
+Output your decision strictly as a JSON markdown block inside triple backticks:
+```json
 {
   "articles": [
     {
@@ -239,6 +240,7 @@ Output a JSON object with this shape:
     }
   ]
 }
+```
 
 Rules:
 - DROP advertisements, classifieds, sports scores, page-fillers, weather, market
@@ -248,7 +250,7 @@ Rules:
 - KEEP every editorial / op-ed / explainer / policy story / verdict / treaty /
   scheme launch / report release / investigation that touches the syllabus.
 - Output AT MOST 15 articles. Order by exam relevance, not by page order.
-- Output ONLY a JSON object. No prose, no markdown fences.
+- Output ONLY the JSON block. Do not add explanations or prose outside the code block.
 """
 
 
@@ -356,7 +358,8 @@ For EACH candidate, decide if it's UPSC Civil Services exam-relevant.
 - KEEP: editorials, op-eds, explainers, policy stories, court verdicts, treaties, scheme launches, report releases, investigations, foreign-policy news — anything touching GS-1 (history/geography/society/art-culture), GS-2 (polity/IR/social justice), GS-3 (economy/environment/S&T/security), GS-4 (ethics).
 - DROP: ads, classifieds, sports, weather, market tickers, horoscopes, recipes, lifestyle fluff, page-fillers, anything that doesn't touch the syllabus.
 
-Output a JSON object with this shape:
+Output your decision strictly as a JSON markdown block inside triple backticks:
+```json
 {
   "articles": [
     {
@@ -370,9 +373,10 @@ Output a JSON object with this shape:
     }
   ]
 }
+```
 
 Order by exam relevance (most useful first). If NONE are relevant, return {"articles": []}.
-Output ONLY a JSON object. No prose, no markdown fences.
+Output ONLY the JSON block. Do not add explanations or prose outside the code block.
 """
 
 
@@ -397,7 +401,7 @@ def _classify_via_groq(candidates: list[dict], pool: list["Article"]) -> None:
         print(f"  batch classify {start+1}-{start+len(batch)}/{len(candidates)}")
         prompt = _format_candidates_for_llm(batch, start_idx=start)
         raw = _pipeline_chat(BATCH_CLASSIFY_SYSTEM, prompt,
-                             max_tokens=2500, temperature=0.2, json_mode=True)
+                             max_tokens=2500, temperature=0.2)
         rows = _safe_json_array(raw)
         for r in rows:
             try:
@@ -476,7 +480,7 @@ def stage_classify(extracted_text: str, *, max_articles: int = 12) -> list[Artic
         for i, chunk in enumerate(chunks):
             print(f"  classify chunk {i+1}/{len(chunks)} ({len(chunk):,} chars)")
             raw = _pipeline_chat(CLASSIFY_SYSTEM, chunk,
-                                 max_tokens=1500, temperature=0.2, json_mode=True)
+                                 max_tokens=1500, temperature=0.2)
             rows = _safe_json_array(raw)
             for r in rows:
                 try:
