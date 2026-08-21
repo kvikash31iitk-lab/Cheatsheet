@@ -782,10 +782,8 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
     # List of models to try in sequence if we hit 404, 503, or rate limits
     models_to_try = [
         primary_model,
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-pro"
+        "gemini-3.7-flash",
+        "gemini-3.1-flash-lite"
     ]
     # Deduplicate while preserving order
     models_to_try = list(dict.fromkeys(models_to_try))
@@ -1102,7 +1100,11 @@ callouts. Do not pad with generic prose and do not define garbled terms.
             max_tokens=max_out,
             cost_sink=cost_sink,
         )
-    return strip_wrappers(raw)
+    cleaned = strip_wrappers(raw)
+    if not any(line.lstrip().startswith("#") for line in cleaned.splitlines()):
+        title = (title_hint or "Cheatsheet Summary").replace('\n', ' ').strip()
+        cleaned = f"# {title}\n\n### distilled from video walkthrough\n\n{cleaned}"
+    return cleaned
 
 
 def author_book(transcript_path: Path, frames_index_path: Path, *,
@@ -1154,4 +1156,8 @@ def author_book(transcript_path: Path, frames_index_path: Path, *,
         max_tokens=max_out,
         cost_sink=cost_sink,
     )
-    return strip_wrappers(raw)
+    cleaned = strip_wrappers(raw)
+    if not any(line.lstrip().startswith("#") for line in cleaned.splitlines()):
+        title = (title_hint or "Illustrated Book Notes").replace('\n', ' ').strip()
+        cleaned = f"# {title}\n\n### distilled from video walkthrough\n\n{cleaned}"
+    return cleaned

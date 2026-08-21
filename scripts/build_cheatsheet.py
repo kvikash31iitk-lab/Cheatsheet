@@ -24,7 +24,7 @@ from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 from reportlab.lib import colors
 from reportlab.platypus import (
     BaseDocTemplate, PageTemplate, Frame, Paragraph, Spacer, PageBreak,
-    Table, TableStyle, KeepTogether, Image,
+    Table, TableStyle, KeepTogether, Image, Preformatted,
 )
 from PIL import Image as PILImage
 
@@ -122,6 +122,24 @@ def _ascii_safe(text: str) -> str:
         "\u00d7": "x",
         "\u00b1": "+/-",
         "\u20b9": "Rs. ",
+        "┌": "+",
+        "┐": "+",
+        "└": "+",
+        "┘": "+",
+        "├": "+",
+        "┤": "+",
+        "┬": "+",
+        "┴": "+",
+        "┼": "+",
+        "│": "|",
+        "─": "-",
+        "▼": "v",
+        "▲": "^",
+        "■": "#",
+        "█": "#",
+        "░": "#",
+        "▒": "#",
+        "▓": "#",
     }
     return "".join(replacements.get(char, char) for char in text)
 
@@ -150,6 +168,15 @@ def parse_blocks(md: str):
         line = lines[i]; stripped = line.strip()
         if not stripped:
             i += 1; continue
+        if stripped.startswith("```"):
+            lang = stripped.lstrip("`").strip()
+            buf = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                buf.append(lines[i]); i += 1
+            if i < len(lines):
+                i += 1
+            yield ("code", (lang, "\n".join(buf))); continue
         if re.match(r"^---+$", stripped):
             yield ("hr", None); i += 1; continue
         m_img = IMAGE_RE.match(stripped)
@@ -572,6 +599,16 @@ def render_block(kind, payload, story):
         story.append(Spacer(1, 2))
         story.append(_rule())
         story.append(Spacer(1, 2))
+        return
+    if kind == "code":
+        lang, code_text = payload
+        code_text = _ascii_safe(code_text)
+        c_style = ParagraphStyle("CodeBlock", parent=BODY, fontName="Courier",
+                                 fontSize=6.5, leading=8.5, textColor=colors.HexColor("#2C3E50"),
+                                 backColor=colors.HexColor("#F8F9FA"), borderPadding=4,
+                                 borderWidth=0.4, borderColor=colors.HexColor("#E2E8F0"),
+                                 borderRadius=3, spaceBefore=3, spaceAfter=3)
+        story.append(Preformatted(code_text, c_style))
         return
 
 
