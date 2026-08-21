@@ -182,7 +182,7 @@ def download_pdf(url: str) -> Path:
 # PDF -> text (Tesseract first; Groq vision LLM as fallback)
 # =============================================================================
 
-OCR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+OCR_MODEL = "qwen/qwen3.6-27b"
 OCR_DPI = 150            # rendering DPI when handing the page to Tesseract / vision
 TESSERACT_MIN_CHARS = 80  # Tesseract output shorter than this triggers vision fallback
 

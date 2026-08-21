@@ -69,11 +69,11 @@ from scripts.seed_pyq_corpus import (  # noqa: E402
 from scripts import build_illustrated_book as B  # noqa: E402
 from scripts.digest_styles import STYLES  # noqa: E402
 
-# Pin classify + author to llama-3.1-8b-instant. The 70B model has tight
-# TPM on the Groq free tier (~6K TPM); 8b-instant has ~30K TPM, plenty for
+# Pin classify + author to qwen/qwen3.6-27b. The 70B model has tight
+# TPM on the Groq free tier (~6K TPM); qwen/qwen3.6-27b has ~30K TPM, plenty for
 # our structured JSON / per-article extraction. Quality difference is
 # unnoticeable for these tasks.
-PIPELINE_LLM = "llama-3.1-8b-instant"
+PIPELINE_LLM = "qwen/qwen3.6-27b"
 
 
 # If Groq hints a wait longer than this, treat as a daily-quota wall (TPD)
