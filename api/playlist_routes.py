@@ -154,6 +154,16 @@ async def list_playlists(
         if manifest_path.is_file():
             try:
                 data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                items_data = []
+                for item_key, item_val in data.get("items", {}).items():
+                    res = item_val.get("result", {})
+                    items_data.append({
+                        "item_key": item_key,
+                        "title": res.get("title") or item_val.get("title") or item_key,
+                        "status": item_val.get("status"),
+                        "video_id": res.get("video_id"),
+                        "has_pdf": bool(res.get("pdf_path") and Path(res.get("pdf_path")).is_file()),
+                    })
                 results.append({
                     "id": job_dir.name,
                     "playlist_url": data.get("playlist_url"),
@@ -161,7 +171,7 @@ async def list_playlists(
                     "created_at": data.get("created_at"),
                     "total_videos": data.get("total_videos", 0),
                     "summary": data.get("summary"),
-                    "items_count": len(data.get("items", {})),
+                    "items": items_data,
                 })
             except Exception:
                 pass
@@ -179,4 +189,37 @@ async def download_master_pdf(
     if not master_pdf.is_file():
         raise HTTPException(404, "Master PDF not found")
     return FileResponse(master_pdf, media_type="application/pdf", filename=f"master_cheatsheet_{job_id[:8]}.pdf")
+
+
+@router.get("/download/{job_id}/item/{item_key}")
+async def download_item_pdf(
+    job_id: str,
+    item_key: str,
+    user: User = Depends(current_user),
+):
+    """Serve individual video cheatsheet PDF for a playlist item."""
+    from fastapi.responses import FileResponse
+    job_dir = PLAYLIST_WORK_ROOT / job_id
+    manifest_path = job_dir / "playlist_manifest.json"
+    if not manifest_path.is_file():
+        raise HTTPException(404, "Playlist job manifest not found")
+
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    item_val = data.get("items", {}).get(item_key)
+    if not item_val or not item_val.get("result"):
+        raise HTTPException(404, "Playlist video item not found")
+
+    pdf_str = item_val["result"].get("pdf_path")
+    pdf_path = Path(pdf_str) if pdf_str else None
+    if not pdf_path or not pdf_path.is_file():
+        # Fallback search inside item folder
+        candidates = list((job_dir / item_key).glob("**/*.pdf"))
+        if candidates:
+            pdf_path = candidates[0]
+        else:
+            raise HTTPException(404, "Individual PDF file not found")
+
+    clean_name = f"cheatsheet_{item_key}.pdf"
+    return FileResponse(pdf_path, media_type="application/pdf", filename=clean_name)
+
 

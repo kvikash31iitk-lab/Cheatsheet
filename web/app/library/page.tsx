@@ -226,47 +226,12 @@ export default function LibraryPage() {
               }}
             >
               {playlists.map((pl) => (
-                <div
-                  key={pl.id}
-                  style={{
-                    background: 'var(--c-surface)',
-                    border: '1.5px solid var(--c-accent)',
-                    borderRadius: 12,
-                    padding: 16,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-
-                  }}
-                >
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <Tag tone="accent">PLAYLIST</Tag>
-                      <span style={{ fontSize: 11, color: 'var(--c-ink-3)', fontFamily: 'var(--font-mono)' }}>
-                        {pl.total_videos} Videos
-                      </span>
-                    </div>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--c-ink)', marginBottom: 8, wordBreak: 'break-all' }}>
-                      {pl.playlist_url}
-                    </div>
-                  </div>
-                  <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-                    <a
-                      href={`/api/playlist/download/${pl.id}/master`}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ textDecoration: 'none', flex: 1 }}
-                    >
-                      <Btn variant="accent" size="sm" style={{ width: '100%' }}>
-                        📄 Download Master PDF
-                      </Btn>
-                    </a>
-                  </div>
-                </div>
+                <PlaylistCard key={pl.id} pl={pl} />
               ))}
             </div>
           </div>
         )}
+
 
         {/* Single Video Grid */}
         {filter !== 'playlist' && (
@@ -292,7 +257,118 @@ export default function LibraryPage() {
   );
 }
 
+function PlaylistCard({ pl }: { pl: any }) {
+  const [expanded, setExpanded] = useState(false);
+  const items = pl.items || [];
+
+  return (
+    <div
+      style={{
+        background: 'var(--c-surface)',
+        border: '1.5px solid var(--c-accent)',
+        borderRadius: 12,
+        padding: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+      }}
+    >
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <Tag tone="accent">PLAYLIST</Tag>
+          <span style={{ fontSize: 11, color: 'var(--c-ink-3)', fontFamily: 'var(--font-mono)' }}>
+            {pl.total_videos} Videos
+          </span>
+        </div>
+        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--c-ink)', marginBottom: 8, wordBreak: 'break-all' }}>
+          {pl.playlist_url}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <a
+          href={`/api/playlist/download/${pl.id}/master`}
+          target="_blank"
+          rel="noreferrer"
+          style={{ textDecoration: 'none' }}
+        >
+          <Btn variant="accent" size="sm" style={{ width: '100%' }}>
+            📄 Download Consolidated Master PDF
+          </Btn>
+        </a>
+
+        {items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            style={{
+              padding: '8px 12px',
+              borderRadius: 6,
+              border: '1px solid var(--c-line)',
+              background: 'var(--c-surface-2)',
+              color: 'var(--c-ink)',
+              fontSize: 12,
+              cursor: 'pointer',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <span>📹 View Individual Video Cheatsheets ({items.length})</span>
+            <span>{expanded ? '▲' : '▼'}</span>
+          </button>
+        )}
+
+        {expanded && (
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto', paddingRight: 4 }}>
+            {items.map((it: any) => (
+              <div
+                key={it.item_key}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '6px 8px',
+                  background: 'var(--c-surface-2)',
+                  borderRadius: 6,
+                  fontSize: 12,
+                }}
+              >
+                <span
+                  style={{
+                    color: 'var(--c-ink)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    maxWidth: 200,
+                  }}
+                  title={it.title}
+                >
+                  {it.title}
+                </span>
+                {it.has_pdf ? (
+                  <a
+                    href={`/api/playlist/download/${pl.id}/item/${it.item_key}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ textDecoration: 'none', color: 'var(--c-accent)', fontWeight: 600 }}
+                  >
+                    PDF ⬇️
+                  </a>
+                ) : (
+                  <span style={{ color: 'var(--c-ink-3)', fontSize: 11 }}>Pending</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function EmptyState({ filter, hasAny }: { filter: Filter; hasAny: boolean }) {
+
   const msg =
     !hasAny
       ? 'No generations yet. Paste a YouTube link to make your first one.'
