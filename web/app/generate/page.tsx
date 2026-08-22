@@ -461,11 +461,9 @@ function GenerateForm() {
                       );
                     })}
                   </div>
-
-                  </div>
-
                 </div>
               )}
+
 
               {playlistStatus.status === 'complete' && playlistStatus.summary && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
