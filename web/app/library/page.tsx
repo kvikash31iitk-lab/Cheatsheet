@@ -235,7 +235,8 @@ export default function LibraryPage() {
                     padding: 16,
                     display: 'flex',
                     flexDirection: 'column',
-                    justify: 'space-between',
+                    justifyContent: 'space-between',
+
                   }}
                 >
                   <div>
