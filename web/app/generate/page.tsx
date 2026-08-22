@@ -34,7 +34,8 @@ const FEATURE_TILES: ReadonlyArray<{
 ];
 
 const YT_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/(?:shorts|live)\/)[\w-]{11}/;
-const PLAYLIST_RE = /^https?:\/\/(www\.)?youtube\.com\/playlist\?list=[\w-]+/i;
+const PLAYLIST_RE = /^https?:\/\/(www\.)?youtube\.com\/(playlist\?list=|watch\?.*[?&]list=)[\w-]+/i;
+
 
 
 export default function GeneratePage() {
