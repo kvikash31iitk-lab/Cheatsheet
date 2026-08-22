@@ -66,6 +66,16 @@ def _async_run_playlist(job_id: str, req: PlaylistGenerateRequest) -> None:
         _playlist_jobs[job_id]["status"] = "error"
         _playlist_jobs[job_id]["error"] = str(exc)
         _playlist_jobs[job_id]["progress"] = f"Failed: {exc}"
+        manifest_path = job_dir / "playlist_manifest.json"
+        try:
+            manifest_path.write_text(json.dumps({
+                "status": "error",
+                "error": str(exc),
+                "progress": f"Failed: {exc}"
+            }), encoding="utf-8")
+        except Exception:
+            pass
+
 
 
 
