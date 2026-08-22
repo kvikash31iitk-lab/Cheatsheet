@@ -286,16 +286,29 @@ function PlaylistCard({ pl }: { pl: any }) {
       </div>
 
       <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <a
-          href={`/api/playlist/download/${pl.id}/master`}
-          target="_blank"
-          rel="noreferrer"
-          style={{ textDecoration: 'none' }}
-        >
-          <Btn variant="accent" size="sm" style={{ width: '100%' }}>
-            📄 Download Consolidated Master PDF
-          </Btn>
-        </a>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <a
+            href={`/api/playlist/download/${pl.id}/master`}
+            target="_blank"
+            rel="noreferrer"
+            style={{ textDecoration: 'none', flex: 1 }}
+          >
+            <Btn variant="accent" size="sm" style={{ width: '100%' }}>
+              📄 Master PDF
+            </Btn>
+          </a>
+          <a
+            href={`/api/playlist/download/${pl.id}/zip`}
+            target="_blank"
+            rel="noreferrer"
+            style={{ textDecoration: 'none', flex: 1 }}
+          >
+            <Btn variant="primary" size="sm" style={{ width: '100%' }}>
+              📦 Download ZIP (All)
+            </Btn>
+          </a>
+        </div>
+
 
         {items.length > 0 && (
           <button

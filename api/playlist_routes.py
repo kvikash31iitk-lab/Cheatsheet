@@ -235,4 +235,38 @@ async def download_item_pdf(
     return FileResponse(pdf_path, media_type="application/pdf", filename=clean_name)
 
 
+@router.get("/download/{job_id}/zip")
+async def download_playlist_zip(
+    job_id: str,
+    user: User = Depends(current_user),
+):
+    """Bundle all generated master and individual PDFs/markdowns into a zip file."""
+    import zipfile
+    from fastapi.responses import FileResponse
+
+    job_dir = PLAYLIST_WORK_ROOT / job_id
+    if not job_dir.is_dir():
+        raise HTTPException(404, "Playlist job directory not found")
+
+    zip_path = job_dir / f"playlist_cheatsheets_{job_id[:8]}.zip"
+
+    # Always generate/refresh zip with surviving PDFs and markdowns
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in job_dir.glob("**/*"):
+            if file.is_file() and file.name != zip_path.name and not file.name.endswith(".tmp"):
+                if file.suffix in (".pdf", ".md", ".txt", ".json"):
+                    rel = file.relative_to(job_dir)
+                    zf.write(file, arcname=str(rel))
+
+    if not zip_path.is_file():
+        raise HTTPException(404, "Failed to create ZIP package")
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"playlist_cheatsheets_{job_id[:8]}.zip",
+    )
+
+
+
 
