@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { AppBar } from '@/components/app-bar';
 import { Btn, Tag } from '@/components/ui';
 import { Ic } from '@/components/icons';
-import { getLibrary, listPlaylists, type Job } from '@/lib/api';
+import { getLibrary, listPlaylists, retryPlaylistJob, type Job } from '@/lib/api';
+
 
 type Filter = 'all' | 'cheatsheet' | 'book' | 'playlist' | 'failed';
 
@@ -226,8 +227,13 @@ export default function LibraryPage() {
               }}
             >
               {playlists.map((pl) => (
-                <PlaylistCard key={pl.id} pl={pl} />
+                <PlaylistCard
+                  key={pl.id}
+                  pl={pl}
+                  onReload={() => listPlaylists().then(setPlaylists).catch(() => {})}
+                />
               ))}
+
             </div>
           </div>
         )}
@@ -257,9 +263,25 @@ export default function LibraryPage() {
   );
 }
 
-function PlaylistCard({ pl }: { pl: any }) {
+function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
   const [expanded, setExpanded] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const items = pl.items || [];
+  const completedCount = items.filter((it: any) => it.status === 'complete' || it.has_pdf).length;
+  const hasRemaining = items.some((it: any) => it.status === 'failed' || it.status === 'pending' || !it.has_pdf);
+  const isRunning = pl.status === 'running';
+
+  const handleRetry = async () => {
+    try {
+      setRetrying(true);
+      await retryPlaylistJob(pl.id);
+      if (onReload) onReload();
+    } catch (e: any) {
+      alert(e?.message || 'Failed to retry playlist');
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   return (
     <div
@@ -275,9 +297,12 @@ function PlaylistCard({ pl }: { pl: any }) {
     >
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <Tag tone="accent">PLAYLIST</Tag>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <Tag tone="accent">PLAYLIST</Tag>
+            {isRunning && <Tag tone="mint">⚡ Processing</Tag>}
+          </div>
           <span style={{ fontSize: 11, color: 'var(--c-ink-3)', fontFamily: 'var(--font-mono)' }}>
-            {pl.total_videos} Videos
+            {completedCount} / {pl.total_videos || items.length} Completed
           </span>
         </div>
         <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--c-ink)', marginBottom: 8, wordBreak: 'break-all' }}>
@@ -286,12 +311,12 @@ function PlaylistCard({ pl }: { pl: any }) {
       </div>
 
       <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <a
             href={`/api/playlist/download/${pl.id}/master`}
             target="_blank"
             rel="noreferrer"
-            style={{ textDecoration: 'none', flex: 1 }}
+            style={{ textDecoration: 'none', flex: 1, minWidth: 120 }}
           >
             <Btn variant="accent" size="sm" style={{ width: '100%' }}>
               📄 Master PDF
@@ -301,13 +326,26 @@ function PlaylistCard({ pl }: { pl: any }) {
             href={`/api/playlist/download/${pl.id}/zip`}
             target="_blank"
             rel="noreferrer"
-            style={{ textDecoration: 'none', flex: 1 }}
+            style={{ textDecoration: 'none', flex: 1, minWidth: 120 }}
           >
             <Btn variant="primary" size="sm" style={{ width: '100%' }}>
               📦 Download ZIP (All)
             </Btn>
           </a>
         </div>
+
+        {hasRemaining && (
+          <Btn
+            variant="secondary"
+            size="sm"
+            onClick={handleRetry}
+            disabled={retrying || isRunning}
+            style={{ width: '100%', borderColor: 'var(--c-accent)', color: 'var(--c-accent)', fontWeight: 600 }}
+          >
+            {retrying ? '🔄 Starting Retry...' : isRunning ? '⚡ In Progress...' : '🔄 Retry Remaining Videos'}
+          </Btn>
+        )}
+
 
 
         {items.length > 0 && (
