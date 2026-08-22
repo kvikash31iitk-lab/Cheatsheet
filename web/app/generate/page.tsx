@@ -129,12 +129,13 @@ function GenerateForm() {
 
   useEffect(() => {
     if (!playlistJobId) return;
+    const jobId: string = playlistJobId;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     async function pollPlaylist() {
       try {
-        const res = await fetch(`/api/playlist/status/${encodeURIComponent(playlistJobId)}`);
+        const res = await fetch(`/api/playlist/status/${encodeURIComponent(jobId)}`);
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;
@@ -153,6 +154,7 @@ function GenerateForm() {
       if (timer) clearTimeout(timer);
     };
   }, [playlistJobId]);
+
 
   async function submit() {
     const isPlaylistMode = mode === 'playlist';
