@@ -837,12 +837,12 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
                 last_err = exc
                 error_msg = str(exc).casefold()
                 
-                # Fall over to next model immediately for 404/503/Not Found/Unavailable
-                if ("404" in error_msg or "503" in error_msg or "not found" in error_msg or "unavailable" in error_msg) and model != models_to_try[-1]:
-                    print(f"[author] gemini model {model} failed ({exc}); falling back to next model", flush=True)
+                # Fall over to next model immediately for 404/503/429/RESOURCE_EXHAUSTED/Quota
+                if any(err_token in error_msg for err_token in ("404", "503", "429", "resource_exhausted", "quota", "not found", "unavailable")) and model != models_to_try[-1]:
+                    print(f"[author] gemini model {model} rate limited or unavailable ({exc}); falling back immediately to next model", flush=True)
                     break
                     
-                wait = 10 * attempt
+                wait = 5 * attempt
                 print(f"[author] gemini {model} attempt {attempt}/3 failed: {exc}; waiting {wait}s", flush=True)
                 if attempt < 3:
                     time.sleep(wait)
@@ -850,6 +850,7 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
             continue
             
     raise RuntimeError(f"Gemini authoring failed after trying all models. Last error: {last_err}")
+
 
 
 def _author(system: str, user: str, *, max_tokens: int = 8000,
