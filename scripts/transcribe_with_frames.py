@@ -349,10 +349,11 @@ def _fetch_captions_with_ytdlp(
                     *profile_args,
                     "--skip-download", "--no-playlist",
                     "--write-subs", "--write-auto-subs",
-                    "--sub-langs", "en.*,en,-live_chat",
+                    "--sub-langs", "en.*,hi.*,hi,en,-live_chat",
                     "--sub-format", "json3",
                     "-o", str(output_template),
                     url,
+
                 ],
                 operation=f"download captions ({name} client)",
             )

@@ -782,12 +782,15 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
     models_to_try = [
         primary_model,
         "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash"
+        "gemini-2.5-flash-lite",
+        "gemini-1.5-flash-8b",
+        "gemini-1.5-pro",
+        "gemini-2.0-flash-lite"
     ]
     models_to_try = list(dict.fromkeys(models_to_try))
     
     keys_to_try = list(dict.fromkeys(GEMINI_API_KEYS or [GEMINI_API_KEY]))
+
     
     last_err = None
     for api_key in keys_to_try:
