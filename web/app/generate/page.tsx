@@ -127,6 +127,33 @@ function GenerateForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview]);
 
+  useEffect(() => {
+    if (!playlistJobId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    async function pollPlaylist() {
+      try {
+        const res = await fetch(`/api/playlist/status/${encodeURIComponent(playlistJobId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setPlaylistStatus(data);
+        if (data.status === 'running') {
+          timer = setTimeout(pollPlaylist, 3000);
+        }
+      } catch (e) {
+        console.error('Playlist status error', e);
+      }
+    }
+
+    pollPlaylist();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [playlistJobId]);
+
   async function submit() {
     const isPlaylistMode = mode === 'playlist';
     const isUrlValid = isPlaylistMode ? PLAYLIST_RE.test(url.trim()) : valid;
@@ -138,7 +165,6 @@ function GenerateForm() {
         const { id } = await createPlaylistJob(url.trim(), kind, delaySeconds, maxVideos);
         setPlaylistJobId(id);
         setSubmitting(false);
-        // Start polling playlist status
         setPlaylistStatus({ status: 'running', progress: 'Extracting playlist info...' });
       } else {
         const { id } = await createJob(url, kind, Array.from(features));
@@ -149,6 +175,7 @@ function GenerateForm() {
       setSubmitting(false);
     }
   }
+
 
 
   return (
@@ -220,6 +247,42 @@ function GenerateForm() {
             📑 Playlist Extraction
           </button>
         </div>
+
+        {/* Live Playlist Progress Dashboard Banner */}
+        {playlistStatus && (
+          <div
+            style={{
+              padding: 16,
+              background: 'var(--c-surface)',
+              border: '1.5px solid var(--c-accent)',
+              borderRadius: 12,
+              marginBottom: 24,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--c-ink)' }}>
+                📑 Playlist Extraction Job
+              </div>
+              <Tag tone={playlistStatus.status === 'complete' ? 'mint' : playlistStatus.status === 'error' ? 'error' : 'accent'}>
+                {playlistStatus.status?.toUpperCase()}
+              </Tag>
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--c-ink-2)', marginBottom: 8 }}>
+              {playlistStatus.progress || 'Processing playlist in background...'}
+            </div>
+            {playlistStatus.status === 'complete' && playlistStatus.summary && (
+              <div style={{ fontSize: 13, color: 'var(--c-mint)', fontWeight: 500 }}>
+                🎉 Successfully processed {playlistStatus.summary.successful_videos} / {playlistStatus.summary.total_videos} videos!
+              </div>
+            )}
+            {playlistStatus.error && (
+              <div style={{ fontSize: 13, color: 'var(--c-error)' }}>
+                ❌ {playlistStatus.error}
+              </div>
+            )}
+          </div>
+        )}
+
 
         <label
           style={{
