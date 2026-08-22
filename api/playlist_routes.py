@@ -298,6 +298,13 @@ async def list_playlists(
 
 
 
+def _clean_filename(s: str, max_len: int = 60) -> str:
+    """Format title into a clean filename safe for all OS filesystems."""
+    s = re.sub(r'[\\/*?:"<>|]', '', s)
+    s = re.sub(r'\s+', '_', s).strip('_. ')
+    return s[:max_len].strip('_. ') if s else "Notes"
+
+
 @router.get("/download/{job_id}/master")
 async def download_master_pdf(
     job_id: str,
@@ -305,10 +312,23 @@ async def download_master_pdf(
 ):
     """Serve master consolidated PDF for a playlist job."""
     from fastapi.responses import FileResponse
-    master_pdf = PLAYLIST_WORK_ROOT / job_id / "Consolidated" / "master_cheatsheet.pdf"
+    job_dir = PLAYLIST_WORK_ROOT / job_id
+    master_pdf = job_dir / "Consolidated" / "master_cheatsheet.pdf"
     if not master_pdf.is_file():
         raise HTTPException(404, "Master PDF not found")
-    return FileResponse(master_pdf, media_type="application/pdf", filename=f"master_cheatsheet_{job_id[:8]}.pdf")
+
+    # Use playlist title or course name if present in manifest
+    manifest_path = job_dir / "playlist_manifest.json"
+    title_slug = "Master_Course_Notes"
+    if manifest_path.is_file():
+        try:
+            m = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if m.get("playlist_title"):
+                title_slug = _clean_filename(m["playlist_title"])
+        except Exception:
+            pass
+
+    return FileResponse(master_pdf, media_type="application/pdf", filename=f"{title_slug}.pdf")
 
 
 @router.get("/download/{job_id}/item/{item_key}")
@@ -330,8 +350,8 @@ async def download_item_pdf(
         raise HTTPException(404, "Playlist video item not found")
 
     pdf_path = None
-    res = item_val.get("result")
-    if res and res.get("pdf_path"):
+    res = item_val.get("result") or {}
+    if res.get("pdf_path"):
         p = Path(res["pdf_path"])
         if p.is_file():
             pdf_path = p
@@ -344,7 +364,8 @@ async def download_item_pdf(
     if not pdf_path or not pdf_path.is_file():
         raise HTTPException(404, "Individual PDF file not found for this item")
 
-    clean_name = f"cheatsheet_{item_key}.pdf"
+    raw_title = res.get("title") or item_val.get("title") or item_key
+    clean_name = f"{_clean_filename(raw_title)}.pdf"
     return FileResponse(pdf_path, media_type="application/pdf", filename=clean_name)
 
 
@@ -353,7 +374,7 @@ async def download_playlist_zip(
     job_id: str,
     user: User = Depends(current_user),
 ):
-    """Bundle all generated master and individual PDFs/markdowns into a zip file."""
+    """Bundle all generated master and individual PDFs into a clean, well-named zip file."""
     import zipfile
     from fastapi.responses import FileResponse
 
@@ -361,23 +382,36 @@ async def download_playlist_zip(
     if not job_dir.is_dir():
         raise HTTPException(404, "Playlist job directory not found")
 
-    zip_path = job_dir / f"playlist_cheatsheets_{job_id[:8]}.zip"
+    manifest_path = job_dir / "playlist_manifest.json"
+    manifest_data = {}
+    if manifest_path.is_file():
+        try:
+            manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
 
-    # Always generate/refresh zip with surviving PDFs and markdowns
+    playlist_name = manifest_data.get("playlist_title") or f"Course_Notes_{job_id[:8]}"
+    zip_slug = _clean_filename(playlist_name)
+    zip_path = job_dir / f"{zip_slug}.zip"
+
+    # Map item_key -> clean title for clean filenames inside ZIP
+    item_title_map: dict[str, str] = {}
+    for k, v in manifest_data.get("items", {}).items():
+        v_title = v.get("result", {}).get("title") or v.get("title")
+        if v_title:
+            item_title_map[k] = _clean_filename(v_title)
+
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for file in job_dir.glob("**/*"):
-            if file.is_file() and file.name != zip_path.name and not file.name.endswith(".tmp"):
+            if file.is_file() and file.name != zip_path.name and not file.name.endswith(".tmp") and not file.name.endswith(".zip"):
                 if file.suffix == ".pdf":
-                    # Clean filename for individual vs master PDF inside PDF_Cheatsheets folder
                     if "Consolidated" in file.parts or file.name == "master_cheatsheet.pdf":
-                        arc_name = "PDF_Cheatsheets/00_Master_Consolidated_Cheatsheet.pdf"
+                        arc_name = f"00_Master_Consolidated_{zip_slug}.pdf"
                     else:
                         parent_name = file.parent.name
-                        arc_name = f"PDF_Cheatsheets/{parent_name}_{file.name}"
+                        friendly_title = item_title_map.get(parent_name, parent_name)
+                        arc_name = f"PDFs/{friendly_title}.pdf"
                     zf.write(file, arcname=arc_name)
-                elif file.suffix in (".md", ".txt", ".json"):
-                    rel = file.relative_to(job_dir)
-                    zf.write(file, arcname=f"Source_Data/{rel}")
 
     if not zip_path.is_file():
         raise HTTPException(404, "Failed to create ZIP package")
@@ -385,8 +419,9 @@ async def download_playlist_zip(
     return FileResponse(
         zip_path,
         media_type="application/zip",
-        filename=f"playlist_cheatsheets_{job_id[:8]}.zip",
+        filename=f"{zip_slug}.zip",
     )
+
 
 
 

@@ -37,7 +37,7 @@ from scripts.run_local_job import (
 from scripts.ytdlp_client import run_ytdlp
 
 
-def extract_playlist_info(playlist_url: str) -> list[dict[str, Any]]:
+def extract_playlist_info(playlist_url: str) -> tuple[list[dict[str, Any]], str | None]:
     """Use yt-dlp to extract flat playlist metadata without downloading media."""
     cmd = [
         "--flat-playlist",
@@ -49,14 +49,21 @@ def extract_playlist_info(playlist_url: str) -> list[dict[str, Any]]:
     stdout = proc.stdout
     videos = []
     index = 1
-    for line in stdout.splitlines():
+    found_playlist_title = None
 
+    for line in stdout.splitlines():
         line = line.strip()
         if not line:
             continue
         try:
             item = json.loads(line)
+            if not found_playlist_title:
+                found_playlist_title = item.get("playlist_title") or item.get("playlist")
             v_id = item.get("id")
+            v_title = item.get("title")
+            # Skip hidden, deleted, or unavailable video placeholders in playlist
+            if not v_title or v_title.strip() in {"[Private video]", "[Deleted video]", "[Unavailable video]"}:
+                continue
             v_url = item.get("url") or item.get("webpage_url") or (f"https://www.youtube.com/watch?v={v_id}" if v_id else None)
             if not v_url:
                 continue
@@ -64,13 +71,15 @@ def extract_playlist_info(playlist_url: str) -> list[dict[str, Any]]:
                 "playlist_index": index,
                 "video_id": v_id,
                 "url": v_url,
-                "title": item.get("title") or f"Video {index}",
+                "title": v_title or f"Video {index}",
                 "duration_seconds": item.get("duration"),
             })
             index += 1
         except json.JSONDecodeError:
             continue
-    return videos
+    return videos, found_playlist_title
+
+
 
 
 def load_playlist_manifest(manifest_path: Path, playlist_url: str) -> dict[str, Any]:
@@ -260,7 +269,7 @@ def run_playlist_job(
     manifest = load_playlist_manifest(manifest_path, playlist_url)
 
     emit(f"Extracting playlist info from: {playlist_url}")
-    playlist_items = extract_playlist_info(playlist_url)
+    playlist_items, found_title = extract_playlist_info(playlist_url)
     if not playlist_items:
         raise RuntimeError(f"No videos found in playlist or playlist is private/invalid: {playlist_url}")
 
@@ -269,7 +278,10 @@ def run_playlist_job(
 
     emit(f"Found {len(playlist_items)} videos to process.")
     manifest["total_videos"] = len(playlist_items)
+    if found_title:
+        manifest["playlist_title"] = found_title
     _atomic_write_json(manifest_path, manifest)
+
 
     successful_results: list[dict[str, Any]] = []
 
