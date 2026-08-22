@@ -506,33 +506,10 @@ function GenerateForm() {
                 {preview.video_id}
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {(() => {
-                  const freeLeft =
-                    kind === 'cheatsheet'
-                      ? (me?.free_cheatsheets_left ?? 0)
-                      : (me?.free_books_left ?? 0);
-                  const cost = preview.cost_paise[kind];
-                  const walletPaise = me?.wallet_balance_paise ?? 0;
-                  if (freeLeft > 0) {
-                    return (
-                      <Tag tone="mint">
-                        <Ic.check size={10} /> Free · {freeLeft} {kind === 'cheatsheet' ? 'cheat' : 'book'}{freeLeft === 1 ? '' : 's'} left today
-                      </Tag>
-                    );
-                  }
-                  if (walletPaise >= cost) {
-                    return (
-                      <Tag tone="accent">
-                        ₹{(cost / 100).toFixed(0)} from wallet
-                      </Tag>
-                    );
-                  }
-                  return (
-                    <Tag tone="error">
-                      Need ₹{(cost / 100).toFixed(0)} — wallet has ₹{(walletPaise / 100).toFixed(2)}
-                    </Tag>
-                  );
-                })()}
+                <Tag tone="mint">
+                  <Ic.check size={10} /> Free Generation
+                </Tag>
+
                 <Tag tone="neutral">
                   ~{kind === 'cheatsheet' ? 30 : 120}s to generate
                 </Tag>
