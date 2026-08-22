@@ -793,51 +793,60 @@ def _make_whisper_runner():
 
         return _do, True
 
-    backend_, api_key = load_api_key()
-    if backend_ != "groq":
-        raise RuntimeError(f"Expected groq backend, got {backend_}")
+    from bot.config import GROQ_API_KEY, GROQ_API_KEYS
+    keys_pool = list(dict.fromkeys(GROQ_API_KEYS or [GROQ_API_KEY]))
+    if not keys_pool:
+        backend_, api_key = load_api_key()
+        keys_pool = [api_key]
 
-    # Use the Groq SDK instead of the legacy urllib uploader. The SDK uses
-    # HTTPX, so a bot-service-only HTTPS_PROXY can carry both authoring and
-    # transcription through the private SOCKS relay without proxying Telegram.
     from groq import Groq
-
-    client = Groq(api_key=api_key)
+    clients = [Groq(api_key=k) for k in keys_pool]
 
     def _do(path):
         source = Path(path)
-        with source.open("rb") as audio_file:
-            result = client.audio.transcriptions.create(
-                file=(source.name, audio_file.read()),
-                model=GROQ_MODEL,
-                response_format="verbose_json",
-                timestamp_granularities=["segment"],
-                temperature=0.0,
-            )
+        last_exc = None
+        for client in clients:
+            try:
+                with source.open("rb") as audio_file:
+                    result = client.audio.transcriptions.create(
+                        file=(source.name, audio_file.read()),
+                        model=GROQ_MODEL,
+                        response_format="verbose_json",
+                        timestamp_granularities=["segment"],
+                        temperature=0.0,
+                    )
 
-        segments = []
-        for segment in getattr(result, "segments", None) or []:
-            if isinstance(segment, dict):
-                start = segment.get("start", 0.0)
-                end = segment.get("end", 0.0)
-                text = segment.get("text", "")
-            else:
-                start = getattr(segment, "start", 0.0)
-                end = getattr(segment, "end", 0.0)
-                text = getattr(segment, "text", "")
-            segments.append(
-                {
-                    "start": float(start or 0.0),
-                    "end": float(end or 0.0),
-                    "text": str(text or ""),
+                segments = []
+                for segment in getattr(result, "segments", None) or []:
+                    if isinstance(segment, dict):
+                        start = segment.get("start", 0.0)
+                        end = segment.get("end", 0.0)
+                        text = segment.get("text", "")
+                    else:
+                        start = getattr(segment, "start", 0.0)
+                        end = getattr(segment, "end", 0.0)
+                        text = getattr(segment, "text", "")
+                    segments.append(
+                        {
+                            "start": float(start or 0.0),
+                            "end": float(end or 0.0),
+                            "text": str(text or ""),
+                        }
+                    )
+                return {
+                    "text": str(getattr(result, "text", "") or ""),
+                    "segments": segments,
                 }
-            )
-        return {
-            "text": str(getattr(result, "text", "") or ""),
-            "segments": segments,
-        }
+            except Exception as exc:
+                last_exc = exc
+                err_s = str(exc).lower()
+                if "429" in err_s or "quota" in err_s or "rate limit" in err_s:
+                    continue
+                raise exc
+        raise RuntimeError(f"All Groq Whisper API keys failed. Last error: {last_exc}")
 
     return _do, False
+
 
 
 def transcribe_chunks(chunks, on_progress: ProgressFn = None):
