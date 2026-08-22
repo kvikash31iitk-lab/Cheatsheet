@@ -61,9 +61,12 @@ def _async_run_playlist(job_id: str, req: PlaylistGenerateRequest) -> None:
         _playlist_jobs[job_id]["summary"] = summary
         _playlist_jobs[job_id]["progress"] = "Completed successfully"
     except Exception as exc:
+        import traceback
+        traceback.print_exc()
         _playlist_jobs[job_id]["status"] = "error"
         _playlist_jobs[job_id]["error"] = str(exc)
         _playlist_jobs[job_id]["progress"] = f"Failed: {exc}"
+
 
 
 @router.post("/generate")
