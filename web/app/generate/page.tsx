@@ -313,7 +313,7 @@ function GenerateForm() {
                   <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-ink-2)', marginBottom: 6 }}>
                     Live Activity Log ({itemsList.length} items logged):
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 160, overflowY: 'auto', paddingRight: 4 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto', paddingRight: 4 }}>
                     {itemsList.map((item: any, idx: number) => {
                       const res = item.result || {};
                       const title = res.title || item.title || `Video ${idx + 1}`;
@@ -326,41 +326,62 @@ function GenerateForm() {
                           key={idx}
                           style={{
                             display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '6px 10px',
-                            borderRadius: 6,
-                            background: isRunning ? 'var(--c-surface-2)' : 'transparent',
-                            fontSize: 12,
-                            borderLeft: isComplete ? '3px solid var(--c-mint)' : isFailed ? '3px solid var(--c-error)' : '3px solid var(--c-accent)',
+                            flexDirection: 'column',
+                            gap: 4,
+                            padding: '8px 12px',
+                            borderRadius: 8,
+                            background: isRunning ? 'var(--c-surface-2)' : 'var(--c-surface)',
+                            fontSize: 12.5,
+                            border: '1px solid var(--c-line)',
+                            borderLeft: isComplete ? '4px solid var(--c-mint)' : isFailed ? '4px solid var(--c-error)' : '4px solid var(--c-accent)',
                           }}
                         >
-                          <span
-                            style={{
-                              color: 'var(--c-ink)',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              maxWidth: '75%',
-                            }}
-                            title={title}
-                          >
-                            {isComplete ? '✅ ' : isFailed ? '❌ ' : '⚡ '} {title}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 600,
-                              fontFamily: 'var(--font-mono)',
-                              color: isComplete ? 'var(--c-mint)' : isFailed ? 'var(--c-error)' : 'var(--c-accent)',
-                            }}
-                          >
-                            {item.status?.toUpperCase()}
-                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                            <span
+                              style={{
+                                color: 'var(--c-ink)',
+                                fontWeight: 500,
+                                wordBreak: 'break-word',
+                                flex: 1,
+                              }}
+                            >
+                              {isComplete ? '✅ ' : isFailed ? '❌ ' : '⚡ '} {title}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 600,
+                                fontFamily: 'var(--font-mono)',
+                                color: isComplete ? 'var(--c-mint)' : isFailed ? 'var(--c-error)' : 'var(--c-accent)',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {item.status?.toUpperCase()}
+                            </span>
+                          </div>
+
+                          {/* Show diagnostic error message if item failed */}
+                          {isFailed && item.error && (
+                            <div
+                              style={{
+                                fontSize: 11.5,
+                                color: 'var(--c-error)',
+                                fontFamily: 'var(--font-mono)',
+                                background: 'var(--c-error-bg)',
+                                padding: '4px 8px',
+                                borderRadius: 4,
+                                marginTop: 4,
+                                wordBreak: 'break-all',
+                              }}
+                            >
+                              ⚠️ {item.error}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
+
                 </div>
               )}
 
