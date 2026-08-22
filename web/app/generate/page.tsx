@@ -67,7 +67,8 @@ function GenerateForm() {
   const [kind, setKind] = useState<JobKind>(
     () => ((searchParams?.get('kind') as JobKind) ?? 'cheatsheet'),
   );
-  const [maxVideos, setMaxVideos] = useState<number>(10);
+  const [maxVideos, setMaxVideos] = useState<number>(100);
+
   const [delaySeconds, setDelaySeconds] = useState<number>(5);
   const [playlistJobId, setPlaylistJobId] = useState<string | null>(null);
   const [playlistStatus, setPlaylistStatus] = useState<any>(null);
@@ -516,10 +517,33 @@ function GenerateForm() {
               <Ic.check size={10} /> Valid
             </Tag>
           )}
-          {url && !(mode === 'single' ? valid : PLAYLIST_RE.test(url.trim())) && (
-            <Tag tone="error">Invalid Link</Tag>
-          )}
         </div>
+
+        {mode === 'playlist' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, padding: '10px 14px', background: 'var(--c-surface)', border: '1px solid var(--c-line)', borderRadius: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-ink-2)' }}>Max Videos to Extract:</span>
+            <input
+              type="number"
+              min={1}
+              max={500}
+              value={maxVideos}
+              onChange={(e) => setMaxVideos(Math.max(1, parseInt(e.target.value) || 100))}
+              style={{
+                width: 90,
+                padding: '4px 8px',
+                borderRadius: 6,
+                border: '1px solid var(--c-line)',
+                background: 'var(--c-surface-2)',
+                color: 'var(--c-ink)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 13,
+                textAlign: 'center',
+              }}
+            />
+            <span style={{ fontSize: 12, color: 'var(--c-ink-3)' }}>(Defaults to 100 videos)</span>
+          </div>
+        )}
+
 
 
         {/* Preview card */}
