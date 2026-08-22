@@ -711,8 +711,12 @@ async def startup() -> None:
             await s.commit()
 
 
+from api.playlist_routes import router as playlist_router  # noqa: E402
+
 app.include_router(admin_router)
 app.include_router(upsc_router)
+app.include_router(playlist_router)
+
 
 
 # --- routes ----------------------------------------------------------------

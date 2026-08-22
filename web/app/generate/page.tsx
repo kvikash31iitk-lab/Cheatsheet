@@ -55,10 +55,16 @@ function GeneratePageShell() {
 function GenerateForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [mode, setMode] = useState<'single' | 'playlist'>('single');
   const [url, setUrl] = useState(() => searchParams?.get('url') ?? '');
   const [kind, setKind] = useState<JobKind>(
     () => ((searchParams?.get('kind') as JobKind) ?? 'cheatsheet'),
   );
+  const [maxVideos, setMaxVideos] = useState<number>(10);
+  const [delaySeconds, setDelaySeconds] = useState<number>(5);
+  const [playlistJobId, setPlaylistJobId] = useState<string | null>(null);
+  const [playlistStatus, setPlaylistStatus] = useState<any>(null);
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -162,6 +168,44 @@ function GenerateForm() {
           We'll fetch the transcript, extract key visuals, and generate your notes.
         </p>
 
+        {/* Mode Selector Tabs */}
+        <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
+          <button
+            type="button"
+            onClick={() => { setMode('single'); setUrl(''); }}
+            style={{
+              flex: 1,
+              padding: '10px 16px',
+              borderRadius: 8,
+              border: `1.5px solid ${mode === 'single' ? 'var(--c-accent)' : 'var(--c-line)'}`,
+              background: mode === 'single' ? 'var(--c-surface-2)' : 'transparent',
+              color: 'var(--c-ink)',
+              fontWeight: mode === 'single' ? 600 : 400,
+              cursor: 'pointer',
+              fontSize: 14,
+            }}
+          >
+            📹 Single Video
+          </button>
+          <button
+            type="button"
+            onClick={() => { setMode('playlist'); setUrl(''); }}
+            style={{
+              flex: 1,
+              padding: '10px 16px',
+              borderRadius: 8,
+              border: `1.5px solid ${mode === 'playlist' ? 'var(--c-accent)' : 'var(--c-line)'}`,
+              background: mode === 'playlist' ? 'var(--c-surface-2)' : 'transparent',
+              color: 'var(--c-ink)',
+              fontWeight: mode === 'playlist' ? 600 : 400,
+              cursor: 'pointer',
+              fontSize: 14,
+            }}
+          >
+            📑 Playlist Extraction
+          </button>
+        </div>
+
         <label
           style={{
             fontSize: 12.5,
@@ -171,8 +215,9 @@ function GenerateForm() {
             display: 'block',
           }}
         >
-          YouTube URL
+          {mode === 'single' ? 'YouTube Video URL' : 'YouTube Playlist URL'}
         </label>
+
         <div
           style={{
             display: 'flex',
@@ -193,7 +238,11 @@ function GenerateForm() {
             type="text"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://www.youtube.com/watch?v=..."
+            placeholder={
+              mode === 'single'
+                ? 'https://www.youtube.com/watch?v=...'
+                : 'https://www.youtube.com/playlist?list=...'
+            }
             style={{
               flex: 1,
               border: 'none',
@@ -205,14 +254,16 @@ function GenerateForm() {
             }}
             autoFocus
           />
-          {valid && !previewLoading && preview && (
+          {(mode === 'single' ? valid : PLAYLIST_RE.test(url.trim())) && (
             <Tag tone="mint">
               <Ic.check size={10} /> Valid
             </Tag>
           )}
-          {previewLoading && <Tag tone="neutral">Loading…</Tag>}
-          {url && !valid && <Tag tone="error">Invalid URL</Tag>}
+          {url && !(mode === 'single' ? valid : PLAYLIST_RE.test(url.trim())) && (
+            <Tag tone="error">Invalid Link</Tag>
+          )}
         </div>
+
 
         {/* Preview card */}
         {preview && (

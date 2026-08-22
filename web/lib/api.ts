@@ -336,3 +336,25 @@ export async function unlinkTelegram(): Promise<{ ok: boolean }> {
   if (!r.ok) throw new Error((await r.text()) || `unlink failed: ${r.status}`);
   return r.json();
 }
+
+export async function createPlaylistJob(
+  playlist_url: string,
+  kind: JobKind = 'cheatsheet',
+  delay_seconds = 5.0,
+  max_videos?: number,
+): Promise<{ id: string }> {
+  const res = await fetch('/api/playlist/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playlist_url, kind, delay_seconds, max_videos }),
+  });
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to start playlist job'));
+  return res.json();
+}
+
+export async function getPlaylistJob(id: string): Promise<any> {
+  const res = await fetch(`/api/playlist/status/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to fetch playlist status'));
+  return res.json();
+}
+

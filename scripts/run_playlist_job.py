@@ -1,0 +1,385 @@
+#!/usr/bin/env python3
+"""Run batch playlist processing to generate individual and consolidated cheatsheets.
+
+Features:
+- Extracts all video URLs and metadata from a YouTube playlist URL via yt-dlp.
+- Maintains state in `playlist_manifest.json` for full resumability.
+- Processes each video using `scripts.run_local_job.run_url_job`.
+- Merges markdown outputs into a master consolidated markdown and renders a unified PDF.
+- Manages rate limits with configurable delays and retry backoff.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+# Ensure project root is on sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.build_cheatsheet import build as build_cheatsheet
+from scripts.build_illustrated_book import build as build_book
+from scripts.run_local_job import (
+    DEFAULT_RUN_ROOT,
+    _atomic_write_json,
+    _normalize_features,
+    _utc_now,
+    run_url_job,
+)
+from scripts.ytdlp_client import run_ytdlp
+
+
+def extract_playlist_info(playlist_url: str) -> list[dict[str, Any]]:
+    """Use yt-dlp to extract flat playlist metadata without downloading media."""
+    cmd = [
+        "--flat-playlist",
+        "--dump-json",
+        "--no-warnings",
+        playlist_url,
+    ]
+    stdout, _stderr = run_ytdlp("extract_playlist_info", cmd)
+    videos = []
+    index = 1
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+            v_id = item.get("id")
+            v_url = item.get("url") or item.get("webpage_url") or (f"https://www.youtube.com/watch?v={v_id}" if v_id else None)
+            if not v_url:
+                continue
+            videos.append({
+                "playlist_index": index,
+                "video_id": v_id,
+                "url": v_url,
+                "title": item.get("title") or f"Video {index}",
+                "duration_seconds": item.get("duration"),
+            })
+            index += 1
+        except json.JSONDecodeError:
+            continue
+    return videos
+
+
+def load_playlist_manifest(manifest_path: Path, playlist_url: str) -> dict[str, Any]:
+    if manifest_path.is_file():
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    now = _utc_now()
+    return {
+        "schema_version": 1,
+        "playlist_url": playlist_url,
+        "status": "running",
+        "created_at": now,
+        "updated_at": now,
+        "items": {},
+    }
+
+
+def consolidate_markdowns(
+    items_results: list[dict[str, Any]],
+    playlist_title: str = "Playlist Summary",
+) -> str:
+    """Combine individual video markdowns into a master consolidated markdown."""
+    lines = [
+        f"# {playlist_title}",
+        "",
+        "> **Consolidated Course & Playlist Summary**",
+        "",
+        "## Table of Contents",
+        "",
+    ]
+
+    for item in items_results:
+        idx = item.get("playlist_index", 0)
+        title = item.get("title") or f"Module {idx}"
+        anchor = f"module-{idx}-{item.get('video_id', '')}"
+        lines.append(f"{idx}. [{title}](#{anchor})")
+
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    for item in items_results:
+        idx = item.get("playlist_index", 0)
+        title = item.get("title") or f"Module {idx}"
+        anchor = f"module-{idx}-{item.get('video_id', '')}"
+        md_path_str = item.get("markdown_path")
+
+        lines.append(f"<a id='{anchor}'></a>")
+        lines.append(f"# Module {idx}: {title}")
+        lines.append("")
+        if item.get("url"):
+            lines.append(f"**Source Video**: [{item['url']}]({item['url']})")
+            lines.append("")
+
+        if md_path_str and Path(md_path_str).is_file():
+            content = Path(md_path_str).read_text(encoding="utf-8", errors="replace").strip()
+            adjusted_lines = []
+            for line in content.splitlines():
+                if line.lstrip().startswith("#"):
+                    adjusted_lines.append("#" + line)
+                else:
+                    adjusted_lines.append(line)
+            lines.append("\n".join(adjusted_lines))
+        else:
+            lines.append("*Notes unavailable for this module.*")
+
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def run_playlist_job(
+    playlist_url: str,
+    *,
+    kind: str = "cheatsheet",
+    out_dir: Path | None = None,
+    delay_seconds: float = 5.0,
+    max_videos: int | None = None,
+    features: list[str] | None = None,
+    continue_on_error: bool = True,
+    clean_temp: bool = False,
+    progress: bool = True,
+) -> dict[str, Any]:
+    def emit(msg: str) -> None:
+        if progress:
+            print(f"[playlist-job] {msg}", flush=True)
+
+    feats = _normalize_features(features or [])
+    root_dir = Path(out_dir) if out_dir else (DEFAULT_RUN_ROOT / "playlists" / "run")
+    root_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = root_dir / "playlist_manifest.json"
+    manifest = load_playlist_manifest(manifest_path, playlist_url)
+
+    emit(f"Extracting playlist info from: {playlist_url}")
+    playlist_items = extract_playlist_info(playlist_url)
+    if not playlist_items:
+        raise RuntimeError(f"No videos found in playlist or playlist is private/invalid: {playlist_url}")
+
+    if max_videos and max_videos > 0:
+        playlist_items = playlist_items[:max_videos]
+
+    emit(f"Found {len(playlist_items)} videos to process.")
+    manifest["total_videos"] = len(playlist_items)
+    _atomic_write_json(manifest_path, manifest)
+
+    successful_results: list[dict[str, Any]] = []
+
+    for item in playlist_items:
+        v_id = item["video_id"]
+        v_url = item["url"]
+        idx = item["playlist_index"]
+        item_key = f"{idx:03d}_{v_id}"
+
+        item_manifest = manifest.setdefault("items", {}).setdefault(item_key, {})
+        if item_manifest.get("status") == "complete" and item_manifest.get("result"):
+            res = item_manifest["result"]
+            res["playlist_index"] = idx
+            res["title"] = item.get("title", res.get("title"))
+            successful_results.append(res)
+            emit(f"Skipping video [{idx}/{len(playlist_items)}] (already completed): {item['title']}")
+            continue
+
+        emit(f"Processing video [{idx}/{len(playlist_items)}]: {item['title']}")
+        video_out_dir = root_dir / f"{idx:03d}_{v_id}"
+        item_manifest["status"] = "running"
+        item_manifest["started_at"] = _utc_now()
+        _atomic_write_json(manifest_path, manifest)
+
+        # Retry loop for transient rate limits (3 attempts)
+        max_retries = 3
+        last_exception = None
+        res = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                res = run_url_job(
+                    v_url,
+                    kind=kind,
+                    work_root=video_out_dir,
+                    features=feats,
+                    progress=progress,
+                )
+                break
+            except Exception as exc:
+                last_exception = exc
+                err_str = str(exc).lower()
+                is_rate_limit = "429" in err_str or "quota" in err_str or "rate limit" in err_str
+                if is_rate_limit and attempt < max_retries:
+                    backoff = attempt * 15.0
+                    emit(f"Rate limit detected on attempt {attempt}. Backing off for {backoff}s...")
+                    time.sleep(backoff)
+                else:
+                    break
+
+        if res is not None:
+            res["playlist_index"] = idx
+            res["title"] = item.get("title", res.get("title"))
+            successful_results.append(res)
+
+            item_manifest["status"] = "complete"
+            item_manifest["finished_at"] = _utc_now()
+            item_manifest["result"] = res
+            _atomic_write_json(manifest_path, manifest)
+
+            # Optional temp cleanup to save disk space
+            if clean_temp and video_out_dir.exists():
+                for sub in video_out_dir.glob("*.tmp*"):
+                    try:
+                        if sub.is_file():
+                            sub.unlink()
+                        elif sub.is_dir():
+                            shutil.rmtree(sub)
+                    except Exception:
+                        pass
+
+        else:
+            err_msg = f"{type(last_exception).__name__}: {last_exception}"
+            emit(f"Error on video {idx} ({v_id}): {err_msg}")
+            item_manifest["status"] = "failed"
+            item_manifest["finished_at"] = _utc_now()
+            item_manifest["error"] = err_msg
+            _atomic_write_json(manifest_path, manifest)
+
+            if not continue_on_error:
+                raise last_exception
+
+        if delay_seconds > 0:
+            # Add randomized jitter to sleep interval
+            jitter = random.uniform(-1.5, 1.5)
+            actual_delay = max(1.0, delay_seconds + jitter)
+            emit(f"Sleeping {actual_delay:.1f}s (with jitter) for rate limit management...")
+            time.sleep(actual_delay)
+
+    # Consolidation stage
+    emit("Starting consolidation of individual cheatsheets...")
+    consolidated_dir = root_dir / "Consolidated"
+    consolidated_dir.mkdir(parents=True, exist_ok=True)
+
+    master_md_text = consolidate_markdowns(
+        successful_results,
+        playlist_title=f"Playlist Summary ({len(successful_results)} modules)",
+    )
+    master_md_path = consolidated_dir / "master_cheatsheet.md"
+    master_md_path.write_text(master_md_text, encoding="utf-8")
+    emit(f"Master markdown written to: {master_md_path}")
+
+    master_pdf_path = consolidated_dir / "master_cheatsheet.pdf"
+    emit(f"Rendering master PDF to: {master_pdf_path}")
+
+    if kind == "cheatsheet":
+        build_cheatsheet(
+            master_md_path,
+            master_pdf_path,
+            title="Master Consolidated Cheatsheet",
+            features=feats,
+            source_url=playlist_url,
+        )
+    else:
+        build_book(
+            master_md_path,
+            master_pdf_path,
+            title="Master Consolidated Book",
+            work_dir=root_dir,
+            features=feats,
+            source_url=playlist_url,
+        )
+
+    summary_result = {
+        "playlist_url": playlist_url,
+        "total_videos": len(playlist_items),
+        "successful_videos": len(successful_results),
+        "root_dir": str(root_dir),
+        "master_markdown_path": str(master_md_path),
+        "master_pdf_path": str(master_pdf_path),
+        "manifest_path": str(manifest_path),
+    }
+
+    manifest["status"] = "complete"
+    manifest["updated_at"] = _utc_now()
+    manifest["summary"] = summary_result
+    _atomic_write_json(manifest_path, manifest)
+
+    emit(f"Playlist batch processing finished! Master PDF: {master_pdf_path}")
+    return summary_result
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run batch YouTube playlist → individual & consolidated cheatsheets."
+    )
+    parser.add_argument("playlist_url", help="YouTube playlist URL")
+    parser.add_argument(
+        "--kind",
+        choices=("cheatsheet", "book"),
+        default="cheatsheet",
+        help="Output type for each video and master PDF",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default=None,
+        help="Output folder to store all runs, manifests, and consolidated files",
+    )
+    parser.add_argument(
+        "--delay-seconds",
+        type=float,
+        default=5.0,
+        help="Delay in seconds between processing videos (default: 5.0)",
+    )
+    parser.add_argument(
+        "--max-videos",
+        type=int,
+        default=None,
+        help="Limit processing to first N videos from the playlist",
+    )
+    parser.add_argument(
+        "--features",
+        default="",
+        help="Comma-separated feature toggles (summary,tldr,qna,mermaid,chapters)",
+    )
+    parser.add_argument(
+        "--stop-on-error",
+        action="store_true",
+        help="Halt execution if any video fails instead of skipping to the next",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    try:
+        run_playlist_job(
+            args.playlist_url,
+            kind=args.kind,
+            out_dir=Path(args.out_dir) if args.out_dir else None,
+            delay_seconds=args.delay_seconds,
+            max_videos=args.max_videos,
+            features=_normalize_features(args.features),
+            continue_on_error=not args.stop_on_error,
+        )
+    except KeyboardInterrupt:
+        print("\n[playlist-job] Interrupted by user. Run again with same --out-dir to resume.", file=sys.stderr)
+        sys.exit(130)
+    except Exception as exc:
+        print(f"\n[playlist-job] Batch run failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
