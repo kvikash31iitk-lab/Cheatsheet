@@ -371,48 +371,58 @@ function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
         )}
 
         {expanded && (
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto', paddingRight: 4 }}>
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 260, overflowY: 'auto', paddingRight: 4 }}>
             {items.map((it: any) => (
               <div
                 key={it.item_key}
                 style={{
                   display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
+                  flexDirection: 'column',
+                  gap: 4,
                   padding: '6px 8px',
                   background: 'var(--c-surface-2)',
                   borderRadius: 6,
                   fontSize: 12,
                 }}
               >
-                <span
-                  style={{
-                    color: 'var(--c-ink)',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    maxWidth: 200,
-                  }}
-                  title={it.title}
-                >
-                  {it.title}
-                </span>
-                {it.has_pdf ? (
-                  <a
-                    href={`/api/playlist/download/${pl.id}/item/${it.item_key}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ textDecoration: 'none', color: 'var(--c-accent)', fontWeight: 600 }}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span
+                    style={{
+                      color: 'var(--c-ink)',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      maxWidth: 220,
+                    }}
+                    title={it.title}
                   >
-                    PDF ⬇️
-                  </a>
-                ) : (
-                  <span style={{ color: 'var(--c-ink-3)', fontSize: 11 }}>Pending</span>
+                    {it.has_pdf ? '✅' : it.error ? '❌' : '⏳'} {it.title}
+                  </span>
+                  {it.has_pdf ? (
+                    <a
+                      href={`/api/playlist/download/${pl.id}/item/${it.item_key}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ textDecoration: 'none', color: 'var(--c-accent)', fontWeight: 600 }}
+                    >
+                      PDF ⬇️
+                    </a>
+                  ) : (
+                    <span style={{ color: it.error ? 'var(--c-error)' : 'var(--c-ink-3)', fontSize: 11, fontWeight: 500 }}>
+                      {it.error ? 'Failed' : 'Pending'}
+                    </span>
+                  )}
+                </div>
+                {it.error && (
+                  <div style={{ fontSize: 10.5, color: 'var(--c-error)', fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
+                    ⚠️ {it.error}
+                  </div>
                 )}
               </div>
             ))}
           </div>
         )}
+
       </div>
     </div>
   );

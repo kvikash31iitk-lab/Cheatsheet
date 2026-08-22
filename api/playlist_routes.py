@@ -254,15 +254,25 @@ async def list_playlists(
                 x["orig_idx"]
             ))
 
+            # Accurate active status: check live in-memory registry first, else disk status
+            active_job = _playlist_jobs.get(job_dir.name)
+            if active_job:
+                computed_status = active_job.get("status", "running")
+            else:
+                # If not in active memory, any interrupted 'running' status is completed or paused
+                disk_status = data.get("status", "completed")
+                computed_status = "completed" if disk_status == "running" else disk_status
+
             results.append({
                 "id": job_dir.name,
                 "playlist_url": data.get("playlist_url"),
-                "status": data.get("status", "completed"),
+                "status": computed_status,
                 "created_at": data.get("created_at"),
                 "total_videos": data.get("total_videos", 0),
                 "summary": data.get("summary"),
                 "items": items_data,
             })
+
         except Exception as exc:
             print(f"[playlist_list_error] {job_dir.name}: {exc}", flush=True)
 
