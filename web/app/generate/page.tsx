@@ -350,6 +350,32 @@ function GenerateForm() {
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-ink-2)' }}>
                       Live Video Log ({itemsList.length} items):
                     </div>
+                    {playlistStatus.status === 'running' && playlistJobId && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            setPlaylistStatus({ ...playlistStatus, status: 'stopped', progress: 'Process stopped by user.' });
+                            await stopPlaylistJob(playlistJobId);
+                          } catch (e) {
+                            console.error('Stop failed', e);
+                          }
+                        }}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: 6,
+                          background: 'transparent',
+                          color: 'var(--c-error)',
+                          border: '1px solid var(--c-error)',
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        ⏹️ Stop Process
+                      </button>
+                    )}
                     {itemsList.some((i: any) => i.status === 'failed') && playlistStatus.status !== 'running' && (
                       <button
                         type="button"
@@ -377,6 +403,7 @@ function GenerateForm() {
                         🔄 Retry Remaining Videos
                       </button>
                     )}
+
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto', paddingRight: 4 }}>

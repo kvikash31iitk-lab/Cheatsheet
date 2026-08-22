@@ -286,6 +286,19 @@ def run_playlist_job(
     successful_results: list[dict[str, Any]] = []
 
     for item in playlist_items:
+        # Check if job was stopped by user
+        if manifest_path.is_file():
+            try:
+                cur_m = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if cur_m.get("status") == "stopped":
+                    emit(f"Playlist job was stopped by user. Halting execution.")
+                    manifest["status"] = "stopped"
+                    manifest.pop("active_video", None)
+                    _atomic_write_json(manifest_path, manifest)
+                    return {"total_videos": len(playlist_items), "successful_videos": len(successful_results), "status": "stopped"}
+            except Exception:
+                pass
+
         v_id = item["video_id"]
         v_url = item["url"]
         idx = item["playlist_index"]
@@ -315,11 +328,20 @@ def run_playlist_job(
         _atomic_write_json(manifest_path, manifest)
 
         def handle_subtask_progress(subtask_msg: str) -> None:
+            # Check for user stop during subtask
+            if manifest_path.is_file():
+                try:
+                    cur_m = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if cur_m.get("status") == "stopped":
+                        return
+                except Exception:
+                    pass
             item_manifest["current_subtask"] = subtask_msg
             if manifest.get("active_video"):
                 manifest["active_video"]["subtask"] = subtask_msg
             _atomic_write_json(manifest_path, manifest)
             emit(f"[{idx}/{len(playlist_items)}] {subtask_msg}")
+
 
         # Retry loop for transient rate limits (3 attempts)
         max_retries = 3

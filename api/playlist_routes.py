@@ -138,11 +138,43 @@ async def retry_playlist(
 
 
 
+@router.post("/stop/{job_id}")
+async def stop_playlist(
+    job_id: str,
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """Stop/cancel an in-progress playlist job."""
+    job_dir = PLAYLIST_WORK_ROOT / job_id
+    manifest_path = job_dir / "playlist_manifest.json"
+
+    # Remove from active memory runner
+    if job_id in _playlist_jobs:
+        _playlist_jobs[job_id]["status"] = "stopped"
+        _playlist_jobs[job_id]["progress"] = "Job stopped by user"
+
+    if manifest_path.is_file():
+        try:
+            manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest_data["status"] = "stopped"
+            manifest_data.pop("active_video", None)
+            # If any item was marked running, mark it pending
+            for _, item_val in manifest_data.get("items", {}).items():
+                if item_val.get("status") == "running":
+                    item_val["status"] = "pending"
+                    item_val.pop("current_subtask", None)
+            manifest_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    return {"id": job_id, "status": "stopped"}
+
+
 @router.get("/status/{job_id}")
 async def get_playlist_status(
     job_id: str,
     user: User = Depends(current_user),
-) -> dict[str, Any]:
+):
+
     job = _playlist_jobs.get(job_id)
     if not job:
         # Check disk manifest if in-memory missing

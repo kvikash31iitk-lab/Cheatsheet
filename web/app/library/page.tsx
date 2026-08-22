@@ -376,17 +376,36 @@ function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
           </div>
         )}
 
-        {hasRemaining && (
+        {isRunning && (
+          <Btn
+            variant="ghost"
+            size="sm"
+            onClick={async () => {
+              try {
+                await stopPlaylistJob(pl.id);
+                if (onReload) onReload();
+              } catch (e: any) {
+                alert(e?.message || 'Failed to stop process');
+              }
+            }}
+            style={{ width: '100%', borderColor: 'var(--c-error)', color: 'var(--c-error)', fontWeight: 600 }}
+          >
+            ⏹️ Stop Process
+          </Btn>
+        )}
+
+        {!isRunning && hasRemaining && (
           <Btn
             variant="secondary"
             size="sm"
             onClick={handleRetry}
-            disabled={retrying || isRunning}
+            disabled={retrying}
             style={{ width: '100%', borderColor: 'var(--c-accent)', color: 'var(--c-accent)', fontWeight: 600 }}
           >
-            {retrying ? '🔄 Starting Retry...' : isRunning ? '⚡ In Progress...' : '🔄 Retry Remaining Videos'}
+            {retrying ? '🔄 Starting Retry...' : '🔄 Retry Remaining Videos'}
           </Btn>
         )}
+
 
 
 
