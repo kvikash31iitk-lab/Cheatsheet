@@ -43,10 +43,12 @@ def extract_playlist_info(playlist_url: str) -> list[dict[str, Any]]:
         "--no-warnings",
         playlist_url,
     ]
-    stdout, _stderr = run_ytdlp("extract_playlist_info", cmd)
+    proc = run_ytdlp(cmd, operation="extract_playlist_info")
+    stdout = proc.stdout
     videos = []
     index = 1
     for line in stdout.splitlines():
+
         line = line.strip()
         if not line:
             continue
