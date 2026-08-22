@@ -308,14 +308,44 @@ function GenerateForm() {
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--c-ink-2)', marginBottom: 8 }}>
                 <span style={{ fontWeight: 500 }}>{playlistStatus.progress || 'Processing in background...'}</span>
                 {total > 0 && <span style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{completedCount} / {total} Videos ({percent}%)</span>}
-              </div>
+                         {/* Active Video Subtask Stepper Banner */}
+              {playlistStatus.status === 'running' && manifest?.active_video && (
+                <div
+                  style={{
+                    marginBottom: 14,
+                    padding: '12px 14px',
+                    background: 'var(--c-surface-2)',
+                    border: '1.5px solid var(--c-accent)',
+                    borderRadius: 8,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--c-accent)', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                      ⚡ Active Video ({manifest.active_video.index} / {manifest.active_video.total || total})
+                    </span>
+                    <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--c-ink-3)' }}>
+                      ID: {manifest.active_video.video_id}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--c-ink)' }}>
+                    {manifest.active_video.title}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--c-accent)', fontWeight: 500 }}>
+                    <span style={{ animation: 'pulse 1.5s infinite' }}>●</span>
+                    <span>{manifest.active_video.subtask || 'Processing subtask...'}</span>
+                  </div>
+                </div>
+              )}
 
               {/* Live Video Log List */}
               {itemsList.length > 0 && (
                 <div style={{ marginTop: 12, borderTop: '1px solid var(--c-line-2)', paddingTop: 10 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-ink-2)' }}>
-                      Live Activity Log ({itemsList.length} items logged):
+                      Live Video Log ({itemsList.length} items):
                     </div>
                     {itemsList.some((i: any) => i.status === 'failed') && playlistStatus.status !== 'running' && (
                       <button
@@ -345,6 +375,7 @@ function GenerateForm() {
                       </button>
                     )}
                   </div>
+
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto', paddingRight: 4 }}>
                     {itemsList.map((item: any, idx: number) => {
                       const res = item.result || {};
@@ -392,6 +423,23 @@ function GenerateForm() {
                             </span>
                           </div>
 
+                          {/* Show live active subtask message for running item */}
+                          {isRunning && item.current_subtask && (
+                            <div
+                              style={{
+                                fontSize: 11.5,
+                                color: 'var(--c-accent)',
+                                fontFamily: 'var(--font-mono)',
+                                background: 'rgba(232, 165, 131, 0.12)',
+                                padding: '4px 8px',
+                                borderRadius: 4,
+                                marginTop: 4,
+                              }}
+                            >
+                              ⚡ {item.current_subtask}
+                            </div>
+                          )}
+
                           {/* Show diagnostic error message if item failed */}
                           {isFailed && item.error && (
                             <div
@@ -412,6 +460,8 @@ function GenerateForm() {
                         </div>
                       );
                     })}
+                  </div>
+
                   </div>
 
                 </div>

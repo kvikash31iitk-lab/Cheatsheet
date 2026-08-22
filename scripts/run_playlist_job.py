@@ -267,7 +267,22 @@ def run_playlist_job(
         video_out_dir = root_dir / f"{idx:03d}_{v_id}"
         item_manifest["status"] = "running"
         item_manifest["started_at"] = _utc_now()
+        item_manifest["current_subtask"] = "Starting ingestion..."
+        manifest["active_video"] = {
+            "index": idx,
+            "total": len(playlist_items),
+            "video_id": v_id,
+            "title": item["title"],
+            "subtask": "Starting video extraction...",
+        }
         _atomic_write_json(manifest_path, manifest)
+
+        def handle_subtask_progress(subtask_msg: str) -> None:
+            item_manifest["current_subtask"] = subtask_msg
+            if manifest.get("active_video"):
+                manifest["active_video"]["subtask"] = subtask_msg
+            _atomic_write_json(manifest_path, manifest)
+            emit(f"[{idx}/{len(playlist_items)}] {subtask_msg}")
 
         # Retry loop for transient rate limits (3 attempts)
         max_retries = 3
@@ -282,6 +297,7 @@ def run_playlist_job(
                     work_root=video_out_dir,
                     features=feats,
                     progress=progress,
+                    on_progress=handle_subtask_progress,
                 )
                 break
             except Exception as exc:
@@ -301,9 +317,13 @@ def run_playlist_job(
             successful_results.append(res)
 
             item_manifest["status"] = "complete"
+            item_manifest["current_subtask"] = "Completed"
             item_manifest["finished_at"] = _utc_now()
             item_manifest["result"] = res
+            if manifest.get("active_video", {}).get("video_id") == v_id:
+                manifest.pop("active_video", None)
             _atomic_write_json(manifest_path, manifest)
+
 
             # Optional temp cleanup to save disk space
             if clean_temp and video_out_dir.exists():

@@ -18,13 +18,29 @@ export default function LibraryPage() {
   const [query, setQuery] = useState('');
 
   useEffect(() => {
-    getLibrary()
-      .then(setItems)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-    listPlaylists()
-      .then(setPlaylists)
-      .catch(() => {});
+    let cancelled = false;
+
+    function refresh() {
+      getLibrary()
+        .then((data) => { if (!cancelled) setItems(data); })
+        .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); });
+      listPlaylists()
+        .then((data) => { if (!cancelled) setPlaylists(data); })
+        .catch(() => {});
+    }
+
+    refresh();
+    const interval = setInterval(() => {
+      // Auto-poll if any playlist is in running state or items are processing
+      refresh();
+    }, 3500);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
+
 
 
   const counts = useMemo(() => {
@@ -334,6 +350,32 @@ function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
           </a>
         </div>
 
+        {/* Live Active Video Subtask Banner */}
+        {isRunning && pl.active_video && (
+          <div
+            style={{
+              padding: '8px 10px',
+              background: 'rgba(232, 165, 131, 0.1)',
+              border: '1px solid var(--c-accent)',
+              borderRadius: 6,
+              fontSize: 12,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+            }}
+          >
+            <div style={{ fontWeight: 600, color: 'var(--c-accent)', fontSize: 11.5 }}>
+              ⚡ Processing Video {pl.active_video.index} / {pl.active_video.total || pl.total_videos}:
+            </div>
+            <div style={{ color: 'var(--c-ink)', fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {pl.active_video.title}
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--c-accent)', fontFamily: 'var(--font-mono)' }}>
+              ↳ {pl.active_video.subtask || 'Working on video...'}
+            </div>
+          </div>
+        )}
+
         {hasRemaining && (
           <Btn
             variant="secondary"
@@ -345,6 +387,7 @@ function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
             {retrying ? '🔄 Starting Retry...' : isRunning ? '⚡ In Progress...' : '🔄 Retry Remaining Videos'}
           </Btn>
         )}
+
 
 
 
@@ -396,7 +439,7 @@ function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
                     }}
                     title={it.title}
                   >
-                    {it.has_pdf ? '✅' : it.error ? '❌' : '⏳'} {it.title}
+                    {it.has_pdf ? '✅' : it.error ? '❌' : it.status === 'running' ? '⚡' : '⏳'} {it.title}
                   </span>
                   {it.has_pdf ? (
                     <a
@@ -408,16 +451,22 @@ function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
                       PDF ⬇️
                     </a>
                   ) : (
-                    <span style={{ color: it.error ? 'var(--c-error)' : 'var(--c-ink-3)', fontSize: 11, fontWeight: 500 }}>
-                      {it.error ? 'Failed' : 'Pending'}
+                    <span style={{ color: it.error ? 'var(--c-error)' : it.status === 'running' ? 'var(--c-accent)' : 'var(--c-ink-3)', fontSize: 11, fontWeight: 600 }}>
+                      {it.error ? 'Failed' : it.status === 'running' ? 'Running' : 'Pending'}
                     </span>
                   )}
                 </div>
+                {it.status === 'running' && it.current_subtask && (
+                  <div style={{ fontSize: 10.5, color: 'var(--c-accent)', fontFamily: 'var(--font-mono)' }}>
+                    ⚡ {it.current_subtask}
+                  </div>
+                )}
                 {it.error && (
                   <div style={{ fontSize: 10.5, color: 'var(--c-error)', fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
                     ⚠️ {it.error}
                   </div>
                 )}
+
               </div>
             ))}
           </div>

@@ -236,6 +236,7 @@ async def list_playlists(
                     "item_key": item_key,
                     "title": res.get("title") or item_val.get("title") or item_key,
                     "status": item_val.get("status"),
+                    "current_subtask": item_val.get("current_subtask"),
                     "video_id": res.get("video_id"),
                     "has_pdf": has_pdf,
                     "error": item_val.get("error"),
@@ -267,11 +268,13 @@ async def list_playlists(
                 "id": job_dir.name,
                 "playlist_url": data.get("playlist_url"),
                 "status": computed_status,
+                "active_video": data.get("active_video") if computed_status == "running" else None,
                 "created_at": data.get("created_at"),
                 "total_videos": data.get("total_videos", 0),
                 "summary": data.get("summary"),
                 "items": items_data,
             })
+
 
         except Exception as exc:
             print(f"[playlist_list_error] {job_dir.name}: {exc}", flush=True)
