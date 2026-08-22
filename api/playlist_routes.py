@@ -195,9 +195,6 @@ async def list_playlists(
         if manifest_path.is_file():
             try:
                 data = json.loads(manifest_path.read_text(encoding="utf-8"))
-                items_data = []
-                import re
-
                 def _extract_ep(t: str) -> float | None:
                     if not t:
                         return None
@@ -210,8 +207,17 @@ async def list_playlists(
                     m2 = re.search(r'\b(?:class|part|lec|lecture)[-:\s]*(\d+)', t, re.IGNORECASE)
                     return float(m2.group(1)) if m2 else None
 
+                def _extract_topic(t: str) -> str:
+                    if not t:
+                        return ""
+                    cleaned = re.sub(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+(?:\.\d+)?\b', '', t, flags=re.IGNORECASE)
+                    cleaned = re.sub(r'[\d_|\-–—:]+', ' ', cleaned)
+                    toks = [w.lower() for w in cleaned.split() if len(w) > 3 and w.lower() not in {"upsc", "epfo", "apfc", "acio", "complete", "course", "video", "hindi", "english"}]
+                    return " ".join(toks[:3]) if toks else ""
 
-                for item_key, item_val in data.get("items", {}).items():
+                items_data = []
+                for idx, (item_key, item_val) in enumerate(data.get("items", {}).items(), 1):
+
                     res = item_val.get("result", {})
                     pdf_str = res.get("pdf_path")
                     has_pdf = bool(pdf_str and Path(pdf_str).is_file())
@@ -225,9 +231,21 @@ async def list_playlists(
                         "video_id": res.get("video_id"),
                         "has_pdf": has_pdf,
                         "error": item_val.get("error"),
+                        "orig_idx": idx,
                     })
 
-                items_data.sort(key=lambda x: _extract_ep(x["title"]) if _extract_ep(x["title"]) is not None else 999.0)
+                topic_order_map: dict[str, int] = {}
+                for it in items_data:
+                    top = _extract_topic(it["title"])
+                    if top and top not in topic_order_map:
+                        topic_order_map[top] = it["orig_idx"]
+
+                items_data.sort(key=lambda x: (
+                    topic_order_map.get(_extract_topic(x["title"]), 0),
+                    _extract_ep(x["title"]) if _extract_ep(x["title"]) is not None else 999.0,
+                    x["orig_idx"]
+                ))
+
 
 
                 results.append({

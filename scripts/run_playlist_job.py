@@ -123,24 +123,42 @@ def _extract_episode_number(title: str) -> float | None:
         except ValueError:
             pass
 
-    return None
-
+def _extract_topic_key(title: str) -> str:
+    """Extract broad subject/topic cluster key from title to group multi-topic playlists (e.g. Audit vs Cost Accounting vs Modern History)."""
+    if not title:
+        return ""
+    # Strip episode tokens to find core topic identity
+    cleaned = re.sub(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+(?:\.\d+)?\b', '', title, flags=re.IGNORECASE)
+    cleaned = re.sub(r'[\d_|\-–—:]+', ' ', cleaned)
+    tokens = [w.lower() for w in cleaned.split() if len(w) > 3 and w.lower() not in {"upsc", "epfo", "apfc", "acio", "complete", "course", "video", "hindi", "english"}]
+    return " ".join(tokens[:3]) if tokens else ""
 
 
 def consolidate_markdowns(
     items_results: list[dict[str, Any]],
     playlist_title: str = "Playlist Summary",
 ) -> str:
-    """Combine individual video markdowns into a master consolidated markdown, sorted numerically by episode/class number."""
-    # Sort items based on extracted episode number if present across items, else preserve playlist_index
-    def sort_key(item: dict[str, Any]) -> tuple[int, float]:
+    """Combine individual video markdowns into a master consolidated markdown, sorted by topic cluster and episode number."""
+    # Find the earliest playlist index for each topic cluster to maintain overall playlist progression
+    topic_first_seen: dict[str, int] = {}
+    for item in items_results:
+        t_key = _extract_topic_key(item.get("title", ""))
+        idx = int(item.get("playlist_index", 0))
+        if t_key and t_key not in topic_first_seen:
+            topic_first_seen[t_key] = idx
+
+    def sort_key(item: dict[str, Any]) -> tuple[int, float, int]:
         title = item.get("title", "")
+        t_key = _extract_topic_key(title)
+        topic_order = topic_first_seen.get(t_key, 0)
         ep = _extract_episode_number(title)
+        
         if ep is not None:
-            return (0, ep)
-        return (1, float(item.get("playlist_index", 0)))
+            return (topic_order, ep, int(item.get("playlist_index", 0)))
+        return (topic_order, 999.0, int(item.get("playlist_index", 0)))
 
     sorted_items = sorted(items_results, key=sort_key)
+
 
     lines = [
         f"# {playlist_title}",
