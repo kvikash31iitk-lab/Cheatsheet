@@ -210,10 +210,25 @@ async def list_playlists(
     def _safe_topic(t: str) -> str:
         if not t:
             return ""
+        segments = re.split(r'[|–—]', t)
+        ignore_phrases = {
+            "upsc", "epfo", "apfc", "ao", "eo", "exam", "general accounting principles",
+            "complete course", "by anurag sir", "anurag sir", "target upsc",
+        }
+        for seg in segments:
+            s = seg.strip()
+            if not s:
+                continue
+            cleaned_seg = re.sub(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+(?:\.\d+)?\b', '', s, flags=re.IGNORECASE).strip()
+            cleaned_norm = re.sub(r'\s+', ' ', cleaned_seg.lower())
+            if len(cleaned_norm) >= 3 and cleaned_norm not in ignore_phrases and not re.fullmatch(r'[\d\s]+', cleaned_norm):
+                return cleaned_norm
+
         cleaned = re.sub(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+(?:\.\d+)?\b', '', t, flags=re.IGNORECASE)
         cleaned = re.sub(r'[\d_|\-–—:]+', ' ', cleaned)
-        toks = [w.lower() for w in cleaned.split() if len(w) > 3 and w.lower() not in {"upsc", "epfo", "apfc", "acio", "complete", "course", "video", "hindi", "english"}]
-        return " ".join(toks[:3]) if toks else ""
+        toks = [w.lower() for w in cleaned.split() if len(w) > 3 and w.lower() not in {"upsc", "epfo", "apfc", "general", "accounting", "principles", "anurag", "complete", "course"}]
+        return toks[0] if toks else ""
+
 
     for job_dir in sorted(PLAYLIST_WORK_ROOT.iterdir(), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True):
         if not job_dir.is_dir():

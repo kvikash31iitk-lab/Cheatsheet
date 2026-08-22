@@ -124,22 +124,46 @@ def _extract_episode_number(title: str) -> float | None:
             pass
 
 def _extract_topic_key(title: str) -> str:
-    """Extract broad subject/topic cluster key from title to group multi-topic playlists (e.g. Audit vs Cost Accounting vs Modern History)."""
+    """Extract specific subject/sub-topic chunk from title (e.g. 'Audit', 'Cost Accounting', 'Bills of Exchange').
+    
+    In titles like:
+      'UPSC EPFO AO/EO & APFC | General Accounting Principles | Audit | Part-1 | Lec- 28 | By Anurag Sir'
+    We split by delimiters (| , - , :) and find the distinctive topic segment.
+    """
     if not title:
         return ""
-    # Strip episode tokens to find core topic identity
+    
+    segments = re.split(r'[|–—]', title)
+    # Common generic prefix/suffix phrases to ignore
+    ignore_phrases = {
+        "upsc", "epfo", "apfc", "ao", "eo", "exam", "general accounting principles",
+        "complete course", "by anurag sir", "anurag sir", "target upsc",
+    }
+    
+    for seg in segments:
+        s = seg.strip()
+        if not s:
+            continue
+        # Remove part/lecture/class numbers from segment
+        cleaned_seg = re.sub(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+(?:\.\d+)?\b', '', s, flags=re.IGNORECASE).strip()
+        cleaned_norm = re.sub(r'\s+', ' ', cleaned_seg.lower())
+        
+        if len(cleaned_norm) >= 3 and cleaned_norm not in ignore_phrases and not re.fullmatch(r'[\d\s]+', cleaned_norm):
+            return cleaned_norm
+
+    # Fallback: token-based
     cleaned = re.sub(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+(?:\.\d+)?\b', '', title, flags=re.IGNORECASE)
     cleaned = re.sub(r'[\d_|\-–—:]+', ' ', cleaned)
-    tokens = [w.lower() for w in cleaned.split() if len(w) > 3 and w.lower() not in {"upsc", "epfo", "apfc", "acio", "complete", "course", "video", "hindi", "english"}]
-    return " ".join(tokens[:3]) if tokens else ""
+    tokens = [w.lower() for w in cleaned.split() if len(w) > 3 and w.lower() not in {"upsc", "epfo", "apfc", "general", "accounting", "principles", "anurag", "complete", "course"}]
+    return tokens[0] if tokens else ""
 
 
 def consolidate_markdowns(
     items_results: list[dict[str, Any]],
     playlist_title: str = "Playlist Summary",
 ) -> str:
-    """Combine individual video markdowns into a master consolidated markdown, sorted by topic cluster and episode number."""
-    # Find the earliest playlist index for each topic cluster to maintain overall playlist progression
+    """Combine individual video markdowns into a master consolidated markdown, grouped by sub-topic and sorted by episode number."""
+    # Find the earliest playlist index for each distinct sub-topic
     topic_first_seen: dict[str, int] = {}
     for item in items_results:
         t_key = _extract_topic_key(item.get("title", ""))
@@ -150,7 +174,7 @@ def consolidate_markdowns(
     def sort_key(item: dict[str, Any]) -> tuple[int, float, int]:
         title = item.get("title", "")
         t_key = _extract_topic_key(title)
-        topic_order = topic_first_seen.get(t_key, 0)
+        topic_order = topic_first_seen.get(t_key, 999)
         ep = _extract_episode_number(title)
         
         if ep is not None:
@@ -158,6 +182,7 @@ def consolidate_markdowns(
         return (topic_order, 999.0, int(item.get("playlist_index", 0)))
 
     sorted_items = sorted(items_results, key=sort_key)
+
 
 
     lines = [
