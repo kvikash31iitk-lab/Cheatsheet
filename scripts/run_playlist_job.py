@@ -95,17 +95,36 @@ def load_playlist_manifest(manifest_path: Path, playlist_url: str) -> dict[str, 
 import re
 
 def _extract_episode_number(title: str) -> float | None:
-    """Extract class/episode/part number from video title (e.g. 'Class-8' -> 8.0, 'Class 1' -> 1.0, 'Part 2' -> 2.0)."""
+    """Extract class/episode/part number from video title (e.g. 'Class-8' -> 8.0, 'Part-1' -> 1.0, 'Lec-28' -> 28.0)."""
     if not title:
         return None
-    # Look for explicit patterns like 'Class-8', 'Class 8', 'Episode 8', 'Part 8', 'Vol 8', '#8', etc.
+
+    # Priority 1: Match explicit keyword prefixes (e.g., 'Part-1', 'Part 1', 'Class-8', 'Lec-28', 'Lec 28', 'Lecture 5', 'Ep 3', '#4')
     match = re.search(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*(\d+(?:\.\d+)?)\b', title, re.IGNORECASE)
     if match:
         try:
             return float(match.group(1))
         except ValueError:
             pass
+
+    # Priority 2: Match trailing 'Class 26' or numbers after hyphen/pipe separators (e.g. 'Class 26 EPFO Complete Course' -> 26.0)
+    match_sec = re.search(r'\b(?:class|part|lec|lecture)[-:\s]*(\d+)', title, re.IGNORECASE)
+    if match_sec:
+        try:
+            return float(match_sec.group(1))
+        except ValueError:
+            pass
+
+    # Priority 3: Fallback standalone number if near 'Class' or at end of title segment
+    match_num = re.search(r'(?:class|part)\s*(\d+)', title, re.IGNORECASE)
+    if match_num:
+        try:
+            return float(match_num.group(1))
+        except ValueError:
+            pass
+
     return None
+
 
 
 def consolidate_markdowns(

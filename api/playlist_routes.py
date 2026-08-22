@@ -199,8 +199,17 @@ async def list_playlists(
                 import re
 
                 def _extract_ep(t: str) -> float | None:
-                    m = re.search(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*(\d+(?:\.\d+)?)\b', t or '', re.IGNORECASE)
-                    return float(m.group(1)) if m else None
+                    if not t:
+                        return None
+                    m = re.search(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*(\d+(?:\.\d+)?)\b', t, re.IGNORECASE)
+                    if m:
+                        try:
+                            return float(m.group(1))
+                        except ValueError:
+                            pass
+                    m2 = re.search(r'\b(?:class|part|lec|lecture)[-:\s]*(\d+)', t, re.IGNORECASE)
+                    return float(m2.group(1)) if m2 else None
+
 
                 for item_key, item_val in data.get("items", {}).items():
                     res = item_val.get("result", {})
