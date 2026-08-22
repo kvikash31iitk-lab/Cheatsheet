@@ -773,83 +773,86 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
     """Invoke the Gemini API directly via HTTP request with fallback models."""
     import requests
     import time
-    from bot.config import GEMINI_API_KEY, AUTHORING_MODEL
+    from bot.config import GEMINI_API_KEY, GEMINI_API_KEYS, AUTHORING_MODEL
     
     primary_model = AUTHORING_MODEL
     if not primary_model.startswith("gemini-"):
-        primary_model = "gemini-3.6-flash"
+        primary_model = "gemini-2.5-flash"
         
-    # List of models to try in sequence if we hit 404, 503, or rate limits
     models_to_try = [
         primary_model,
-        "gemini-3.7-flash",
-        "gemini-3.1-flash-lite"
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash"
     ]
-    # Deduplicate while preserving order
     models_to_try = list(dict.fromkeys(models_to_try))
     
+    keys_to_try = list(dict.fromkeys(GEMINI_API_KEYS or [GEMINI_API_KEY]))
+    
     last_err = None
-    for model in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={GEMINI_API_KEY}"
-        
-        payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": user}]
-                }
-            ],
-            "systemInstruction": {
-                "parts": [{"text": system}]
-            },
-            "generationConfig": {
-                "maxOutputTokens": max_tokens,
-                "temperature": 0.3
-            }
-        }
-        
-        headers = {"Content-Type": "application/json"}
-        
-        for attempt in range(1, 4):
-            try:
-                resp = requests.post(url, json=payload, headers=headers, timeout=120)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    if not text:
-                        raise RuntimeError("Gemini returned an empty response")
-                        
-                    if cost_sink is not None:
-                        cost_sink["authoring_model"] = model
-                        usage = data.get("usageMetadata", {})
-                        cost_sink["tokens_in"] = (
-                            cost_sink.get("tokens_in", 0) + int(usage.get("promptTokenCount", 0))
-                        )
-                        cost_sink["tokens_out"] = (
-                            cost_sink.get("tokens_out", 0) + int(usage.get("candidatesTokenCount", 0))
-                        )
-                    return text
-                elif resp.status_code in (404, 503, 429):
-                    raise RuntimeError(f"HTTP {resp.status_code}: {resp.text}")
-                else:
-                    raise RuntimeError(f"HTTP {resp.status_code}: {resp.text}")
-            except Exception as exc:
-                last_err = exc
-                error_msg = str(exc).casefold()
-                
-                # Fall over to next model immediately for 404/503/429/RESOURCE_EXHAUSTED/Quota
-                if any(err_token in error_msg for err_token in ("404", "503", "429", "resource_exhausted", "quota", "not found", "unavailable")) and model != models_to_try[-1]:
-                    print(f"[author] gemini model {model} rate limited or unavailable ({exc}); falling back immediately to next model", flush=True)
-                    break
-                    
-                wait = 5 * attempt
-                print(f"[author] gemini {model} attempt {attempt}/3 failed: {exc}; waiting {wait}s", flush=True)
-                if attempt < 3:
-                    time.sleep(wait)
-        else:
-            continue
+    for api_key in keys_to_try:
+        for model in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
             
-    raise RuntimeError(f"Gemini authoring failed after trying all models. Last error: {last_err}")
+            payload = {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": user}]
+                    }
+                ],
+                "systemInstruction": {
+                    "parts": [{"text": system}]
+                },
+                "generationConfig": {
+                    "maxOutputTokens": max_tokens,
+                    "temperature": 0.3
+                }
+            }
+            
+            headers = {"Content-Type": "application/json"}
+            
+            for attempt in range(1, 3):
+                try:
+                    resp = requests.post(url, json=payload, headers=headers, timeout=120)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        if not text:
+                            raise RuntimeError("Gemini returned an empty response")
+                            
+                        if cost_sink is not None:
+                            cost_sink["authoring_model"] = model
+                            usage = data.get("usageMetadata", {})
+                            cost_sink["tokens_in"] = (
+                                cost_sink.get("tokens_in", 0) + int(usage.get("promptTokenCount", 0))
+                            )
+                            cost_sink["tokens_out"] = (
+                                cost_sink.get("tokens_out", 0) + int(usage.get("candidatesTokenCount", 0))
+                            )
+                        return text
+                    elif resp.status_code in (404, 503, 429):
+                        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text}")
+                    else:
+                        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text}")
+                except Exception as exc:
+                    last_err = exc
+                    error_msg = str(exc).casefold()
+                    
+                    # Fall over immediately to next model or next API key for rate limits or unavailable errors
+                    if any(err_token in error_msg for err_token in ("404", "503", "429", "resource_exhausted", "quota", "not found", "unavailable")):
+                        print(f"[author] gemini {model} (key ...{api_key[-6:]}) rate limited or unavailable ({exc}); rotating key/model immediately", flush=True)
+                        break
+                        
+                    wait = 3 * attempt
+                    print(f"[author] gemini {model} attempt {attempt}/2 failed: {exc}; waiting {wait}s", flush=True)
+                    if attempt < 2:
+                        time.sleep(wait)
+            else:
+                continue
+                
+    raise RuntimeError(f"Gemini authoring failed across {len(keys_to_try)} API keys and {len(models_to_try)} models. Last error: {last_err}")
+
 
 
 

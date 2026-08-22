@@ -33,8 +33,9 @@ DEFAULTS: dict[str, Any] = {
     "maintenance_mode": False,
     "maintenance_message": "Generation is paused for maintenance — back shortly.",
     # Tech toggles (read by the pipeline at job start)
-    "authoring_provider": "claude_code",  # codex_cli | claude_code | groq | openai | anthropic
-    "whisper_backend": "local",  # local | groq | openai
+    "authoring_provider": "gemini",  # gemini | claude_code | codex_cli | groq | openai | anthropic
+    "whisper_backend": "groq",  # groq | local | openai
+
     # Rate limits (0 = unlimited)
     "max_generations_per_hour_per_user": 0,
     # Referral reward (paise credited to both inviter and invitee on signup)

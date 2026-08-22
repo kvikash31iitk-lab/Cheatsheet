@@ -39,9 +39,12 @@ def _id_list(name: str) -> list[int]:
 # === credentials =============================================================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
+GROQ_API_KEYS = [k.strip() for k in (os.environ.get("GROQ_API_KEYS", "") or GROQ_API_KEY).split(",") if k.strip()]
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+GEMINI_API_KEYS = [k.strip() for k in (os.environ.get("GEMINI_API_KEYS", "") or GEMINI_API_KEY).split(",") if k.strip()]
+
 
 # === access ==================================================================
 WHITELISTED_GROUP_IDS: list[int] = _id_list("WHITELISTED_GROUP_IDS")
