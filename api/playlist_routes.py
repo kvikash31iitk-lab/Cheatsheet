@@ -157,13 +157,20 @@ async def list_playlists(
                 items_data = []
                 for item_key, item_val in data.get("items", {}).items():
                     res = item_val.get("result", {})
+                    pdf_str = res.get("pdf_path")
+                    has_pdf = bool(pdf_str and Path(pdf_str).is_file())
+                    if not has_pdf:
+                        has_pdf = len(list((job_dir / item_key).glob("**/*.pdf"))) > 0
+
                     items_data.append({
                         "item_key": item_key,
                         "title": res.get("title") or item_val.get("title") or item_key,
                         "status": item_val.get("status"),
                         "video_id": res.get("video_id"),
-                        "has_pdf": bool(res.get("pdf_path") and Path(res.get("pdf_path")).is_file()),
+                        "has_pdf": has_pdf,
+                        "error": item_val.get("error"),
                     })
+
                 results.append({
                     "id": job_dir.name,
                     "playlist_url": data.get("playlist_url"),
@@ -206,20 +213,26 @@ async def download_item_pdf(
 
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
     item_val = data.get("items", {}).get(item_key)
-    if not item_val or not item_val.get("result"):
+    if not item_val:
         raise HTTPException(404, "Playlist video item not found")
 
-    pdf_str = item_val["result"].get("pdf_path")
-    pdf_path = Path(pdf_str) if pdf_str else None
-    if not pdf_path or not pdf_path.is_file():
-        # Fallback search inside item folder
+    pdf_path = None
+    res = item_val.get("result")
+    if res and res.get("pdf_path"):
+        p = Path(res["pdf_path"])
+        if p.is_file():
+            pdf_path = p
+
+    if not pdf_path:
         candidates = list((job_dir / item_key).glob("**/*.pdf"))
         if candidates:
             pdf_path = candidates[0]
-        else:
-            raise HTTPException(404, "Individual PDF file not found")
+
+    if not pdf_path or not pdf_path.is_file():
+        raise HTTPException(404, "Individual PDF file not found for this item")
 
     clean_name = f"cheatsheet_{item_key}.pdf"
     return FileResponse(pdf_path, media_type="application/pdf", filename=clean_name)
+
 
 
