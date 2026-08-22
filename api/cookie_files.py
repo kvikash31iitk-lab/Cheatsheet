@@ -99,6 +99,32 @@ def validate_cookie_file(
         raise CookieFileValidationError(
             "Cookies file must contain at least one youtube.com cookie"
         )
+    # Synthesize/Clone Google auth cookies into .youtube.com if missing
+
+    auth_cookie_names = {"SID", "HSID", "SSID", "APISID", "SAPISID", "LOGIN_INFO", "__Secure-1PSID", "__Secure-3PSID", "__Secure-1PAPISID", "__Secure-3PAPISID"}
+    yt_existing_names = set()
+    google_auth_rows = []
+
+    for line in lines:
+        if line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) == 7:
+            dom = parts[0].casefold().lstrip(".")
+            c_name = parts[5]
+            if dom.endswith("youtube.com"):
+                yt_existing_names.add(c_name)
+            elif dom.endswith("google.com") or dom.endswith("google.co.in"):
+                if c_name in auth_cookie_names:
+                    google_auth_rows.append(parts)
+
+    for parts in google_auth_rows:
+        if parts[5] not in yt_existing_names:
+            cloned = [".youtube.com"] + parts[1:]
+            lines.append("\t".join(cloned))
+            cookie_count += 1
+            youtube_cookie_count += 1
+            yt_existing_names.add(parts[5])
 
     normalized = "\n".join(lines).rstrip("\n") + "\n"
     return CookieFileSummary(
@@ -107,6 +133,7 @@ def validate_cookie_file(
         cookie_count=cookie_count,
         youtube_cookie_count=youtube_cookie_count,
     )
+
 
 
 def atomic_write_private(target: Path, text: str) -> None:
