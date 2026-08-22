@@ -269,6 +269,8 @@ function GenerateForm() {
             : 0;
           const percent = total > 0 ? Math.round((completedCount / total) * 100) : (playlistStatus.status === 'complete' ? 100 : 0);
 
+          const itemsList: any[] = manifest?.items ? Object.values(manifest.items) : [];
+
           return (
             <div
               style={{
@@ -301,23 +303,81 @@ function GenerateForm() {
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--c-ink-2)', marginBottom: 8 }}>
-                <span>{playlistStatus.progress || 'Processing in background...'}</span>
-                {total > 0 && <span style={{ fontWeight: 600 }}>{completedCount} / {total} Videos ({percent}%)</span>}
+                <span style={{ fontWeight: 500 }}>{playlistStatus.progress || 'Processing in background...'}</span>
+                {total > 0 && <span style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{completedCount} / {total} Videos ({percent}%)</span>}
               </div>
 
+              {/* Live Video Log List */}
+              {itemsList.length > 0 && (
+                <div style={{ marginTop: 12, borderTop: '1px solid var(--c-line-2)', paddingTop: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-ink-2)', marginBottom: 6 }}>
+                    Live Activity Log ({itemsList.length} items logged):
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 160, overflowY: 'auto', paddingRight: 4 }}>
+                    {itemsList.map((item: any, idx: number) => {
+                      const res = item.result || {};
+                      const title = res.title || item.title || `Video ${idx + 1}`;
+                      const isComplete = item.status === 'complete';
+                      const isFailed = item.status === 'failed';
+                      const isRunning = item.status === 'running';
+
+                      return (
+                        <div
+                          key={idx}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            background: isRunning ? 'var(--c-surface-2)' : 'transparent',
+                            fontSize: 12,
+                            borderLeft: isComplete ? '3px solid var(--c-mint)' : isFailed ? '3px solid var(--c-error)' : '3px solid var(--c-accent)',
+                          }}
+                        >
+                          <span
+                            style={{
+                              color: 'var(--c-ink)',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              maxWidth: '75%',
+                            }}
+                            title={title}
+                          >
+                            {isComplete ? '✅ ' : isFailed ? '❌ ' : '⚡ '} {title}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 600,
+                              fontFamily: 'var(--font-mono)',
+                              color: isComplete ? 'var(--c-mint)' : isFailed ? 'var(--c-error)' : 'var(--c-accent)',
+                            }}
+                          >
+                            {item.status?.toUpperCase()}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {playlistStatus.status === 'complete' && playlistStatus.summary && (
-                <div style={{ fontSize: 13, color: 'var(--c-mint)', fontWeight: 600, marginTop: 8 }}>
+                <div style={{ fontSize: 13, color: 'var(--c-mint)', fontWeight: 600, marginTop: 12 }}>
                   🎉 Complete! Processed {playlistStatus.summary.successful_videos} / {playlistStatus.summary.total_videos} videos. Master PDF generated!
                 </div>
               )}
               {playlistStatus.error && (
-                <div style={{ fontSize: 13, color: 'var(--c-error)', marginTop: 8 }}>
+                <div style={{ fontSize: 13, color: 'var(--c-error)', marginTop: 12 }}>
                   ❌ {playlistStatus.error}
                 </div>
               )}
             </div>
           );
         })()}
+
 
 
 
