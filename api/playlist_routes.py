@@ -155,6 +155,12 @@ async def list_playlists(
             try:
                 data = json.loads(manifest_path.read_text(encoding="utf-8"))
                 items_data = []
+                import re
+
+                def _extract_ep(t: str) -> float | None:
+                    m = re.search(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*(\d+(?:\.\d+)?)\b', t or '', re.IGNORECASE)
+                    return float(m.group(1)) if m else None
+
                 for item_key, item_val in data.get("items", {}).items():
                     res = item_val.get("result", {})
                     pdf_str = res.get("pdf_path")
@@ -170,6 +176,9 @@ async def list_playlists(
                         "has_pdf": has_pdf,
                         "error": item_val.get("error"),
                     })
+
+                items_data.sort(key=lambda x: _extract_ep(x["title"]) if _extract_ep(x["title"]) is not None else 999.0)
+
 
                 results.append({
                     "id": job_dir.name,

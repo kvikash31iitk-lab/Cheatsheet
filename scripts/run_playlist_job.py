@@ -92,11 +92,37 @@ def load_playlist_manifest(manifest_path: Path, playlist_url: str) -> dict[str, 
     }
 
 
+import re
+
+def _extract_episode_number(title: str) -> float | None:
+    """Extract class/episode/part number from video title (e.g. 'Class-8' -> 8.0, 'Class 1' -> 1.0, 'Part 2' -> 2.0)."""
+    if not title:
+        return None
+    # Look for explicit patterns like 'Class-8', 'Class 8', 'Episode 8', 'Part 8', 'Vol 8', '#8', etc.
+    match = re.search(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*(\d+(?:\.\d+)?)\b', title, re.IGNORECASE)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            pass
+    return None
+
+
 def consolidate_markdowns(
     items_results: list[dict[str, Any]],
     playlist_title: str = "Playlist Summary",
 ) -> str:
-    """Combine individual video markdowns into a master consolidated markdown."""
+    """Combine individual video markdowns into a master consolidated markdown, sorted numerically by episode/class number."""
+    # Sort items based on extracted episode number if present across items, else preserve playlist_index
+    def sort_key(item: dict[str, Any]) -> tuple[int, float]:
+        title = item.get("title", "")
+        ep = _extract_episode_number(title)
+        if ep is not None:
+            return (0, ep)
+        return (1, float(item.get("playlist_index", 0)))
+
+    sorted_items = sorted(items_results, key=sort_key)
+
     lines = [
         f"# {playlist_title}",
         "",
@@ -106,24 +132,23 @@ def consolidate_markdowns(
         "",
     ]
 
-    for item in items_results:
-        idx = item.get("playlist_index", 0)
-        title = item.get("title") or f"Module {idx}"
-        anchor = f"module-{idx}-{item.get('video_id', '')}"
-        lines.append(f"{idx}. [{title}](#{anchor})")
+    for display_idx, item in enumerate(sorted_items, start=1):
+        idx = item.get("playlist_index", display_idx)
+        title = item.get("title") or f"Module {display_idx}"
+        anchor = f"module-{display_idx}-{item.get('video_id', '')}"
+        lines.append(f"{display_idx}. [{title}](#{anchor})")
 
     lines.append("")
     lines.append("---")
     lines.append("")
 
-    for item in items_results:
-        idx = item.get("playlist_index", 0)
-        title = item.get("title") or f"Module {idx}"
-        anchor = f"module-{idx}-{item.get('video_id', '')}"
+    for display_idx, item in enumerate(sorted_items, start=1):
+        title = item.get("title") or f"Module {display_idx}"
+        anchor = f"module-{display_idx}-{item.get('video_id', '')}"
         md_path_str = item.get("markdown_path")
 
         lines.append(f"<a id='{anchor}'></a>")
-        lines.append(f"# Module {idx}: {title}")
+        lines.append(f"# Module {display_idx}: {title}")
         lines.append("")
         if item.get("url"):
             lines.append(f"**Source Video**: [{item['url']}]({item['url']})")
@@ -146,6 +171,7 @@ def consolidate_markdowns(
         lines.append("")
 
     return "\n".join(lines)
+
 
 
 def run_playlist_job(
