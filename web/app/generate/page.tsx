@@ -251,39 +251,65 @@ function GenerateForm() {
         </div>
 
         {/* Live Playlist Progress Dashboard Banner */}
-        {playlistStatus && (
-          <div
-            style={{
-              padding: 16,
-              background: 'var(--c-surface)',
-              border: '1.5px solid var(--c-accent)',
-              borderRadius: 12,
-              marginBottom: 24,
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--c-ink)' }}>
-                📑 Playlist Extraction Job
+        {playlistStatus && (() => {
+          // Extract percentage and item progress if available in manifest or string
+          const manifest = playlistStatus.manifest;
+          const total = manifest?.total_videos || playlistStatus.summary?.total_videos || 0;
+          const completedCount = manifest?.items
+            ? Object.values(manifest.items).filter((i: any) => i.status === 'complete').length
+            : 0;
+          const percent = total > 0 ? Math.round((completedCount / total) * 100) : (playlistStatus.status === 'complete' ? 100 : 0);
+
+          return (
+            <div
+              style={{
+                padding: 20,
+                background: 'var(--c-surface)',
+                border: '1.5px solid var(--c-accent)',
+                borderRadius: 12,
+                marginBottom: 24,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--c-ink)' }}>
+                  📑 Playlist Processing Progress
+                </div>
+                <Tag tone={playlistStatus.status === 'complete' ? 'mint' : playlistStatus.status === 'error' ? 'error' : 'accent'}>
+                  {playlistStatus.status?.toUpperCase()}
+                </Tag>
               </div>
-              <Tag tone={playlistStatus.status === 'complete' ? 'mint' : playlistStatus.status === 'error' ? 'error' : 'accent'}>
-                {playlistStatus.status?.toUpperCase()}
-              </Tag>
+
+              {/* Progress Bar */}
+              <div style={{ background: 'var(--c-line)', borderRadius: 6, height: 10, width: '100%', overflow: 'hidden', marginBottom: 12 }}>
+                <div
+                  style={{
+                    background: playlistStatus.status === 'complete' ? 'var(--c-mint)' : 'var(--c-accent)',
+                    height: '100%',
+                    width: `${percent}%`,
+                    transition: 'width 0.4s ease',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--c-ink-2)', marginBottom: 8 }}>
+                <span>{playlistStatus.progress || 'Processing in background...'}</span>
+                {total > 0 && <span style={{ fontWeight: 600 }}>{completedCount} / {total} Videos ({percent}%)</span>}
+              </div>
+
+              {playlistStatus.status === 'complete' && playlistStatus.summary && (
+                <div style={{ fontSize: 13, color: 'var(--c-mint)', fontWeight: 600, marginTop: 8 }}>
+                  🎉 Complete! Processed {playlistStatus.summary.successful_videos} / {playlistStatus.summary.total_videos} videos. Master PDF generated!
+                </div>
+              )}
+              {playlistStatus.error && (
+                <div style={{ fontSize: 13, color: 'var(--c-error)', marginTop: 8 }}>
+                  ❌ {playlistStatus.error}
+                </div>
+              )}
             </div>
-            <div style={{ fontSize: 13, color: 'var(--c-ink-2)', marginBottom: 8 }}>
-              {playlistStatus.progress || 'Processing playlist in background...'}
-            </div>
-            {playlistStatus.status === 'complete' && playlistStatus.summary && (
-              <div style={{ fontSize: 13, color: 'var(--c-mint)', fontWeight: 500 }}>
-                🎉 Successfully processed {playlistStatus.summary.successful_videos} / {playlistStatus.summary.total_videos} videos!
-              </div>
-            )}
-            {playlistStatus.error && (
-              <div style={{ fontSize: 13, color: 'var(--c-error)' }}>
-                ❌ {playlistStatus.error}
-              </div>
-            )}
-          </div>
-        )}
+          );
+        })()}
+
 
 
         <label

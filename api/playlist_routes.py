@@ -46,6 +46,10 @@ def _async_run_playlist(job_id: str, req: PlaylistGenerateRequest) -> None:
         "error": None,
     }
 
+    def on_progress(msg: str) -> None:
+        if job_id in _playlist_jobs:
+            _playlist_jobs[job_id]["progress"] = msg
+
     try:
         summary = run_playlist_job(
             req.playlist_url,
@@ -55,11 +59,12 @@ def _async_run_playlist(job_id: str, req: PlaylistGenerateRequest) -> None:
             max_videos=req.max_videos,
             features=req.features or [],
             continue_on_error=True,
-            progress=True,
+            progress=on_progress,
         )
         _playlist_jobs[job_id]["status"] = "complete"
         _playlist_jobs[job_id]["summary"] = summary
         _playlist_jobs[job_id]["progress"] = "Completed successfully"
+
     except Exception as exc:
         import traceback
         traceback.print_exc()
