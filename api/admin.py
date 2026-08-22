@@ -99,8 +99,9 @@ class SettingsUpdate(BaseModel):
     maintenance_mode: Optional[bool] = None
     maintenance_message: Optional[str] = None
     authoring_provider: Optional[Literal[
-        "codex_cli", "claude_code", "groq", "openai", "anthropic"
+        "codex_cli", "claude_code", "groq", "openai", "anthropic", "gemini"
     ]] = None
+
     whisper_backend: Optional[Literal["local", "groq", "openai"]] = None
     max_generations_per_hour_per_user: Optional[int] = Field(None, ge=0)
     referral_credit_paise: Optional[int] = Field(None, ge=0)
