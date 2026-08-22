@@ -308,8 +308,11 @@ function GenerateForm() {
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--c-ink-2)', marginBottom: 8 }}>
                 <span style={{ fontWeight: 500 }}>{playlistStatus.progress || 'Processing in background...'}</span>
                 {total > 0 && <span style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{completedCount} / {total} Videos ({percent}%)</span>}
-                         {/* Active Video Subtask Stepper Banner */}
+              </div>
+
+              {/* Active Video Subtask Stepper Banner */}
               {playlistStatus.status === 'running' && manifest?.active_video && (
+
                 <div
                   style={{
                     marginBottom: 14,
