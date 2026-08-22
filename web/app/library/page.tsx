@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { AppBar } from '@/components/app-bar';
 import { Btn, Tag } from '@/components/ui';
 import { Ic } from '@/components/icons';
-import { getLibrary, listPlaylists, retryPlaylistJob, type Job } from '@/lib/api';
+import { getLibrary, listPlaylists, retryPlaylistJob, stopPlaylistJob, type Job } from '@/lib/api';
+
 
 
 type Filter = 'all' | 'cheatsheet' | 'book' | 'playlist' | 'failed';
