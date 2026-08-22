@@ -136,12 +136,17 @@ function GenerateForm() {
     async function pollPlaylist() {
       try {
         const res = await fetch(`/api/playlist/status/${encodeURIComponent(jobId)}`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (typeof window !== 'undefined') localStorage.removeItem('active_playlist_job_id');
+          return;
+        }
         const data = await res.json();
         if (cancelled) return;
         setPlaylistStatus(data);
         if (data.status === 'running') {
           timer = setTimeout(pollPlaylist, 3000);
+        } else if (data.status === 'complete' || data.status === 'error') {
+          if (typeof window !== 'undefined') localStorage.removeItem('active_playlist_job_id');
         }
       } catch (e) {
         console.error('Playlist status error', e);
@@ -165,6 +170,9 @@ function GenerateForm() {
     try {
       if (isPlaylistMode) {
         const { id } = await createPlaylistJob(url.trim(), kind, delaySeconds, maxVideos);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('active_playlist_job_id', id);
+        }
         setPlaylistJobId(id);
         setSubmitting(false);
         setPlaylistStatus({ status: 'running', progress: 'Extracting playlist info...' });
