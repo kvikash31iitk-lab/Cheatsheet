@@ -122,8 +122,10 @@ from api.models import (  # noqa: E402
 )
 from api import settings as app_settings  # noqa: E402
 from api.admin import router as admin_router  # noqa: E402
+from api.playlist_routes import router as playlist_router  # noqa: E402
 from api.upsc_routes import router as upsc_router  # noqa: E402
 from api.youtube_urls import validate_public_youtube_url  # noqa: E402
+
 
 WORK_ROOT = PROJECT_ROOT / "web_work"
 WORK_ROOT.mkdir(exist_ok=True)
@@ -711,11 +713,10 @@ async def startup() -> None:
             await s.commit()
 
 
-from api.playlist_routes import router as playlist_router  # noqa: E402
-
 app.include_router(admin_router)
 app.include_router(upsc_router)
 app.include_router(playlist_router)
+
 
 
 
