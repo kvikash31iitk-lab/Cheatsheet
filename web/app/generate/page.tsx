@@ -76,10 +76,6 @@ function GenerateForm() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
-  // Opt-in PDF features. All OFF by default — user explicitly enables
-  // what they want per generation. State stored as a Set internally for
-  // O(1) lookups and ordering-independent equality; serialized to an
-  // array when submitting so the JSON wire format stays simple.
   const [features, setFeatures] = useState<Set<FeatureFlag>>(new Set());
   const toggleFeature = (flag: FeatureFlag) =>
     setFeatures((prev) => {
@@ -118,15 +114,16 @@ function GenerateForm() {
     return () => clearTimeout(t);
   }, [url, valid]);
 
-  // If both url + kind came from the dashboard QuickGenerate, auto-submit
-  // once preview returns.
+  // Restore active playlist job from localStorage on mount
   useEffect(() => {
-    const fromDash = searchParams?.get('url') && searchParams?.get('kind');
-    if (fromDash && preview && !submitting) {
-      submit();
+    if (typeof window !== 'undefined') {
+      const savedJobId = localStorage.getItem('active_playlist_job_id');
+      if (savedJobId) {
+        setMode('playlist');
+        setPlaylistJobId(savedJobId);
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preview]);
+  }, []);
 
   useEffect(() => {
     if (!playlistJobId) return;
@@ -160,6 +157,8 @@ function GenerateForm() {
       if (timer) clearTimeout(timer);
     };
   }, [playlistJobId]);
+
+
 
 
   async function submit() {
