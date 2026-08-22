@@ -126,17 +126,28 @@ function GenerateForm() {
   }, [preview]);
 
   async function submit() {
-    if (!valid || submitting) return;
+    const isPlaylistMode = mode === 'playlist';
+    const isUrlValid = isPlaylistMode ? PLAYLIST_RE.test(url.trim()) : valid;
+    if (!isUrlValid || submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      const { id } = await createJob(url, kind, Array.from(features));
-      router.push(`/generate/${id}`);
+      if (isPlaylistMode) {
+        const { id } = await createPlaylistJob(url.trim(), kind, delaySeconds, maxVideos);
+        setPlaylistJobId(id);
+        setSubmitting(false);
+        // Start polling playlist status
+        setPlaylistStatus({ status: 'running', progress: 'Extracting playlist info...' });
+      } else {
+        const { id } = await createJob(url, kind, Array.from(features));
+        router.push(`/generate/${id}`);
+      }
     } catch (e: unknown) {
       setError(friendlyGenerationError(e));
       setSubmitting(false);
     }
   }
+
 
   return (
     <main style={{ minHeight: '100vh' }}>
@@ -520,10 +531,13 @@ function GenerateForm() {
             size="lg"
             icon={<Ic.sparkle size={14} />}
             disabled={(() => {
-              if (!valid || submitting || previewLoading || !!previewError) {
+              if (submitting) return true;
+              if (mode === 'playlist') {
+                return !PLAYLIST_RE.test(url.trim());
+              }
+              if (!valid || previewLoading || !!previewError || !preview) {
                 return true;
               }
-              if (!preview) return true;
               const freeLeft =
                 kind === 'cheatsheet'
                   ? (me?.free_cheatsheets_left ?? 0)
@@ -534,8 +548,9 @@ function GenerateForm() {
             })()}
             onClick={submit}
           >
-            {submitting ? 'Starting…' : 'Generate now'}
+            {submitting ? 'Starting…' : mode === 'playlist' ? 'Extract Playlist' : 'Generate now'}
           </Btn>
+
         </div>
       </div>
     </main>
