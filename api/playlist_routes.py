@@ -188,78 +188,84 @@ async def list_playlists(
     if not PLAYLIST_WORK_ROOT.exists():
         return []
 
+    def _safe_ep(t: str) -> float:
+        if not t:
+            return 999.0
+        m = re.search(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*(\d+(?:\.\d+)?)\b', t, re.IGNORECASE)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                pass
+        m2 = re.search(r'\b(?:class|part|lec|lecture)[-:\s]*(\d+)', t, re.IGNORECASE)
+        if m2:
+            try:
+                return float(m2.group(1))
+            except ValueError:
+                pass
+        return 999.0
+
+    def _safe_topic(t: str) -> str:
+        if not t:
+            return ""
+        cleaned = re.sub(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+(?:\.\d+)?\b', '', t, flags=re.IGNORECASE)
+        cleaned = re.sub(r'[\d_|\-–—:]+', ' ', cleaned)
+        toks = [w.lower() for w in cleaned.split() if len(w) > 3 and w.lower() not in {"upsc", "epfo", "apfc", "acio", "complete", "course", "video", "hindi", "english"}]
+        return " ".join(toks[:3]) if toks else ""
+
     for job_dir in sorted(PLAYLIST_WORK_ROOT.iterdir(), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True):
         if not job_dir.is_dir():
             continue
         manifest_path = job_dir / "playlist_manifest.json"
-        if manifest_path.is_file():
-            try:
-                data = json.loads(manifest_path.read_text(encoding="utf-8"))
-                def _extract_ep(t: str) -> float | None:
-                    if not t:
-                        return None
-                    m = re.search(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*(\d+(?:\.\d+)?)\b', t, re.IGNORECASE)
-                    if m:
-                        try:
-                            return float(m.group(1))
-                        except ValueError:
-                            pass
-                    m2 = re.search(r'\b(?:class|part|lec|lecture)[-:\s]*(\d+)', t, re.IGNORECASE)
-                    return float(m2.group(1)) if m2 else None
+        if not manifest_path.is_file():
+            continue
 
-                def _extract_topic(t: str) -> str:
-                    if not t:
-                        return ""
-                    cleaned = re.sub(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+(?:\.\d+)?\b', '', t, flags=re.IGNORECASE)
-                    cleaned = re.sub(r'[\d_|\-–—:]+', ' ', cleaned)
-                    toks = [w.lower() for w in cleaned.split() if len(w) > 3 and w.lower() not in {"upsc", "epfo", "apfc", "acio", "complete", "course", "video", "hindi", "english"}]
-                    return " ".join(toks[:3]) if toks else ""
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            items_data = []
+            for idx, (item_key, item_val) in enumerate(data.get("items", {}).items(), 1):
+                res = item_val.get("result", {}) or {}
+                pdf_str = res.get("pdf_path")
+                has_pdf = bool(pdf_str and Path(pdf_str).is_file())
+                if not has_pdf:
+                    has_pdf = len(list((job_dir / item_key).glob("**/*.pdf"))) > 0
 
-                items_data = []
-                for idx, (item_key, item_val) in enumerate(data.get("items", {}).items(), 1):
-
-                    res = item_val.get("result", {})
-                    pdf_str = res.get("pdf_path")
-                    has_pdf = bool(pdf_str and Path(pdf_str).is_file())
-                    if not has_pdf:
-                        has_pdf = len(list((job_dir / item_key).glob("**/*.pdf"))) > 0
-
-                    items_data.append({
-                        "item_key": item_key,
-                        "title": res.get("title") or item_val.get("title") or item_key,
-                        "status": item_val.get("status"),
-                        "video_id": res.get("video_id"),
-                        "has_pdf": has_pdf,
-                        "error": item_val.get("error"),
-                        "orig_idx": idx,
-                    })
-
-                topic_order_map: dict[str, int] = {}
-                for it in items_data:
-                    top = _extract_topic(it["title"])
-                    if top and top not in topic_order_map:
-                        topic_order_map[top] = it["orig_idx"]
-
-                items_data.sort(key=lambda x: (
-                    topic_order_map.get(_extract_topic(x["title"]), 0),
-                    _extract_ep(x["title"]) if _extract_ep(x["title"]) is not None else 999.0,
-                    x["orig_idx"]
-                ))
-
-
-
-                results.append({
-                    "id": job_dir.name,
-                    "playlist_url": data.get("playlist_url"),
-                    "status": data.get("status", "completed"),
-                    "created_at": data.get("created_at"),
-                    "total_videos": data.get("total_videos", 0),
-                    "summary": data.get("summary"),
-                    "items": items_data,
+                items_data.append({
+                    "item_key": item_key,
+                    "title": res.get("title") or item_val.get("title") or item_key,
+                    "status": item_val.get("status"),
+                    "video_id": res.get("video_id"),
+                    "has_pdf": has_pdf,
+                    "error": item_val.get("error"),
+                    "orig_idx": idx,
                 })
-            except Exception:
-                pass
+
+            topic_order_map: dict[str, int] = {}
+            for it in items_data:
+                top = _safe_topic(it["title"])
+                if top and top not in topic_order_map:
+                    topic_order_map[top] = it["orig_idx"]
+
+            items_data.sort(key=lambda x: (
+                topic_order_map.get(_safe_topic(x["title"]), 0),
+                _safe_ep(x["title"]),
+                x["orig_idx"]
+            ))
+
+            results.append({
+                "id": job_dir.name,
+                "playlist_url": data.get("playlist_url"),
+                "status": data.get("status", "completed"),
+                "created_at": data.get("created_at"),
+                "total_videos": data.get("total_videos", 0),
+                "summary": data.get("summary"),
+                "items": items_data,
+            })
+        except Exception as exc:
+            print(f"[playlist_list_error] {job_dir.name}: {exc}", flush=True)
+
     return results
+
 
 
 @router.get("/download/{job_id}/master")
