@@ -95,6 +95,47 @@ async def generate_playlist(
     return {"id": job_id, "status": "queued"}
 
 
+@router.post("/retry/{job_id}")
+async def retry_playlist(
+    job_id: str,
+    bg_tasks: BackgroundTasks,
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """Retry failed videos for an existing playlist job."""
+    job_dir = PLAYLIST_WORK_ROOT / job_id
+    manifest_path = job_dir / "playlist_manifest.json"
+    if not manifest_path.is_file():
+        raise HTTPException(404, "Playlist job manifest not found")
+
+    try:
+        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        playlist_url = manifest_data.get("playlist_url")
+        if not playlist_url:
+            raise HTTPException(400, "Manifest missing playlist URL")
+
+        # Reset failed items to allow retry while keeping completed ones
+        items = manifest_data.get("items", {})
+        for item_key, item_val in items.items():
+            if item_val.get("status") == "failed":
+                item_val["status"] = "pending"
+                item_val.pop("error", None)
+
+        manifest_data["status"] = "running"
+        manifest_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+
+        req = PlaylistGenerateRequest(
+            playlist_url=playlist_url,
+            kind="cheatsheet",
+            delay_seconds=5.0,
+        )
+
+        bg_tasks.add_task(_async_run_playlist, job_id, req)
+        return {"id": job_id, "status": "retrying"}
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to initiate retry: {exc}")
+
+
+
 @router.get("/status/{job_id}")
 async def get_playlist_status(
     job_id: str,

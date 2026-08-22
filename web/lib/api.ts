@@ -358,10 +358,13 @@ export async function getPlaylistJob(id: string): Promise<any> {
   return res.json();
 }
 
-export async function listPlaylists(): Promise<any[]> {
-  const res = await fetch('/api/playlist/list');
-  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to fetch playlists'));
+export async function retryPlaylistJob(id: string): Promise<{ id: string }> {
+  const res = await fetch(`/api/playlist/retry/${encodeURIComponent(id)}`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to retry playlist job'));
   return res.json();
 }
+
 
 

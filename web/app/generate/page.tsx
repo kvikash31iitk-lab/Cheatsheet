@@ -8,6 +8,7 @@ import { Ic } from '@/components/icons';
 import {
   createJob,
   createPlaylistJob,
+  retryPlaylistJob,
   friendlyGenerationError,
   getPreview,
   getMe,
@@ -16,6 +17,7 @@ import {
   type Me,
   type FeatureFlag,
 } from '@/lib/api';
+
 
 
 // Tile metadata for the optional-features section. Order matches the
@@ -310,8 +312,37 @@ function GenerateForm() {
               {/* Live Video Log List */}
               {itemsList.length > 0 && (
                 <div style={{ marginTop: 12, borderTop: '1px solid var(--c-line-2)', paddingTop: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-ink-2)', marginBottom: 6 }}>
-                    Live Activity Log ({itemsList.length} items logged):
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-ink-2)' }}>
+                      Live Activity Log ({itemsList.length} items logged):
+                    </div>
+                    {itemsList.some((i: any) => i.status === 'failed') && playlistStatus.status !== 'running' && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!playlistJobId) return;
+                          try {
+                            setPlaylistStatus({ ...playlistStatus, status: 'running', progress: 'Retrying remaining videos...' });
+                            await retryPlaylistJob(playlistJobId);
+                          } catch (e) {
+                            console.error('Retry failed', e);
+                          }
+                        }}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: 6,
+                          background: 'var(--c-accent)',
+                          color: '#fff',
+                          border: 'none',
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        🔄 Retry Remaining Videos
+                      </button>
+                    )}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto', paddingRight: 4 }}>
                     {itemsList.map((item: any, idx: number) => {
@@ -386,8 +417,37 @@ function GenerateForm() {
               )}
 
               {playlistStatus.status === 'complete' && playlistStatus.summary && (
-                <div style={{ fontSize: 13, color: 'var(--c-mint)', fontWeight: 600, marginTop: 12 }}>
-                  🎉 Complete! Processed {playlistStatus.summary.successful_videos} / {playlistStatus.summary.total_videos} videos. Master PDF generated!
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                  <div style={{ fontSize: 13, color: 'var(--c-mint)', fontWeight: 600 }}>
+                    🎉 Processed {playlistStatus.summary.successful_videos} / {playlistStatus.summary.total_videos} videos. Master PDF generated!
+                  </div>
+                  {playlistStatus.summary.successful_videos < playlistStatus.summary.total_videos && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!playlistJobId) return;
+                        try {
+                          setPlaylistStatus({ ...playlistStatus, status: 'running', progress: 'Retrying remaining videos...' });
+                          await retryPlaylistJob(playlistJobId);
+                        } catch (e) {
+                          console.error('Retry failed', e);
+                        }
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: 6,
+                        background: 'var(--c-accent)',
+                        color: '#fff',
+                        border: 'none',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      🔄 Retry Remaining Videos
+                    </button>
+                  )}
                 </div>
               )}
               {playlistStatus.error && (
@@ -398,6 +458,7 @@ function GenerateForm() {
             </div>
           );
         })()}
+
 
 
 
