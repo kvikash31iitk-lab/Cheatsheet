@@ -143,8 +143,6 @@ function GenerateForm() {
         setPlaylistStatus(data);
         if (data.status === 'running') {
           timer = setTimeout(pollPlaylist, 3000);
-        } else if (data.status === 'complete' || data.status === 'error') {
-          if (typeof window !== 'undefined') localStorage.removeItem('active_playlist_job_id');
         }
       } catch (e) {
         console.error('Playlist status error', e);
@@ -157,6 +155,7 @@ function GenerateForm() {
       if (timer) clearTimeout(timer);
     };
   }, [playlistJobId]);
+
 
 
 
@@ -259,9 +258,11 @@ function GenerateForm() {
         </div>
 
         {/* Live Playlist Progress Dashboard Banner */}
-        {playlistStatus && (() => {
+        {(playlistStatus || mode === 'playlist') && (() => {
+          if (!playlistStatus) return null;
           // Extract percentage and item progress if available in manifest or string
           const manifest = playlistStatus.manifest;
+
           const total = manifest?.total_videos || playlistStatus.summary?.total_videos || 0;
           const completedCount = manifest?.items
             ? Object.values(manifest.items).filter((i: any) => i.status === 'complete').length
