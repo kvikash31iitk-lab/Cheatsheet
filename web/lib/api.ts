@@ -340,17 +340,19 @@ export async function unlinkTelegram(): Promise<{ ok: boolean }> {
 export async function createPlaylistJob(
   playlist_url: string,
   kind: JobKind = 'cheatsheet',
-  delay_seconds = 5.0,
+  delay_seconds = 2.0,
   max_videos?: number,
+  concurrency = 3,
 ): Promise<{ id: string }> {
   const res = await fetch('/api/playlist/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ playlist_url, kind, delay_seconds, max_videos }),
+    body: JSON.stringify({ playlist_url, kind, delay_seconds, max_videos, concurrency }),
   });
   if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to start playlist job'));
   return res.json();
 }
+
 
 export async function getPlaylistJob(id: string): Promise<any> {
   const res = await fetch(`/api/playlist/status/${encodeURIComponent(id)}`);

@@ -30,8 +30,9 @@ _playlist_jobs: dict[str, dict[str, Any]] = {}
 class PlaylistGenerateRequest(BaseModel):
     playlist_url: str
     kind: str = "cheatsheet"
-    delay_seconds: float = 5.0
+    delay_seconds: float = 2.0
     max_videos: Optional[int] = None
+    concurrency: int = 3
     features: Optional[list[str]] = None
 
 
@@ -59,10 +60,12 @@ def _async_run_playlist(job_id: str, req: PlaylistGenerateRequest) -> None:
             out_dir=job_dir,
             delay_seconds=req.delay_seconds,
             max_videos=req.max_videos,
+            concurrency=req.concurrency or 3,
             features=req.features or [],
             continue_on_error=True,
             progress=on_progress,
         )
+
         _playlist_jobs[job_id]["status"] = "complete"
         _playlist_jobs[job_id]["summary"] = summary
         _playlist_jobs[job_id]["progress"] = "Completed successfully"
@@ -128,11 +131,13 @@ async def retry_playlist(
         req = PlaylistGenerateRequest(
             playlist_url=playlist_url,
             kind="cheatsheet",
-            delay_seconds=5.0,
+            delay_seconds=2.0,
+            concurrency=3,
         )
 
         bg_tasks.add_task(_async_run_playlist, job_id, req)
         return {"id": job_id, "status": "retrying"}
+
     except Exception as exc:
         raise HTTPException(500, f"Failed to initiate retry: {exc}")
 

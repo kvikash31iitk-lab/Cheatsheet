@@ -250,13 +250,17 @@ def run_playlist_job(
     *,
     kind: str = "cheatsheet",
     out_dir: Path | None = None,
-    delay_seconds: float = 5.0,
+    delay_seconds: float = 2.0,
     max_videos: int | None = None,
+    concurrency: int = 3,
     features: list[str] | None = None,
     continue_on_error: bool = True,
     clean_temp: bool = False,
     progress: bool = True,
 ) -> dict[str, Any]:
+    import concurrent.futures
+    import threading
+
     def emit(msg: str) -> None:
         if progress:
             print(f"[playlist-job] {msg}", flush=True)
@@ -276,26 +280,38 @@ def run_playlist_job(
     if max_videos and max_videos > 0:
         playlist_items = playlist_items[:max_videos]
 
-    emit(f"Found {len(playlist_items)} videos to process.")
+    emit(f"Found {len(playlist_items)} videos to process with {concurrency} parallel workers.")
     manifest["total_videos"] = len(playlist_items)
     if found_title:
         manifest["playlist_title"] = found_title
     _atomic_write_json(manifest_path, manifest)
 
-
+    manifest_lock = threading.Lock()
     successful_results: list[dict[str, Any]] = []
 
+    # Pre-collect already completed items
+    pending_items: list[dict[str, Any]] = []
     for item in playlist_items:
+        idx = item["playlist_index"]
+        v_id = item["video_id"]
+        item_key = f"{idx:03d}_{v_id}"
+        item_manifest = manifest.setdefault("items", {}).setdefault(item_key, {})
+        if item_manifest.get("status") == "complete" and item_manifest.get("result"):
+            res = item_manifest["result"]
+            res["playlist_index"] = idx
+            res["title"] = item.get("title", res.get("title"))
+            successful_results.append(res)
+            emit(f"Skipping video [{idx}/{len(playlist_items)}] (already completed): {item['title']}")
+        else:
+            pending_items.append(item)
+
+    def process_video_worker(item: dict[str, Any]) -> dict[str, Any] | None:
         # Check if job was stopped by user
         if manifest_path.is_file():
             try:
                 cur_m = json.loads(manifest_path.read_text(encoding="utf-8"))
                 if cur_m.get("status") == "stopped":
-                    emit(f"Playlist job was stopped by user. Halting execution.")
-                    manifest["status"] = "stopped"
-                    manifest.pop("active_video", None)
-                    _atomic_write_json(manifest_path, manifest)
-                    return {"total_videos": len(playlist_items), "successful_videos": len(successful_results), "status": "stopped"}
+                    return None
             except Exception:
                 pass
 
@@ -304,44 +320,28 @@ def run_playlist_job(
         idx = item["playlist_index"]
         item_key = f"{idx:03d}_{v_id}"
 
-        item_manifest = manifest.setdefault("items", {}).setdefault(item_key, {})
-        if item_manifest.get("status") == "complete" and item_manifest.get("result"):
-            res = item_manifest["result"]
-            res["playlist_index"] = idx
-            res["title"] = item.get("title", res.get("title"))
-            successful_results.append(res)
-            emit(f"Skipping video [{idx}/{len(playlist_items)}] (already completed): {item['title']}")
-            continue
+        with manifest_lock:
+            item_manifest = manifest.setdefault("items", {}).setdefault(item_key, {})
+            item_manifest["status"] = "running"
+            item_manifest["started_at"] = _utc_now()
+            item_manifest["current_subtask"] = "Starting ingestion..."
+            _atomic_write_json(manifest_path, manifest)
 
-        emit(f"Processing video [{idx}/{len(playlist_items)}]: {item['title']}")
+        emit(f"[Worker] Starting video [{idx}/{len(playlist_items)}]: {item['title']}")
         video_out_dir = root_dir / f"{idx:03d}_{v_id}"
-        item_manifest["status"] = "running"
-        item_manifest["started_at"] = _utc_now()
-        item_manifest["current_subtask"] = "Starting ingestion..."
-        manifest["active_video"] = {
-            "index": idx,
-            "total": len(playlist_items),
-            "video_id": v_id,
-            "title": item["title"],
-            "subtask": "Starting video extraction...",
-        }
-        _atomic_write_json(manifest_path, manifest)
 
         def handle_subtask_progress(subtask_msg: str) -> None:
-            # Check for user stop during subtask
-            if manifest_path.is_file():
-                try:
-                    cur_m = json.loads(manifest_path.read_text(encoding="utf-8"))
-                    if cur_m.get("status") == "stopped":
-                        return
-                except Exception:
-                    pass
-            item_manifest["current_subtask"] = subtask_msg
-            if manifest.get("active_video"):
-                manifest["active_video"]["subtask"] = subtask_msg
-            _atomic_write_json(manifest_path, manifest)
+            with manifest_lock:
+                if manifest_path.is_file():
+                    try:
+                        cur_m = json.loads(manifest_path.read_text(encoding="utf-8"))
+                        if cur_m.get("status") == "stopped":
+                            return
+                    except Exception:
+                        pass
+                item_manifest["current_subtask"] = subtask_msg
+                _atomic_write_json(manifest_path, manifest)
             emit(f"[{idx}/{len(playlist_items)}] {subtask_msg}")
-
 
         # Retry loop for transient rate limits (3 attempts)
         max_retries = 3
@@ -364,54 +364,65 @@ def run_playlist_job(
                 err_str = str(exc).lower()
                 is_rate_limit = "429" in err_str or "quota" in err_str or "rate limit" in err_str
                 if is_rate_limit and attempt < max_retries:
-                    backoff = attempt * 15.0
-                    emit(f"Rate limit detected on attempt {attempt}. Backing off for {backoff}s...")
+                    backoff = attempt * 8.0
+                    emit(f"Rate limit on video {idx}, backing off {backoff}s...")
                     time.sleep(backoff)
                 else:
                     break
 
-        if res is not None:
-            res["playlist_index"] = idx
-            res["title"] = item.get("title", res.get("title"))
-            successful_results.append(res)
+        with manifest_lock:
+            if res is not None:
+                res["playlist_index"] = idx
+                res["title"] = item.get("title", res.get("title"))
+                successful_results.append(res)
 
-            item_manifest["status"] = "complete"
-            item_manifest["current_subtask"] = "Completed"
-            item_manifest["finished_at"] = _utc_now()
-            item_manifest["result"] = res
-            if manifest.get("active_video", {}).get("video_id") == v_id:
+                item_manifest["status"] = "complete"
+                item_manifest["current_subtask"] = "Completed"
+                item_manifest["finished_at"] = _utc_now()
+                item_manifest["result"] = res
+                _atomic_write_json(manifest_path, manifest)
+
+                if clean_temp and video_out_dir.exists():
+                    for sub in video_out_dir.glob("*.tmp*"):
+                        try:
+                            if sub.is_file():
+                                sub.unlink()
+                            elif sub.is_dir():
+                                shutil.rmtree(sub)
+                        except Exception:
+                            pass
+                return res
+            else:
+                err_msg = f"{type(last_exception).__name__}: {last_exception}"
+                emit(f"Error on video {idx} ({v_id}): {err_msg}")
+                item_manifest["status"] = "failed"
+                item_manifest["finished_at"] = _utc_now()
+                item_manifest["error"] = err_msg
+                _atomic_write_json(manifest_path, manifest)
+                return None
+
+    # Execute all pending items concurrently in thread pool
+    if pending_items:
+        workers_count = max(1, min(concurrency, len(pending_items)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers_count) as executor:
+            future_to_item = {executor.submit(process_video_worker, item): item for item in pending_items}
+            for future in concurrent.futures.as_completed(future_to_item):
+                try:
+                    future.result()
+                except Exception as exc:
+                    emit(f"Worker exception: {exc}")
+
+    # Check if job was marked stopped
+    if manifest_path.is_file():
+        try:
+            cur_m = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if cur_m.get("status") == "stopped":
+                manifest["status"] = "stopped"
                 manifest.pop("active_video", None)
-            _atomic_write_json(manifest_path, manifest)
-
-
-            # Optional temp cleanup to save disk space
-            if clean_temp and video_out_dir.exists():
-                for sub in video_out_dir.glob("*.tmp*"):
-                    try:
-                        if sub.is_file():
-                            sub.unlink()
-                        elif sub.is_dir():
-                            shutil.rmtree(sub)
-                    except Exception:
-                        pass
-
-        else:
-            err_msg = f"{type(last_exception).__name__}: {last_exception}"
-            emit(f"Error on video {idx} ({v_id}): {err_msg}")
-            item_manifest["status"] = "failed"
-            item_manifest["finished_at"] = _utc_now()
-            item_manifest["error"] = err_msg
-            _atomic_write_json(manifest_path, manifest)
-
-            if not continue_on_error:
-                raise last_exception
-
-        if delay_seconds > 0:
-            # Add randomized jitter to sleep interval
-            jitter = random.uniform(-1.5, 1.5)
-            actual_delay = max(1.0, delay_seconds + jitter)
-            emit(f"Sleeping {actual_delay:.1f}s (with jitter) for rate limit management...")
-            time.sleep(actual_delay)
+                _atomic_write_json(manifest_path, manifest)
+                return {"total_videos": len(playlist_items), "successful_videos": len(successful_results), "status": "stopped"}
+        except Exception:
+            pass
 
     # Consolidation stage
     emit("Starting consolidation of individual cheatsheets...")
@@ -428,6 +439,7 @@ def run_playlist_job(
 
     master_pdf_path = consolidated_dir / "master_cheatsheet.pdf"
     emit(f"Rendering master PDF to: {master_pdf_path}")
+
 
     if kind == "cheatsheet":
         build_cheatsheet(

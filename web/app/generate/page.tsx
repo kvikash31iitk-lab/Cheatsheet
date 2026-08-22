@@ -70,10 +70,11 @@ function GenerateForm() {
     () => ((searchParams?.get('kind') as JobKind) ?? 'cheatsheet'),
   );
   const [maxVideos, setMaxVideos] = useState<number>(100);
-
-  const [delaySeconds, setDelaySeconds] = useState<number>(5);
+  const [concurrency, setConcurrency] = useState<number>(3);
+  const [delaySeconds, setDelaySeconds] = useState<number>(2);
   const [playlistJobId, setPlaylistJobId] = useState<string | null>(null);
   const [playlistStatus, setPlaylistStatus] = useState<any>(null);
+
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -173,7 +174,7 @@ function GenerateForm() {
     setError(null);
     try {
       if (isPlaylistMode) {
-        const { id } = await createPlaylistJob(url.trim(), kind, delaySeconds, maxVideos);
+        const { id } = await createPlaylistJob(url.trim(), kind, delaySeconds, maxVideos, concurrency);
         if (typeof window !== 'undefined') {
           localStorage.setItem('active_playlist_job_id', id);
         }
@@ -184,7 +185,7 @@ function GenerateForm() {
         const { id } = await createJob(url, kind, Array.from(features));
         router.push(`/generate/${id}`);
       }
-    } catch (e: unknown) {
+    } catch (e: any) {
       setError(friendlyGenerationError(e));
       setSubmitting(false);
     }
@@ -312,9 +313,8 @@ function GenerateForm() {
                 {total > 0 && <span style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{completedCount} / {total} Videos ({percent}%)</span>}
               </div>
 
-              {/* Active Video Subtask Stepper Banner */}
-              {playlistStatus.status === 'running' && manifest?.active_video && (
-
+              {/* Multi-Worker Active Parallel Tasks Banner */}
+              {playlistStatus.status === 'running' && itemsList.filter((i: any) => i.status === 'running').length > 0 && (
                 <div
                   style={{
                     marginBottom: 14,
@@ -324,26 +324,30 @@ function GenerateForm() {
                     borderRadius: 8,
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 6,
+                    gap: 10,
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--c-accent)', textTransform: 'uppercase', letterSpacing: '.05em' }}>
-                      ⚡ Active Video ({manifest.active_video.index} / {manifest.active_video.total || total})
-                    </span>
-                    <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--c-ink-3)' }}>
-                      ID: {manifest.active_video.video_id}
+                      ⚡ Active Parallel Workers ({itemsList.filter((i: any) => i.status === 'running').length} running simultaneously)
                     </span>
                   </div>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--c-ink)' }}>
-                    {manifest.active_video.title}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--c-accent)', fontWeight: 500 }}>
-                    <span style={{ animation: 'pulse 1.5s infinite' }}>●</span>
-                    <span>{manifest.active_video.subtask || 'Processing subtask...'}</span>
-                  </div>
+                  {itemsList
+                    .filter((i: any) => i.status === 'running')
+                    .map((it: any) => (
+                      <div key={it.key} style={{ padding: '6px 10px', background: 'rgba(232, 165, 131, 0.08)', borderRadius: 6, border: '1px solid var(--c-line)' }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--c-ink)' }}>
+                          Video {it.index}: {it.title}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--c-accent)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+                          <span style={{ animation: 'pulse 1.5s infinite' }}>●</span>
+                          <span>{it.current_subtask || 'Processing...'}</span>
+                        </div>
+                      </div>
+                    ))}
                 </div>
               )}
+
 
               {/* Live Video Log List */}
               {itemsList.length > 0 && (
@@ -600,29 +604,54 @@ function GenerateForm() {
         </div>
 
         {mode === 'playlist' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, padding: '10px 14px', background: 'var(--c-surface)', border: '1px solid var(--c-line)', borderRadius: 10 }}>
-            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-ink-2)' }}>Max Videos to Extract:</span>
-            <input
-              type="number"
-              min={1}
-              max={500}
-              value={maxVideos}
-              onChange={(e) => setMaxVideos(Math.max(1, parseInt(e.target.value) || 100))}
-              style={{
-                width: 90,
-                padding: '4px 8px',
-                borderRadius: 6,
-                border: '1px solid var(--c-line)',
-                background: 'var(--c-surface-2)',
-                color: 'var(--c-ink)',
-                fontFamily: 'var(--font-mono)',
-                fontSize: 13,
-                textAlign: 'center',
-              }}
-            />
-            <span style={{ fontSize: 12, color: 'var(--c-ink-3)' }}>(Defaults to 100 videos)</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16, marginBottom: 24, padding: '12px 14px', background: 'var(--c-surface)', border: '1px solid var(--c-line)', borderRadius: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-ink-2)' }}>⚡ Workstation Speed:</span>
+              <select
+                value={concurrency}
+                onChange={(e) => setConcurrency(parseInt(e.target.value) || 3)}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: '1px solid var(--c-accent)',
+                  background: 'var(--c-surface-2)',
+                  color: 'var(--c-accent)',
+                  fontWeight: 600,
+                  fontSize: 12.5,
+                  cursor: 'pointer',
+                }}
+              >
+                <option value={1}>1 Worker (Sequential)</option>
+                <option value={2}>2 Workers (2x Fast)</option>
+                <option value={3}>3 Workers (3x Fast - Recommended)</option>
+                <option value={4}>4 Workers (4x Fast - Ultra)</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-ink-2)' }}>Max Videos:</span>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={maxVideos}
+                onChange={(e) => setMaxVideos(Math.max(1, parseInt(e.target.value) || 100))}
+                style={{
+                  width: 70,
+                  padding: '4px 8px',
+                  borderRadius: 6,
+                  border: '1px solid var(--c-line)',
+                  background: 'var(--c-surface-2)',
+                  color: 'var(--c-ink)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 13,
+                  textAlign: 'center',
+                }}
+              />
+            </div>
           </div>
         )}
+
 
 
 

@@ -351,8 +351,8 @@ function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
           </a>
         </div>
 
-        {/* Live Active Video Subtask Banner */}
-        {isRunning && pl.active_video && (
+        {/* Live Active Workers Subtask Banner */}
+        {isRunning && (
           <div
             style={{
               padding: '8px 10px',
@@ -362,20 +362,40 @@ function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
               fontSize: 12,
               display: 'flex',
               flexDirection: 'column',
-              gap: 2,
+              gap: 6,
             }}
           >
             <div style={{ fontWeight: 600, color: 'var(--c-accent)', fontSize: 11.5 }}>
-              ⚡ Processing Video {pl.active_video.index} / {pl.active_video.total || pl.total_videos}:
+              ⚡ Active Workstation ({items.filter((i: any) => i.status === 'running').length || 1} running simultaneously):
             </div>
-            <div style={{ color: 'var(--c-ink)', fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {pl.active_video.title}
-            </div>
-            <div style={{ fontSize: 11.5, color: 'var(--c-accent)', fontFamily: 'var(--font-mono)' }}>
-              ↳ {pl.active_video.subtask || 'Working on video...'}
-            </div>
+            {items.filter((i: any) => i.status === 'running').length > 0 ? (
+              items
+                .filter((i: any) => i.status === 'running')
+                .map((it: any) => (
+                  <div key={it.key} style={{ borderTop: '1px solid rgba(232,165,131,0.2)', paddingTop: 4 }}>
+                    <div style={{ color: 'var(--c-ink)', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      #{it.index} {it.title}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--c-accent)', fontFamily: 'var(--font-mono)' }}>
+                      ↳ {it.current_subtask || 'Processing...'}
+                    </div>
+                  </div>
+                ))
+            ) : pl.active_video ? (
+              <div>
+                <div style={{ color: 'var(--c-ink)', fontSize: 11.5, fontWeight: 600 }}>
+                  #{pl.active_video.index} {pl.active_video.title}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--c-accent)', fontFamily: 'var(--font-mono)' }}>
+                  ↳ {pl.active_video.subtask || 'Working on video...'}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 11.5, color: 'var(--c-ink-2)' }}>Extracting playlist videos...</div>
+            )}
           </div>
         )}
+
 
         {isRunning && (
           <Btn
