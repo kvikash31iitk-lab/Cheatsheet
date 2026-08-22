@@ -533,7 +533,14 @@ def _base_command(env: Mapping[str, str] | None = None) -> list[str]:
         source.get("YTDLP_HTTP_SLEEP_SECONDS"),
         DEFAULT_HTTP_SLEEP_SECONDS,
     )
-    command = ["yt-dlp", "--ignore-config"]
+    # Prefer venv-relative yt-dlp binary if running inside virtualenv
+    executable = "yt-dlp"
+    venv_ytdlp = Path(sys.executable).parent / ("yt-dlp.exe" if sys.platform == "win32" else "yt-dlp")
+    if venv_ytdlp.exists():
+        executable = str(venv_ytdlp)
+
+    command = [executable, "--ignore-config"]
+
     # Current YouTube extraction requires an external JS runtime plus the EJS
     # solver component. Node 22+ is supported and already part of the local
     # engine setup; an empty value explicitly disables this option.
