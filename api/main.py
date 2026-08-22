@@ -1612,47 +1612,10 @@ def _price_and_charge(job_id: str, kind: str, duration_seconds: float,
         if user_row is None:
             raise ValueError("user not found")
 
-        free_cheats, free_books = _free_limits_for_sync(user_row)
-        cheats_today, books_today = _daily_used_sync(s, user_row.id)
-        if kind == "cheatsheet":
-            within_free = cheats_today < free_cheats
-        else:
-            within_free = books_today < free_books
+        # Free mode active for internal preview — all generations cost 0
+        cost_paise = 0
+        was_free = True
 
-        if user_row.bypass_paid or within_free:
-            cost_paise = 0
-            was_free = True
-        else:
-            table = _cost_table_sync()
-            cost_paise = _calc_cost_paise_for(duration_seconds, kind, table)
-            # Atomic decrement with balance precondition.
-            result = s.execute(
-                sa_update(User)
-                .where(User.id == user_row.id)
-                .where(User.wallet_balance_paise >= cost_paise)
-                .values(
-                    wallet_balance_paise=User.wallet_balance_paise - cost_paise
-                )
-                .returning(User.wallet_balance_paise)
-            )
-            new_balance = result.scalar_one_or_none()
-            if new_balance is None:
-                raise ValueError(
-                    f"Insufficient wallet balance. "
-                    f"This {kind} would cost ₹{cost_paise / 100:.0f}; "
-                    f"top up at /wallet."
-                )
-            was_free = False
-            s.add(
-                Transaction(
-                    user_id=user_row.id,
-                    kind="spend",
-                    amount_paise=-cost_paise,
-                    generation_id=job_id,
-                    status="success",
-                    note=f"{kind} · {math.ceil(duration_seconds / 60)}min",
-                )
-            )
 
         gen = s.get(Generation, job_id)
         if gen:
