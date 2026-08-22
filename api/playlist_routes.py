@@ -254,9 +254,17 @@ async def download_playlist_zip(
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for file in job_dir.glob("**/*"):
             if file.is_file() and file.name != zip_path.name and not file.name.endswith(".tmp"):
-                if file.suffix in (".pdf", ".md", ".txt", ".json"):
+                if file.suffix == ".pdf":
+                    # Clean filename for individual vs master PDF inside PDF_Cheatsheets folder
+                    if "Consolidated" in file.parts or file.name == "master_cheatsheet.pdf":
+                        arc_name = "PDF_Cheatsheets/00_Master_Consolidated_Cheatsheet.pdf"
+                    else:
+                        parent_name = file.parent.name
+                        arc_name = f"PDF_Cheatsheets/{parent_name}_{file.name}"
+                    zf.write(file, arcname=arc_name)
+                elif file.suffix in (".md", ".txt", ".json"):
                     rel = file.relative_to(job_dir)
-                    zf.write(file, arcname=str(rel))
+                    zf.write(file, arcname=f"Source_Data/{rel}")
 
     if not zip_path.is_file():
         raise HTTPException(404, "Failed to create ZIP package")
@@ -266,6 +274,7 @@ async def download_playlist_zip(
         media_type="application/zip",
         filename=f"playlist_cheatsheets_{job_id[:8]}.zip",
     )
+
 
 
 
