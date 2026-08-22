@@ -5,12 +5,13 @@ import Link from 'next/link';
 import { AppBar } from '@/components/app-bar';
 import { Btn, Tag } from '@/components/ui';
 import { Ic } from '@/components/icons';
-import { getLibrary, type Job } from '@/lib/api';
+import { getLibrary, listPlaylists, type Job } from '@/lib/api';
 
-type Filter = 'all' | 'cheatsheet' | 'book' | 'failed';
+type Filter = 'all' | 'cheatsheet' | 'book' | 'playlist' | 'failed';
 
 export default function LibraryPage() {
   const [items, setItems] = useState<Job[] | null>(null);
+  const [playlists, setPlaylists] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
@@ -19,7 +20,11 @@ export default function LibraryPage() {
     getLibrary()
       .then(setItems)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    listPlaylists()
+      .then(setPlaylists)
+      .catch(() => {});
   }, []);
+
 
   const counts = useMemo(() => {
     if (!items) return { all: 0, cheatsheet: 0, book: 0, failed: 0 };
@@ -146,9 +151,10 @@ export default function LibraryPage() {
         >
           {(
             [
-              { l: 'All', k: 'all', n: counts.all },
+              { l: 'All', k: 'all', n: counts.all + playlists.length },
               { l: 'Cheatsheets', k: 'cheatsheet', n: counts.cheatsheet },
               { l: 'Book Notes', k: 'book', n: counts.book },
+              { l: 'Playlists', k: 'playlist', n: playlists.length },
               { l: 'Failed', k: 'failed', n: counts.failed },
             ] as { l: string; k: Filter; n: number }[]
           ).map((t) => {
@@ -204,22 +210,82 @@ export default function LibraryPage() {
           </div>
         )}
 
-        {/* Grid */}
-        {items && filtered.length === 0 ? (
-          <EmptyState filter={filter} hasAny={items.length > 0} />
-        ) : (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-              gap: 16,
-            }}
-          >
-            {filtered.map((j) => (
-              <NoteCard key={j.id} job={j} />
-            ))}
+        {/* Playlist section when filter is 'playlist' or 'all' */}
+        {(filter === 'playlist' || filter === 'all') && playlists.length > 0 && (
+          <div style={{ marginBottom: 32 }}>
+            {filter === 'all' && (
+              <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--c-ink)', marginBottom: 12 }}>
+                📑 Playlists ({playlists.length})
+              </h2>
+            )}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                gap: 16,
+              }}
+            >
+              {playlists.map((pl) => (
+                <div
+                  key={pl.id}
+                  style={{
+                    background: 'var(--c-surface)',
+                    border: '1.5px solid var(--c-accent)',
+                    borderRadius: 12,
+                    padding: 16,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justify: 'space-between',
+                  }}
+                >
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <Tag tone="accent">PLAYLIST</Tag>
+                      <span style={{ fontSize: 11, color: 'var(--c-ink-3)', fontFamily: 'var(--font-mono)' }}>
+                        {pl.total_videos} Videos
+                      </span>
+                    </div>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--c-ink)', marginBottom: 8, wordBreak: 'break-all' }}>
+                      {pl.playlist_url}
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+                    <a
+                      href={`/api/playlist/download/${pl.id}/master`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ textDecoration: 'none', flex: 1 }}
+                    >
+                      <Btn variant="accent" size="sm" style={{ width: '100%' }}>
+                        📄 Download Master PDF
+                      </Btn>
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
+
+        {/* Single Video Grid */}
+        {filter !== 'playlist' && (
+          items && filtered.length === 0 ? (
+            <EmptyState filter={filter} hasAny={items.length > 0} />
+          ) : (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                gap: 16,
+              }}
+            >
+              {filtered.map((j) => (
+                <NoteCard key={j.id} job={j} />
+              ))}
+            </div>
+          )
+        )}
+
       </div>
     </main>
   );

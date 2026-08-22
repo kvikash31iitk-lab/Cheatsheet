@@ -136,3 +136,47 @@ async def get_playlist_status(
         "error": job["error"],
         "manifest": manifest_data,
     }
+
+
+@router.get("/list")
+async def list_playlists(
+    user: User = Depends(current_user),
+) -> list[dict[str, Any]]:
+    """Scan PLAYLIST_WORK_ROOT for saved playlist jobs."""
+    results = []
+    if not PLAYLIST_WORK_ROOT.exists():
+        return []
+
+    for job_dir in sorted(PLAYLIST_WORK_ROOT.iterdir(), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True):
+        if not job_dir.is_dir():
+            continue
+        manifest_path = job_dir / "playlist_manifest.json"
+        if manifest_path.is_file():
+            try:
+                data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                results.append({
+                    "id": job_dir.name,
+                    "playlist_url": data.get("playlist_url"),
+                    "status": data.get("status", "completed"),
+                    "created_at": data.get("created_at"),
+                    "total_videos": data.get("total_videos", 0),
+                    "summary": data.get("summary"),
+                    "items_count": len(data.get("items", {})),
+                })
+            except Exception:
+                pass
+    return results
+
+
+@router.get("/download/{job_id}/master")
+async def download_master_pdf(
+    job_id: str,
+    user: User = Depends(current_user),
+):
+    """Serve master consolidated PDF for a playlist job."""
+    from fastapi.responses import FileResponse
+    master_pdf = PLAYLIST_WORK_ROOT / job_id / "Consolidated" / "master_cheatsheet.pdf"
+    if not master_pdf.is_file():
+        raise HTTPException(404, "Master PDF not found")
+    return FileResponse(master_pdf, media_type="application/pdf", filename=f"master_cheatsheet_{job_id[:8]}.pdf")
+

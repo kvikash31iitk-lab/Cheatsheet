@@ -358,3 +358,10 @@ export async function getPlaylistJob(id: string): Promise<any> {
   return res.json();
 }
 
+export async function listPlaylists(): Promise<any[]> {
+  const res = await fetch('/api/playlist/list');
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to fetch playlists'));
+  return res.json();
+}
+
+
