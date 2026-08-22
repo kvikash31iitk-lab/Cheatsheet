@@ -7,6 +7,7 @@ import { Btn, Tag } from '@/components/ui';
 import { Ic } from '@/components/icons';
 import {
   createJob,
+  createPlaylistJob,
   friendlyGenerationError,
   getPreview,
   getMe,
@@ -15,6 +16,7 @@ import {
   type Me,
   type FeatureFlag,
 } from '@/lib/api';
+
 
 // Tile metadata for the optional-features section. Order matches the
 // backend's FEATURE_ORDER so the UI reads top-to-bottom in the same shape
