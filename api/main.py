@@ -873,11 +873,12 @@ async def me(
         "name": user.name,
         "picture_url": user.picture_url,
         "is_admin": user.is_admin or is_admin_email(user.email),
-        "free_cheatsheets_left": max(0, free_cheats - cheats_today),
-        "free_books_left": max(0, free_books - books_today),
-        "free_cheatsheets_per_day": free_cheats,
-        "free_books_per_day": free_books,
-        "wallet_balance_paise": user.wallet_balance_paise,
+        "free_cheatsheets_left": 9999,
+        "free_books_left": 9999,
+        "free_cheatsheets_per_day": 9999,
+        "free_books_per_day": 9999,
+        "wallet_balance_paise": 999900,
+
         "referral_code": user.referral_code,
         "bypass_paid": user.bypass_paid,
         "cost_paise_per_30min": {
