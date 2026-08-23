@@ -532,7 +532,19 @@ def run_url_job(
             pdf=pdf_quality,
         )
 
+        # Automatically clean up temporary audio and video media files to keep VPS disk free
+        try:
+            for pattern in ("session_full.mp3", "raw_audio.m4a", "raw_video.mp4", "*.part"):
+                for media_f in work_dir.glob(pattern):
+                    try:
+                        media_f.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+
         result = {
+
             "kind": kind,
             "video_id": video_id,
             "url": url,
