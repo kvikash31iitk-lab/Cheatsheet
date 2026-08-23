@@ -385,13 +385,16 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
     keys_pool = list(dict.fromkeys(GROQ_API_KEYS or [GROQ_API_KEY]))
     from groq import Groq
     
-    last_err = None
-    # Pin Groq authoring strictly to llama-3.3-70b-versatile (128k context).
-    # Small 8k models (qwen 27b, gpt-oss 20b) fail with Error 413 on long/marathon transcripts.
-    models = ["llama-3.3-70b-versatile"]
+    # Active Groq models on user account
+    models = ["openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-20b"]
     for api_k in keys_pool:
         client = Groq(api_key=api_k)
         for model in models:
+            # For 8k TPM models, keep prompt under 6000 tokens to avoid 413
+            if model in ("qwen/qwen3.6-27b", "openai/gpt-oss-20b"):
+                model_user = user[:18000] if len(user) > 18000 else user
+            else:
+                model_user = user
 
             model_options = {}
             if model.startswith("qwen/"):
@@ -405,12 +408,13 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                         model=model,
                         messages=[
                             {"role": "system", "content": system},
-                            {"role": "user", "content": user},
+                            {"role": "user", "content": model_user},
                         ],
                         temperature=0.3,
                         max_tokens=request_max_tokens,
                         **model_options,
                     )
+
                     text = _strip_reasoning(resp.choices[0].message.content or "")
                     if not text:
                         raise RuntimeError("Groq returned an empty authoring response")
