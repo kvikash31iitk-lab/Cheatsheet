@@ -1040,13 +1040,14 @@ def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None
     prompt so the model emits the extra markdown the renderer expects.
     """
     transcript = Path(transcript_path).read_text(encoding="utf-8")
-    if _needs_condensation():
+    if _needs_condensation() or est_tokens(transcript) > 200000:
         body = condense(transcript, on_progress=on_progress)
         body_label = ("CONDENSED TRANSCRIPT "
                       "(already factually trimmed bullet summaries by section):")
     else:
         body = transcript
         body_label = "TRANSCRIPT (raw with timestamps):"
+
     user_msg = "\n".join(p for p in [
         f"TITLE HINT: {title_hint}" if title_hint else "",
         (f"SOURCE LENGTH: {duration_seconds/60:.0f} minutes"
