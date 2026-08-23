@@ -386,10 +386,13 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
     from groq import Groq
     
     last_err = None
-    models = list(dict.fromkeys((AUTHORING_MODEL if not AUTHORING_MODEL.startswith("gemini-") else "llama-3.3-70b-versatile", "llama-3.3-70b-versatile", *GROQ_FALLBACK_MODELS)))
+    # Pin Groq authoring strictly to llama-3.3-70b-versatile (128k context).
+    # Small 8k models (qwen 27b, gpt-oss 20b) fail with Error 413 on long/marathon transcripts.
+    models = ["llama-3.3-70b-versatile"]
     for api_k in keys_pool:
         client = Groq(api_key=api_k)
         for model in models:
+
             model_options = {}
             if model.startswith("qwen/"):
                 model_options = {
