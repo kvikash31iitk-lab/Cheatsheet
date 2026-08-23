@@ -147,17 +147,20 @@ def _ascii_safe(text: str) -> str:
 def inline(text: str) -> str:
     text = _ascii_safe(text)
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    # Strip nested italic markers inside bold or handle cleanly
+    # Triple asterisks: bold + italic
     text = re.sub(r"\*\*\*(.+?)\*\*\*", rf'<font color="{HIGHLIGHT_HEX}"><b><i>\1</i></b></font>', text)
-    text = re.sub(r"\*\*(.+?)\*\*",
-                  lambda m: f'<font color="{HIGHLIGHT_HEX}"><b>{re.sub(r"<i>|</i>", "", m.group(1))}</b></font>', text)
-    text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)",
-                  lambda m: f'<u>{m.group(1)}</u>', text)
+    # Convert italics first (only when not adjacent to *)
     text = re.sub(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])", r"<i>\1</i>", text)
     text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)
-    text = re.sub(r"`([^`]+?)`",
-                  r'<font face="Courier" size="8.5" color="#3A6EA5">\1</font>', text)
+    # Convert bold (and if it wraps any <i> tags, keep them properly nested)
+    def _bold_repl(m):
+        inner = m.group(1)
+        return f'<font color="{HIGHLIGHT_HEX}"><b>{inner}</b></font>'
+    text = re.sub(r"\*\*(.+?)\*\*", _bold_repl, text)
+    text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)", lambda m: f'<u>{m.group(1)}</u>', text)
+    text = re.sub(r"`([^`]+?)`", r'<font face="Courier" size="8.5" color="#3A6EA5">\1</font>', text)
     return text
+
 
 
 
