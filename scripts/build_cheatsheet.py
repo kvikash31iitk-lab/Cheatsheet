@@ -144,8 +144,24 @@ def _ascii_safe(text: str) -> str:
     return "".join(replacements.get(char, char) for char in text)
 
 
+def _clean_latex_math(text: str) -> str:
+    """Convert raw LaTeX math notation like $\text{...} \xrightarrow{...}$ to clean readable text."""
+    # Convert \text{word} -> word
+    text = re.sub(r"\\text\{([^}]+)\}", r"\1", text)
+    # Convert \xrightarrow{condition} -> -> [condition] ->
+    text = re.sub(r"\\xrightarrow\{([^}]+)\}", r" -> [\1] -> ", text)
+    text = re.sub(r"\\rightarrow", " -> ", text)
+    text = re.sub(r"\\neq", " != ", text)
+    text = re.sub(r"\\dots", "...", text)
+    text = re.sub(r"\\[a-zA-Z]+", "", text)  # remove remaining raw LaTeX commands
+    # Strip dollar math delimiters
+    text = text.replace("$$", "").replace("$", "")
+    return text
+
+
 def inline(text: str) -> str:
     text = _ascii_safe(text)
+    text = _clean_latex_math(text)
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     # Triple asterisks: bold + italic
     text = re.sub(r"\*\*\*(.+?)\*\*\*", rf'<font color="{HIGHLIGHT_HEX}"><b><i>\1</i></b></font>', text)
@@ -160,6 +176,7 @@ def inline(text: str) -> str:
     text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)", lambda m: f'<u>{m.group(1)}</u>', text)
     text = re.sub(r"`([^`]+?)`", r'<font face="Courier" size="8.5" color="#3A6EA5">\1</font>', text)
     return text
+
 
 
 
