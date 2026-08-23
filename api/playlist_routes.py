@@ -333,13 +333,16 @@ async def list_playlists(
 
     return results
 
-
-
-def _clean_filename(s: str, max_len: int = 60) -> str:
-    """Format title into a clean filename safe for all OS filesystems."""
+def _clean_filename(s: str, max_len: int = 100) -> str:
+    """Format title into a clean, legible filename safe for all OS filesystems."""
+    if not s:
+        return "Notes"
+    # Remove characters prohibited in Windows/Linux/Mac file systems
     s = re.sub(r'[\\/*?:"<>|]', '', s)
-    s = re.sub(r'\s+', '_', s).strip('_. ')
-    return s[:max_len].strip('_. ') if s else "Notes"
+    # Normalize multiple whitespace, dashes, underscores
+    s = re.sub(r'\s+', ' ', s).strip('_. -')
+    # If the title contains common noisy boilerplate, keep it readable
+    return s[:max_len].strip('_. -') if s else "Notes"
 
 
 @router.get("/download/{job_id}/master")
@@ -369,13 +372,14 @@ async def download_master_pdf(
 
 
 @router.get("/download/{job_id}/item/{item_key}")
-async def download_item_pdf(
+async def download_playlist_item_pdf(
     job_id: str,
     item_key: str,
     user: User = Depends(current_user),
 ):
-    """Serve individual video cheatsheet PDF for a playlist item."""
+    """Serve an individual video PDF from a playlist job with a clean human-readable title."""
     from fastapi.responses import FileResponse
+
     job_dir = PLAYLIST_WORK_ROOT / job_id
     manifest_path = job_dir / "playlist_manifest.json"
     if not manifest_path.is_file():
@@ -431,12 +435,19 @@ async def download_playlist_zip(
     zip_slug = _clean_filename(playlist_name)
     zip_path = job_dir / f"{zip_slug}.zip"
 
-    # Map item_key -> clean title for clean filenames inside ZIP
-    item_title_map: dict[str, str] = {}
+    # Map item_key, subdirectories, and video_ids -> clean readable titles
+    title_lookup: dict[str, str] = {}
     for k, v in manifest_data.get("items", {}).items():
         v_title = v.get("result", {}).get("title") or v.get("title")
         if v_title:
-            item_title_map[k] = _clean_filename(v_title)
+            cleaned = _clean_filename(v_title)
+            title_lookup[k] = cleaned
+            # Also map raw video_id if available
+            v_id = v.get("result", {}).get("video_id") or v.get("video_id")
+            if v_id:
+                title_lookup[v_id] = cleaned
+
+    used_names: set[str] = set()
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for file in job_dir.glob("**/*"):
@@ -445,9 +456,25 @@ async def download_playlist_zip(
                     if "Consolidated" in file.parts or file.name == "master_cheatsheet.pdf":
                         arc_name = f"00_Master_Consolidated_{zip_slug}.pdf"
                     else:
-                        parent_name = file.parent.name
-                        friendly_title = item_title_map.get(parent_name, parent_name)
-                        arc_name = f"PDFs/{friendly_title}.pdf"
+                        # Match against all parts of path (e.g. 001_si1e7Ah5N5M, si1e7Ah5N5M, or file stem)
+                        friendly = None
+                        for part in reversed(file.parts):
+                            if part in title_lookup:
+                                friendly = title_lookup[part]
+                                break
+                        if not friendly:
+                            stem = file.stem
+                            friendly = title_lookup.get(stem, stem)
+
+                        # Disambiguate duplicate names
+                        base_name = friendly
+                        idx = 1
+                        while friendly in used_names:
+                            idx += 1
+                            friendly = f"{base_name}_{idx}"
+                        used_names.add(friendly)
+
+                        arc_name = f"PDFs/{friendly}.pdf"
                     zf.write(file, arcname=arc_name)
 
     if not zip_path.is_file():
@@ -458,9 +485,3 @@ async def download_playlist_zip(
         media_type="application/zip",
         filename=f"{zip_slug}.zip",
     )
-
-
-
-
-
-
