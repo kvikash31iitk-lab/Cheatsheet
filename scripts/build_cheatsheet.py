@@ -147,8 +147,10 @@ def _ascii_safe(text: str) -> str:
 def inline(text: str) -> str:
     text = _ascii_safe(text)
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # Strip nested italic markers inside bold or handle cleanly
+    text = re.sub(r"\*\*\*(.+?)\*\*\*", rf'<font color="{HIGHLIGHT_HEX}"><b><i>\1</i></b></font>', text)
     text = re.sub(r"\*\*(.+?)\*\*",
-                  rf'<font color="{HIGHLIGHT_HEX}"><b>\1</b></font>', text)
+                  lambda m: f'<font color="{HIGHLIGHT_HEX}"><b>{re.sub(r"<i>|</i>", "", m.group(1))}</b></font>', text)
     text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)",
                   lambda m: f'<u>{m.group(1)}</u>', text)
     text = re.sub(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])", r"<i>\1</i>", text)
@@ -156,6 +158,7 @@ def inline(text: str) -> str:
     text = re.sub(r"`([^`]+?)`",
                   r'<font face="Courier" size="8.5" color="#3A6EA5">\1</font>', text)
     return text
+
 
 
 CALLOUT_RE = re.compile(r"^>\s*\[!(\w+)\](.*)$")
