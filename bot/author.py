@@ -782,20 +782,19 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
     models_to_try = [
         primary_model,
         "gemini-2.5-flash",
+        "gemini-2.5-pro",
         "gemini-2.5-flash-lite",
-        "gemini-1.5-flash-8b",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash-lite"
+        "gemini-flash-latest",
+        "gemini-pro-latest"
     ]
     models_to_try = list(dict.fromkeys(models_to_try))
     
     keys_to_try = list(dict.fromkeys(GEMINI_API_KEYS or [GEMINI_API_KEY]))
 
-    
     last_err = None
     for api_key in keys_to_try:
         for model in models_to_try:
-            url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
             
             payload = {
                 "contents": [
@@ -861,26 +860,25 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
 
 def _author(system: str, user: str, *, max_tokens: int = 8000,
             cost_sink: Optional[dict] = None) -> str:
-    """Dispatch to the configured authoring provider.
-
-    For ``claude_code``: if the CLI raises ``ClaudeCodeAuthError`` (OAuth
-    token expired or refresh broken) AND ``GROQ_API_KEY`` is set, we
-    silently fall back to Groq Llama. The generation still succeeds, just
-    with lower-quality output for that one run. The fallback usage is
-    recorded in ``cost_sink`` (keys ``fallback_used`` and
-    ``fallback_reason``) so the caller can surface it to admins/logs.
-
-    Why fall back rather than fail: the typical failure mode is a 7-ish-day
-    OAuth token expiry on the bot host (see [project-cheatsheet-auth-workaround]).
-    A degraded result beats a dead service while a human re-runs ``claude
-    /login``. Set ``GROQ_API_KEY=''`` (or omit it) to opt out of fallback.
-    """
+    """Dispatch to the configured authoring provider."""
     if AUTHORING_PROVIDER == "groq":
         return _author_groq(system, user, max_tokens=max_tokens, cost_sink=cost_sink)
     if AUTHORING_PROVIDER == "gemini":
-        return _author_gemini(
-            system, user, max_tokens=max_tokens, cost_sink=cost_sink
-        )
+        try:
+            return _author_gemini(
+                system, user, max_tokens=max_tokens, cost_sink=cost_sink
+            )
+        except Exception as exc:
+            if GROQ_API_KEY:
+                print(f"[author] gemini failed ({exc}); falling back to groq llama/qwen immediately", flush=True)
+                if cost_sink is not None:
+                    cost_sink["fallback_used"] = "groq"
+                    cost_sink["fallback_reason"] = "gemini_error"
+                return _author_groq(
+                    system, user, max_tokens=max_tokens, cost_sink=cost_sink
+                )
+            raise
+
     if AUTHORING_PROVIDER == "ollama":
         return _author_ollama(
             system, user, max_tokens=max_tokens, cost_sink=cost_sink
