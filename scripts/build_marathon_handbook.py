@@ -1,4 +1,4 @@
-import sys
+ï»¿import sys
 import os
 import json
 import time
@@ -208,7 +208,7 @@ def main():
             
     # Compile Master Handbook Markdown
     master_lines = [
-        "# Complete 100 Golden Rules of English Grammar — 10-Hour Masterclass Handbook",
+        "# Complete 100 Golden Rules of English Grammar  -  10-Hour Masterclass Handbook",
         "",
         "> **Exhaustive Comprehensive Study Guide and Rule-by-Rule Reference for SSC CGL, CHSL, CPO, CDS and UPSC**",
         "",
@@ -242,7 +242,7 @@ def main():
     build_cheatsheet(
         final_master_md,
         final_master_pdf,
-        title="100 Golden Rules of English Grammar — Complete Handbook",
+        title="100 Golden Rules of English Grammar  -  Complete Handbook",
         features=[],
         source_url="https://www.youtube.com/watch?v=2KReO6IElUk"
     )
