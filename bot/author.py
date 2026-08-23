@@ -912,6 +912,8 @@ def _needs_condensation() -> bool:
     """Return True if the active provider has tight TPM limits (forcing map-reduce)."""
     if AUTHORING_PROVIDER in {"groq", "ollama"}:
         return True
+    if AUTHORING_PROVIDER == "gemini":
+        return False
     # CLI providers can accept the full transcript, but their automatic Groq
     # backstop cannot. Pre-condense while that fallback is configured so an
     # expired CLI login never converts a valid transcript into an oversized
@@ -920,6 +922,7 @@ def _needs_condensation() -> bool:
         AUTHORING_PROVIDER in {"codex_cli", "claude_code"}
         and bool(GROQ_API_KEY)
     )
+
 
 
 def _cheatsheet_quality_issues(
