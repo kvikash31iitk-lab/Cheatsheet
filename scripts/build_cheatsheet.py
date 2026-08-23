@@ -145,9 +145,10 @@ def _ascii_safe(text: str) -> str:
 
 
 def _clean_latex_math(text: str) -> str:
-    """Convert raw LaTeX math notation like $\text{...} \xrightarrow{...}$ to clean readable text."""
+    r"""Convert raw LaTeX math notation like $\text{...}$ to clean readable text."""
     # Convert \text{word} -> word
     text = re.sub(r"\\text\{([^}]+)\}", r"\1", text)
+
     # Convert \xrightarrow{condition} -> -> [condition] ->
     text = re.sub(r"\\xrightarrow\{([^}]+)\}", r" -> [\1] -> ", text)
     text = re.sub(r"\\rightarrow", " -> ", text)
