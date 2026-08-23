@@ -280,7 +280,7 @@ def _api_for_proxy(proxy: str | None):
 
 
 def _fetch_captions_with_transcript_api(video_id: str) -> list[dict]:
-    """Fetch the best caption track, preferring human/English tracks."""
+    """Fetch the best caption track, accepting English, Hindi, and Hinglish tracks directly."""
 
     routes: list[str | None] = [None]
     try:
@@ -294,26 +294,29 @@ def _fetch_captions_with_transcript_api(video_id: str) -> list[dict]:
             tracks = list(api.list(video_id))
             if not tracks:
                 return []
+            
+            # Prioritize tracks: 1. English, 2. Hindi / Hinglish, 3. Any available track
             english = [
                 track for track in tracks
                 if str(getattr(track, "language_code", "")).lower().startswith("en")
             ]
-            pool = english or tracks
+            hindi = [
+                track for track in tracks
+                if str(getattr(track, "language_code", "")).lower().startswith("hi")
+            ]
+            
+            pool = english or hindi or tracks
             selected = next(
                 (track for track in pool if not getattr(track, "is_generated", True)),
                 pool[0],
             )
-            if not english and getattr(selected, "is_translatable", False):
-                try:
-                    selected = selected.translate("en")
-                except Exception:
-                    pass
             return _caption_segments_from_items(selected.fetch())
         except Exception as exc:
             last_error = exc
     if last_error is not None:
         raise last_error
     return []
+
 
 
 def _parse_json3_caption(path: Path) -> list[dict]:

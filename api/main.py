@@ -1684,8 +1684,25 @@ async def _run_new_engine_job(job_id: str) -> None:
     cost_sink: dict[str, int] = {"tokens_in": 0, "tokens_out": 0}
     ingest_meta: dict[str, Any] = {}
 
+    # Instant lightweight metadata lookup via oEmbed so Title & Thumbnail render in 0.5s
+    try:
+        vid = extract_video_id(url)
+        if vid:
+            from scripts.transcribe_with_frames import fetch_metadata_resilient
+            quick_meta = fetch_metadata_resilient(url)
+            if quick_meta.get("title") and not quick_meta.get("title", "").startswith("YouTube video"):
+                _update_sync(
+                    job_id,
+                    video_id=vid,
+                    title=quick_meta["title"],
+                    thumbnail_url=f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
+                )
+    except Exception:
+        pass
+
     def on_ingest(meta: dict[str, Any]) -> None:
         ingest_meta.update(meta)
+
         title = str(meta.get("title") or "YouTube cheatsheet")
         duration = float(meta.get("duration_seconds") or 0.0)
         video_id = str(meta.get("video_id") or "")
