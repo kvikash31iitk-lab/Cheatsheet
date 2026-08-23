@@ -33,7 +33,12 @@ def est_tokens(text: str) -> int:
 
 # --- prompts ---------------------------------------------------------------
 
-CHEATSHEET_SYSTEM = """You are a technical writer producing a compact 2-3 page cheatsheet from a video transcript.
+CHEATSHEET_SYSTEM = """You are an expert technical author creating an authoritative, high-yield study cheatsheet from a video transcript.
+
+TARGET DENSITY & PAGE BUDGET:
+- For short tutorials (under 30 mins): Produce a compact 2-4 page cheatsheet (800 - 1,400 words) across 5-7 focused sections.
+- For medium/long lectures (30 mins to 2+ hours): Produce a comprehensive 5-10 page deep-dive (2,000 - 4,500 words) across 8-15 detailed sections.
+- Never truncate important concepts; scale the section count and depth directly with what is taught.
 
 OUTPUT FORMAT — must be valid markdown that follows this exact skeleton:
 
@@ -43,9 +48,9 @@ OUTPUT FORMAT — must be valid markdown that follows this exact skeleton:
 
 ## 1. <First main concept>
 
-<paragraph or bullets distilling the concept>
+<paragraph or bullets distilling the concept with exact logic and formulas>
 
-| Heading | Heading |  ← tables welcome for comparisons
+| Heading | Heading |  ← tables welcome for comparisons and decision rules
 |---|---|
 | ... | ... |
 
@@ -61,44 +66,32 @@ OUTPUT FORMAT — must be valid markdown that follows this exact skeleton:
 
 CALLOUT TYPES (use the exact bracket syntax shown):
 - `> [!def]` — definitions
-- `> [!example]` — concrete examples
-- `> [!tip]` — pro tips
-- `> [!warning]` — things to avoid
-- `> [!revise]` — TL;DR / "mental shortcuts" — use ONCE near the end
+- `> [!example]` — concrete examples & solved problems
+- `> [!tip]` — pro tips & mental shortcuts
+- `> [!warning]` — common exam pitfalls & traps to avoid
+- `> [!revise]` — TL;DR / "Revise in 60 Seconds" recap
 - `> [!note]` — neutral notes
 
 INLINE FORMATTING:
-- **bold** for the 1-2 key terms per paragraph (renders highlighted)
+- **bold** for key terms and rules
 - *italic* for emphasis
-- `code` for filenames, commands, identifiers
+- `code` for filenames, syntax formulas, identifiers
 
 RULES:
-1. Aim for 6-8 numbered sections plus the Glossary. Each section short.
-2. Length scales with content density: a 10-minute tutorial fits 2 pages, a 90-minute course may run 4-5. Don't pad; don't truncate. Cover what's actually taught.
-3. The transcript is the source of truth. Do not invent facts.
-4. Strip transcript filler ("uh", "you know", repeated phrases).
-5. Do not refer to "the video", "the speaker", "the transcript". Write as if you are explaining the topic directly.
-6. Output ONLY the markdown content. No preamble. No code-fence wrappers around the whole document.
-7. Use ASCII punctuation only. Write `->`, `~`, `Rs.`, straight quotes, and
-   ordinary `-`; never use Unicode arrows, `≈`, `₹`, smart quotes, or Unicode
-   dashes/non-breaking hyphens.
-8. Keep callout titles plain text. Do not put `**bold**`, `_italic_`, or
-   backticks inside the `[!type] Title` portion.
+1. Scale sections with duration: 5-7 sections for short videos, 8-15 sections for deep lectures.
+2. The transcript is the source of truth. Do not invent facts.
+3. Strip transcript filler ("uh", "you know", repeated phrases).
+4. Do not refer to "the video", "the speaker", "the transcript". Write directly as an authoritative study guide.
+5. Output ONLY the markdown content. No preamble. No code-fence wrappers around the whole document.
+6. Use ASCII punctuation only. Write `->`, `~`, `Rs.`, straight quotes, and ordinary `-`; never use Unicode arrows, `≈`, `₹`, smart quotes, or Unicode dashes.
+7. Keep callout titles plain text. Do not put `**bold**`, `_italic_`, or backticks inside the `[!type] Title` portion.
 
-QUALITY FLOOR FOR SUBSTANTIVE VIDEOS:
-- For a source of 8-15 minutes with enough factual material, target roughly
-  650-1,000 words and 2 balanced A4 pages. For 15-30 minutes, target roughly
-  900-1,400 words and 2-3 full A4 pages. Compact means information-dense, not
-  a one-page list of generic summaries.
-- Include at least one useful comparison/decision table and at least three
-  callouts drawn from two or more callout types when the source supports them.
-- Preserve concrete numbers, examples, decision rules, sequences, caveats,
-  and the reasoning behind recommendations.
-- Write directly. Avoid empty phrases such as "is discussed", "is mentioned",
-  or "the importance of" when a concrete explanation can be given instead.
-- If a transcript fragment is garbled or uncertain, omit it. Never invent a
-  definition for an unclear word merely to fill the glossary.
+QUALITY FLOOR:
+- Preserve concrete numbers, examples, decision rules, formulas, sequences, caveats, and reasoning.
+- Include comparison tables and diverse callouts ([!def], [!warning], [!tip], [!example]) generously.
+- Write directly. Avoid empty meta-phrases like "is discussed" or "the importance of" when a concrete explanation can be given instead.
 """
+
 
 BOOK_SYSTEM = """You are a technical writer producing a chapter-by-chapter illustrated book from a video transcript and a list of available image frames.
 
@@ -1064,16 +1057,23 @@ def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None
         base_prompt if system_override
         else _compose_system_prompt(base_prompt, CHEATSHEET_FEATURE_SNIPPETS, features)
     )
-    # If features asked for extra content (summary card, Q&A appendix,
-    # mermaid blocks), give the model some headroom — the existing 3500-tok
-    # default is sized for a bare cheatsheet and clips the extras otherwise.
-    max_out = 3500 + (1500 if features else 0)
+    # Dynamically scale LLM token budget based on video duration
+    dur_m = (duration_seconds / 60.0) if duration_seconds else 15.0
+    if dur_m <= 30.0:
+        base_budget = 3500
+    elif dur_m <= 90.0:
+        base_budget = 5000
+    else:
+        base_budget = 7000
+
+    max_out = base_budget + (1500 if features else 0)
     raw = _author(
         full_prompt,
         user_msg,
         max_tokens=max_out,
         cost_sink=cost_sink,
     )
+
     quality_issues = _cheatsheet_quality_issues(raw, duration_seconds)
     if quality_issues:
         if on_progress:
