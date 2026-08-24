@@ -188,8 +188,11 @@ async def get_playlist_status(
         if manifest_path.is_file():
             try:
                 data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                p_title = data.get("playlist_title") or data.get("title")
                 return {
                     "id": job_id,
+                    "title": p_title,
+                    "playlist_title": p_title,
                     "status": data.get("status", "unknown"),
                     "summary": data.get("summary"),
                     "manifest": data,
@@ -208,14 +211,61 @@ async def get_playlist_status(
         except Exception:
             pass
 
+    p_title = (manifest_data.get("playlist_title") or manifest_data.get("title")) if manifest_data else job.get("playlist_title")
+
     return {
         "id": job_id,
+        "title": p_title,
+        "playlist_title": p_title,
         "status": job["status"],
         "progress": job["progress"],
         "summary": job["summary"],
         "error": job["error"],
         "manifest": manifest_data,
     }
+
+
+def _resolve_playlist_title(data: dict[str, Any], items_data: list[dict[str, Any]]) -> str:
+    """Extract or infer a clean, meaningful playlist/course title."""
+    stored = data.get("playlist_title") or data.get("title")
+    if stored and str(stored).strip() and not str(stored).strip().startswith("http") and not re.match(r'^\d{3}_', str(stored).strip()):
+        return str(stored).strip()
+
+    summary = data.get("summary")
+    if isinstance(summary, dict):
+        s_title = summary.get("playlist_title") or summary.get("title")
+        if s_title and str(s_title).strip() and not str(s_title).strip().startswith("http") and not re.match(r'^\d{3}_', str(s_title).strip()):
+            return str(s_title).strip()
+
+    # Derive from item titles
+    if items_data:
+        titles = [
+            it.get("title") for it in items_data
+            if it.get("title")
+            and not str(it.get("title")).startswith("http")
+            and not re.match(r'^\d{3}_', str(it.get("title")).strip())
+        ]
+        if titles:
+            first = titles[0]
+            segments = [s.strip() for s in re.split(r'[|–—]', first) if s.strip()]
+            if len(segments) >= 2:
+                cleaned_segs = []
+                for seg in segments:
+                    if re.search(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+\b', seg, re.IGNORECASE):
+                        continue
+                    if re.search(r'\bby\s+[a-zA-Z]+\s+(?:sir|mam|ma\'am)\b', seg, re.IGNORECASE):
+                        continue
+                    cleaned_segs.append(seg)
+                if cleaned_segs:
+                    return " | ".join(cleaned_segs[:2])
+            return first
+
+    # Fallback to URL or generic name
+    url = data.get("playlist_url") or ""
+    m_list = re.search(r'[?&]list=([^&]+)', url)
+    if m_list:
+        return f"YouTube Playlist ({m_list.group(1)[:12]})"
+    return "YouTube Playlist"
 
 
 @router.get("/list")
@@ -316,8 +366,20 @@ async def list_playlists(
                 disk_status = data.get("status", "completed")
                 computed_status = "completed" if disk_status == "running" else disk_status
 
+            pl_title = _resolve_playlist_title(data, items_data)
+
+            # Backfill manifest on disk if playlist_title was missing
+            if not data.get("playlist_title") and pl_title and pl_title != "YouTube Playlist":
+                try:
+                    data["playlist_title"] = pl_title
+                    manifest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+
             results.append({
                 "id": job_dir.name,
+                "title": pl_title,
+                "playlist_title": pl_title,
                 "playlist_url": data.get("playlist_url"),
                 "status": computed_status,
                 "active_video": data.get("active_video") if computed_status == "running" else None,
@@ -350,15 +412,69 @@ async def download_master_pdf(
     job_id: str,
     user: User = Depends(current_user),
 ):
-    """Serve master consolidated PDF for a playlist job."""
+    """Serve master consolidated PDF for a playlist job, rendering on-the-fly if needed."""
     from fastapi.responses import FileResponse
     job_dir = PLAYLIST_WORK_ROOT / job_id
+    if not job_dir.is_dir():
+        raise HTTPException(404, "Playlist job directory not found")
+
     master_pdf = job_dir / "Consolidated" / "master_cheatsheet.pdf"
+    manifest_path = job_dir / "playlist_manifest.json"
+
+    # If master PDF does not exist yet (e.g. job still in progress or interrupted),
+    # dynamically compile all completed cheatsheet markdown files into a master PDF now!
     if not master_pdf.is_file():
-        raise HTTPException(404, "Master PDF not found")
+        try:
+            from scripts.run_playlist_job import consolidate_markdowns
+            from scripts.build_cheatsheet import build as build_cheatsheet
+
+            successful_results = []
+            if manifest_path.is_file():
+                m_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                for k, v in m_data.get("items", {}).items():
+                    res = v.get("result")
+                    if res and res.get("markdown_path") and Path(res["markdown_path"]).is_file():
+                        successful_results.append(res)
+
+            if not successful_results:
+                # Scan subdirectories for cheatsheet.md
+                for md_file in sorted(job_dir.glob("**/cheatsheet.md")):
+                    if "Consolidated" not in md_file.parts:
+                        successful_results.append({
+                            "title": md_file.parent.name,
+                            "markdown_path": str(md_file),
+                            "duration_seconds": 0,
+                        })
+
+            if successful_results:
+                consolidated_dir = job_dir / "Consolidated"
+                consolidated_dir.mkdir(parents=True, exist_ok=True)
+                p_title = "Course Summary"
+                if manifest_path.is_file():
+                    try:
+                        p_title = json.loads(manifest_path.read_text(encoding="utf-8")).get("playlist_title") or p_title
+                    except Exception:
+                        pass
+
+                master_md_text = consolidate_markdowns(
+                    successful_results,
+                    playlist_title=f"{p_title} ({len(successful_results)} modules)",
+                )
+                master_md_path = consolidated_dir / "master_cheatsheet.md"
+                master_md_path.write_text(master_md_text, encoding="utf-8")
+                build_cheatsheet(
+                    master_md_path,
+                    master_pdf,
+                    title=f"Master Course Notes - {p_title}",
+                    features=[],
+                )
+        except Exception as err:
+            print(f"[master_pdf_dynamic_build_error] {err}", flush=True)
+
+    if not master_pdf.is_file():
+        raise HTTPException(404, "Master PDF not found (No completed cheatsheets available to consolidate yet)")
 
     # Use playlist title or course name if present in manifest
-    manifest_path = job_dir / "playlist_manifest.json"
     title_slug = "Master_Course_Notes"
     if manifest_path.is_file():
         try:
@@ -369,6 +485,7 @@ async def download_master_pdf(
             pass
 
     return FileResponse(master_pdf, media_type="application/pdf", filename=f"{title_slug}.pdf")
+
 
 
 @router.get("/download/{job_id}/item/{item_key}")
@@ -491,7 +608,9 @@ async def download_playlist_zip(
 async def download_trial_handbook():
     """Direct public download for the 50-page 10-hour trial grammar handbook."""
     from fastapi.responses import FileResponse
-    handbook_pdf = Path("/opt/video-notes-bot/web_work/marathon_10hr_trial/Master_100_Rules_Grammar_Handbook.pdf")
+    handbook_pdf = Path("data/Modern_History_Handbook/Master_100_Rules_Grammar_Handbook.pdf")
+    if not handbook_pdf.is_file():
+        handbook_pdf = Path("/opt/video-notes-bot/web_work/marathon_10hr_trial/Master_100_Rules_Grammar_Handbook.pdf")
     if not handbook_pdf.is_file():
         raise HTTPException(404, "Handbook PDF not found")
     return FileResponse(
@@ -499,4 +618,53 @@ async def download_trial_handbook():
         media_type="application/pdf",
         filename="100_Golden_Rules_Grammar_Complete_Handbook_50Pages.pdf",
     )
+
+
+@router.get("/download/history-handbook")
+async def download_history_handbook():
+    """Direct download for the 40-page 13-hour Modern Indian History Master Handbook."""
+    from fastapi.responses import FileResponse
+    handbook_pdf = Path(__file__).resolve().parent.parent / "data" / "Modern_History_Handbook" / "Modern_Indian_History_Comprehensive_Handbook.pdf"
+    if not handbook_pdf.is_file():
+        raise HTTPException(404, "Modern History Handbook PDF not found")
+    return FileResponse(
+        handbook_pdf,
+        media_type="application/pdf",
+        filename="Complete_Modern_Indian_History_13Hours_Master_Handbook_40Pages.pdf",
+    )
+
+
+@router.get("/download/history-handbook-docx")
+async def download_history_handbook_docx():
+    """Direct download for the editable Word (.docx) 13-hour Modern Indian History Master Handbook."""
+    from fastapi.responses import FileResponse
+    docx_file = Path("C:/Users/Vikash PC/Downloads/Complete_Modern_Indian_History_13Hours_Master_Handbook_40Pages.docx")
+    if not docx_file.is_file():
+        raise HTTPException(404, "DOCX file not found")
+    return FileResponse(
+        docx_file,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename="Complete_Modern_Indian_History_13Hours_Master_Handbook_40Pages.docx",
+    )
+
+
+@router.get("/download/{job_id}/master-docx")
+async def download_master_docx(job_id: str):
+    """Download editable Word (.docx) version of the Master Consolidated Cheatsheet."""
+    from fastapi.responses import FileResponse
+    from scripts.convert_md_to_docx import markdown_to_docx
+    job_dir = PLAYLIST_WORK_ROOT / job_id
+    md_file = job_dir / "Consolidated" / "master_cheatsheet.md"
+    docx_file = job_dir / "Consolidated" / "master_cheatsheet.docx"
+    if not md_file.is_file():
+        raise HTTPException(404, "Master markdown not found")
+    if not docx_file.is_file() or docx_file.stat().st_mtime < md_file.stat().st_mtime:
+        markdown_to_docx(md_file, docx_file)
+    return FileResponse(
+        docx_file,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=f"Master_Cheatsheet_{job_id[:8]}.docx",
+    )
+
+
 
