@@ -1288,3 +1288,66 @@ def author_book(transcript_path: Path, frames_index_path: Path, *,
         title = (title_hint or "Illustrated Book Notes").replace('\n', ' ').strip()
         cleaned = f"# {title}\n\n### distilled from video walkthrough\n\n{cleaned}"
     return cleaned
+
+
+MCQ_SYSTEM = """You are an expert Examination Master creating a comprehensive Solved Multiple Choice Question (MCQ) & PYQ Handbook from a lecture transcript.
+
+OUTPUT FORMAT (Valid Markdown):
+# <Course / Subject Title> - Solved MCQs & PYQ Bank
+
+## Executive Concept & Formula Summary
+<Key concepts, definitions, and formulas needed for solving these questions>
+
+## Question 1: <Short Topic Title>
+> Target Exam: Relevant Competitive Exam | Difficulty: Medium
+
+**Q.** <Complete, clear question statement>
+
+- **(A)** <Option A>
+- **(B)** <Option B>
+- **(C)** <Option C>
+- **(D)** <Option D>
+
+> [!correct] (B) <Option Text>
+> **Direct Explanation**: <Why B is strictly correct with formulas or rules>
+> **Option Elimination**:
+> - **(A)** <Why A is incorrect>
+> - **(C)** <Why C is incorrect>
+> - **(D)** <Why D is incorrect>
+
+> [!tip] Shortcut / Elimination Rule
+> <Mental trick for solving in under 30 seconds>
+
+---
+
+## Question 2: ...
+
+RULES:
+1. Ground all questions and options strictly in the lecture transcript.
+2. Use ASCII punctuation only (`->`, `~`, `-`).
+3. Output ONLY valid markdown. No preamble.
+"""
+
+
+def author_mcq(transcript_path: Path, *, title_hint: Optional[str] = None,
+               duration_seconds: Optional[float] = None,
+               on_progress: ProgressFn = None,
+               system_override: Optional[str] = None,
+               cost_sink: Optional[dict] = None,
+               features: Optional[list[str]] = None) -> str:
+    """Return MCQ handbook markdown text."""
+    transcript = Path(transcript_path).read_text(encoding="utf-8")
+    if _needs_condensation() or est_tokens(transcript) > 200000:
+        body = condense(transcript, on_progress=on_progress)
+    else:
+        body = transcript
+
+    user_msg = f"TITLE: {title_hint or 'MCQ Bank'}\n\nTRANSCRIPT:\n{body}"
+    if on_progress:
+        on_progress("Authoring Solved MCQ Handbook...")
+
+    prompt = system_override or MCQ_SYSTEM
+    raw = _author(prompt, user_msg, max_tokens=7500, cost_sink=cost_sink)
+    cleaned = strip_wrappers(raw)
+    return cleaned
+
