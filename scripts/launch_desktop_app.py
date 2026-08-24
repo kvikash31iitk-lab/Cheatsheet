@@ -47,6 +47,9 @@ def wait_for_service(url: str, timeout: float = 20.0) -> bool:
 
 def find_browser_app_runner() -> tuple[str, list[str]]:
     """Find Microsoft Edge or Google Chrome for --app mode windowing."""
+    user_data = PROJECT_ROOT / "web_work" / "desktop_profile"
+    user_data.mkdir(parents=True, exist_ok=True)
+
     candidates = [
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -57,7 +60,13 @@ def find_browser_app_runner() -> tuple[str, list[str]]:
     ]
     for path in candidates:
         if Path(path).is_file():
-            return path, ["--app=http://localhost:3000/generate", "--window-size=1300,900"]
+            return path, [
+                "--app=http://localhost:3000/generate",
+                f"--user-data-dir={user_data}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--window-size=1300,900",
+            ]
 
     # Fallback to default start
     return "cmd.exe", ["/c", "start", "http://localhost:3000/generate"]
@@ -66,7 +75,7 @@ def find_browser_app_runner() -> tuple[str, list[str]]:
 def main() -> None:
     processes = []
     print("=" * 60)
-    print("  🚀 Starting Cheatsheet Local Desktop Engine...")
+    print("  [*] Starting Cheatsheet Local Desktop Engine...")
     print("=" * 60)
 
     # 1. Start FastAPI Backend if not already running
@@ -107,12 +116,12 @@ def main() -> None:
 
     # 3. Wait for services to be ready
     print("[3/3] Initializing desktop app window...")
-    wait_for_service(f"http://127.0.0.1:{API_PORT}/docs", timeout=12.0)
-    wait_for_service(f"http://127.0.0.1:{WEB_PORT}", timeout=15.0)
+    wait_for_service(f"http://127.0.0.1:{API_PORT}/docs", timeout=15.0)
+    wait_for_service(f"http://127.0.0.1:{WEB_PORT}", timeout=20.0)
 
     browser_bin, args = find_browser_app_runner()
     print("=" * 60)
-    print("  ✨ Cheatsheet Desktop is running!")
+    print("  Cheatsheet Desktop is running!")
     print("  Press Ctrl+C in this window or close the app to exit.")
     print("=" * 60)
 
