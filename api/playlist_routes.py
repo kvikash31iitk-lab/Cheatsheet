@@ -228,18 +228,23 @@ async def get_playlist_status(
 def _resolve_playlist_title(data: dict[str, Any], items_data: list[dict[str, Any]]) -> str:
     """Extract or infer a clean, meaningful playlist/course title."""
     stored = data.get("playlist_title") or data.get("title")
-    if stored and str(stored).strip() and not str(stored).strip().startswith("http"):
+    if stored and str(stored).strip() and not str(stored).strip().startswith("http") and not re.match(r'^\d{3}_', str(stored).strip()):
         return str(stored).strip()
 
     summary = data.get("summary")
     if isinstance(summary, dict):
         s_title = summary.get("playlist_title") or summary.get("title")
-        if s_title and str(s_title).strip() and not str(s_title).strip().startswith("http"):
+        if s_title and str(s_title).strip() and not str(s_title).strip().startswith("http") and not re.match(r'^\d{3}_', str(s_title).strip()):
             return str(s_title).strip()
 
     # Derive from item titles
     if items_data:
-        titles = [it.get("title") for it in items_data if it.get("title") and not str(it.get("title")).startswith("http")]
+        titles = [
+            it.get("title") for it in items_data
+            if it.get("title")
+            and not str(it.get("title")).startswith("http")
+            and not re.match(r'^\d{3}_', str(it.get("title")).strip())
+        ]
         if titles:
             first = titles[0]
             segments = [s.strip() for s in re.split(r'[|–—]', first) if s.strip()]
