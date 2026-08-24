@@ -149,7 +149,25 @@ CRITICAL RULES:
 2. Complete Problem Statements: Write out full question text with numbered statements (1, 2, 3...) and all 4 options (A, B, C, D).
 3. Option Analysis: Analyze every option thoroughly so the student understands why wrong options are eliminated.
 4. MATH & FORMULA TYPOGRAPHY: Write all mathematical formulas, fractions, chemical reactions, and physical equations in clean, readable standard text (e.g. `1/10 + 1/15 + 1/6 = 20/60 = 1/3`, `Total Rate = (6 + 4 + 10)/60`, `x^2 + y^2 = r^2`, `2H2 + O2 -> 2H2O`, `~10.33`, `P = V * I`). DO NOT output raw unparsed LaTeX macros like `\\frac{}{}`, `\\approx`, `\\text{}`, or enclosing dollar signs `$`.
-5. Output ONLY markdown: No conversational preamble, no wrapping in code blocks.
+5. VISUAL DIAGRAMS FOR ARRANGEMENTS & GEOMETRY: When solving Seating Arrangements (Circular or Linear rows), Floor/Matrix Puzzles, Triangles/Geometry, or Venn Diagrams, include a visual diagram block in the explanation:
+```arrangement:circular
+seats: 8
+facing: inward
+occupants: ["A", "B", "C", "D", "E", "F", "G", "H"]
+```
+or
+```arrangement:linear
+slots: ["P", "Q", "R", "S", "T", "U", "V"]
+facing: North
+```
+or
+```diagram:triangle
+vertices: ["A", "B", "C"]
+base: "Base (b)"
+height: "Height (h)"
+hypotenuse: "Hypotenuse (c)"
+```
+6. Output ONLY markdown: No conversational preamble, no wrapping in code blocks.
 """
 
 

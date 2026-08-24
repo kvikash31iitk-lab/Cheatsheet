@@ -18,6 +18,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
@@ -312,12 +316,29 @@ def parse_blocks(md: str) -> list[tuple[str, any]]:
             blocks.append(("ol", items))
             continue
 
+        # Code / Diagram Block
+        if s.startswith("```"):
+            fence = s[3:].strip()
+            code_lines = []
+            i += 1
+            while i < N and not lines[i].strip().startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            if i < N and lines[i].strip().startswith("```"):
+                i += 1
+            code_text = "\n".join(code_lines)
+            if fence.startswith("arrangement") or fence.startswith("diagram"):
+                blocks.append(("diagram", (fence, code_text)))
+            else:
+                blocks.append(("code", (fence, code_text)))
+            continue
+
         # Regular Paragraph
         p_lines = [s]
         i += 1
         while i < N:
             nxt = lines[i].strip()
-            if not nxt or nxt.startswith("#") or nxt.startswith(">") or nxt.startswith("|") or nxt.startswith("- ") or nxt.startswith("* ") or re.match(r"^\d+\.\s", nxt) or re.match(r"^(\*{3,}|-{3,})$", nxt):
+            if not nxt or nxt.startswith("#") or nxt.startswith(">") or nxt.startswith("|") or nxt.startswith("- ") or nxt.startswith("* ") or nxt.startswith("```") or re.match(r"^\d+\.\s", nxt) or re.match(r"^(\*{3,}|-{3,})$", nxt):
                 break
             p_lines.append(nxt)
             i += 1
@@ -507,6 +528,17 @@ def build(src_path: Path, out_path: Path, title: str | None = None) -> int:
                         else:
                             q_flowables.append(Paragraph(f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}',
                                                    ParagraphStyle("ul_i", parent=BODY, leftIndent=10, firstLineIndent=-8, spaceAfter=2)))
+                elif k2 == "diagram":
+                    fence, code_text = p2
+                    try:
+                        from bot.diagrams import render_diagram_flowable
+                        diag_f = render_diagram_flowable(fence, code_text)
+                        if diag_f:
+                            q_flowables.append(Spacer(1, 4))
+                            q_flowables.append(diag_f)
+                            q_flowables.append(Spacer(1, 4))
+                    except Exception as exc:
+                        print(f"[build_mcq] diagram render error: {exc}", flush=True)
                 elif k2 == "callout":
                     kind, co_title, body_lines = p2
                     q_flowables.extend(make_callout(kind, co_title, body_lines))
@@ -517,6 +549,18 @@ def build(src_path: Path, out_path: Path, title: str | None = None) -> int:
             i += 1
         elif k == "h3":
             story.append(Paragraph(inline(payload), H3))
+            i += 1
+        elif k == "diagram":
+            fence, code_text = payload
+            try:
+                from bot.diagrams import render_diagram_flowable
+                diag_f = render_diagram_flowable(fence, code_text)
+                if diag_f:
+                    story.append(Spacer(1, 4))
+                    story.append(diag_f)
+                    story.append(Spacer(1, 6))
+            except Exception as exc:
+                print(f"[build_mcq] diagram render error: {exc}", flush=True)
             i += 1
         elif k == "quote":
             story.append(Paragraph(inline(payload), META_TAG))

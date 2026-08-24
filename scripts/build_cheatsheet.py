@@ -306,10 +306,24 @@ def parse_blocks(md: str):
             items = []
             while i < len(lines) and lines[i].strip().startswith(("- ", "* ", "+ ")):
                 items.append(lines[i].strip()[2:].strip()); i += 1
-            yield ("ul", items); continue
+        if stripped.startswith("```"):
+            fence = stripped[3:].strip()
+            buf = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                buf.append(lines[i])
+                i += 1
+            if i < len(lines) and lines[i].strip().startswith("```"):
+                i += 1
+            code_text = "\n".join(buf)
+            if fence.startswith("arrangement") or fence.startswith("diagram"):
+                yield ("diagram", (fence, code_text))
+            else:
+                yield ("code", (fence, code_text))
+            continue
         buf = [stripped]; i += 1
         while i < len(lines) and lines[i].strip() and not re.match(
-            r"^(#{1,6}\s|[-*+]\s|\d+\.\s|>|\||---+$|!\[)", lines[i].strip()
+            r"^(#{1,6}\s|[-*+]\s|\d+\.\s|>|\||```|---+$|!\[)", lines[i].strip()
         ):
             buf.append(lines[i].strip()); i += 1
         yield ("p", " ".join(buf))
@@ -686,6 +700,19 @@ def render_block(kind, payload, story):
         story.append(Spacer(1, 2))
         story.append(_rule())
         story.append(Spacer(1, 2))
+        return
+    if kind == "diagram":
+        fence, code_text = payload
+        try:
+            from bot.diagrams import render_diagram_flowable
+            diag_f = render_diagram_flowable(fence, code_text)
+            if diag_f:
+                story.append(Spacer(1, 2))
+                story.append(diag_f)
+                story.append(Spacer(1, 4))
+                return
+        except Exception:
+            pass
         return
     if kind == "code":
         lang, code_text = payload
