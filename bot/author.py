@@ -148,7 +148,8 @@ CRITICAL RULES:
 1. FULL COVERAGE GUARANTEE: You must extract and author EVERY SINGLE question present in the transcript from start to finish. If the video covers 10, 12, 20, or 30 questions, you MUST generate cards for ALL of them without dropping questions from the middle or end of the video.
 2. Complete Problem Statements: Write out full question text with numbered statements (1, 2, 3...) and all 4 options (A, B, C, D).
 3. Option Analysis: Analyze every option thoroughly so the student understands why wrong options are eliminated.
-4. Output ONLY markdown: No conversational preamble, no wrapping in code blocks.
+4. MATH & FORMULA TYPOGRAPHY: Write all mathematical formulas, fractions, chemical reactions, and physical equations in clean, readable standard text (e.g. `1/10 + 1/15 + 1/6 = 20/60 = 1/3`, `Total Rate = (6 + 4 + 10)/60`, `x^2 + y^2 = r^2`, `2H2 + O2 -> 2H2O`, `~10.33`, `P = V * I`). DO NOT output raw unparsed LaTeX macros like `\\frac{}{}`, `\\approx`, `\\text{}`, or enclosing dollar signs `$`.
+5. Output ONLY markdown: No conversational preamble, no wrapping in code blocks.
 """
 
 
