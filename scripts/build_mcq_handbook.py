@@ -81,14 +81,14 @@ BODY = ParagraphStyle("Body", parent=ss["BodyText"], fontName="Helvetica",
 
 QUESTION_TEXT = ParagraphStyle("QuestionText", parent=BODY, fontName="Helvetica-Bold",
                                fontSize=10, leading=13.8, textColor=INK,
-                               spaceBefore=2, spaceAfter=4)
+                               spaceBefore=2, spaceAfter=4, keepWithNext=1)
 
 META_TAG = ParagraphStyle("MetaTag", parent=BODY, fontName="Helvetica-Oblique",
-                          fontSize=8.5, leading=11, textColor=MUTED, spaceAfter=3)
+                          fontSize=8.5, leading=11, textColor=MUTED, spaceAfter=3, keepWithNext=1)
 
 OPTION_STYLE = ParagraphStyle("OptionStyle", parent=BODY, fontName="Helvetica",
                               fontSize=9.3, leading=12.8, textColor=INK,
-                              leftIndent=12, firstLineIndent=-12, spaceAfter=2)
+                              leftIndent=12, firstLineIndent=-12, spaceAfter=2, keepWithNext=1)
 
 CO_LABEL = ParagraphStyle("CoLabel", parent=ss["Normal"], fontName="Helvetica-Bold",
                           fontSize=8, leading=9.5, textColor=colors.white,
@@ -405,26 +405,64 @@ def build(src_path: Path, out_path: Path, title: str | None = None) -> int:
     doc.addPageTemplates([template])
 
     story = []
+    i = 0
+    N = len(blocks)
 
-    for k, payload in blocks:
+    while i < N:
+        k, payload = blocks[i]
+
         if k == "h1":
             story.append(Paragraph(inline(payload), DOC_TITLE))
             story.append(Spacer(1, 2))
+            i += 1
+        elif k == "h2" and payload.lower().startswith("question"):
+            # Collect complete Question core: Heading + Metadata + Problem + Options + Correct Answer
+            q_flowables = [
+                Spacer(1, 6),
+                Paragraph(f'<font color="{ACCENT_HEX}"><b>{inline(payload)}</b></font>', H2),
+            ]
+            i += 1
+            while i < N:
+                k2, p2 = blocks[i]
+                if k2 == "h3" or k2 == "hr" or (k2 == "h2"):
+                    break
+                elif k2 == "quote":
+                    q_flowables.append(Paragraph(inline(p2), META_TAG))
+                elif k2 == "p":
+                    q_flowables.append(Paragraph(inline(p2), QUESTION_TEXT if (p2.startswith("**Q.**") or p2.startswith("Q.")) else BODY))
+                elif k2 == "ol":
+                    for idx, it in enumerate(p2, 1):
+                        q_flowables.append(Paragraph(
+                            f'<b><font color="{ACCENT_HEX}">{idx}.</font></b> {inline(it)}',
+                            ParagraphStyle("ol_i", parent=BODY, leftIndent=12, firstLineIndent=-10, spaceAfter=2, keepWithNext=1)
+                        ))
+                elif k2 == "ul":
+                    for it in p2:
+                        if re.match(r"^\*\*\([A-D]\)\*\*", it) or re.match(r"^\([A-D]\)", it):
+                            q_flowables.append(Paragraph(inline(it), OPTION_STYLE))
+                        else:
+                            q_flowables.append(Paragraph(f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}',
+                                                   ParagraphStyle("ul_i", parent=BODY, leftIndent=10, firstLineIndent=-8, spaceAfter=2)))
+                elif k2 == "callout":
+                    kind, co_title, body_lines = p2
+                    q_flowables.extend(make_callout(kind, co_title, body_lines))
+                i += 1
+            story.append(KeepTogether(q_flowables))
         elif k == "h2":
-            if payload.lower().startswith("question"):
-                story.append(Spacer(1, 6))
-                story.append(Paragraph(f'<font color="{ACCENT_HEX}"><b>{inline(payload)}</b></font>', H2))
-            else:
-                story.append(Paragraph(inline(payload), H1))
+            story.append(Paragraph(inline(payload), H1))
+            i += 1
         elif k == "h3":
             story.append(Paragraph(inline(payload), H3))
+            i += 1
         elif k == "quote":
             story.append(Paragraph(inline(payload), META_TAG))
+            i += 1
         elif k == "p":
             if payload.startswith("**Q.**") or payload.startswith("Q."):
                 story.append(Paragraph(inline(payload), QUESTION_TEXT))
             else:
                 story.append(Paragraph(inline(payload), BODY))
+            i += 1
         elif k == "ul":
             for it in payload:
                 if re.match(r"^\*\*\([A-D]\)\*\*", it) or re.match(r"^\([A-D]\)", it):
@@ -432,23 +470,30 @@ def build(src_path: Path, out_path: Path, title: str | None = None) -> int:
                 else:
                     story.append(Paragraph(f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}',
                                            ParagraphStyle("ul_i", parent=BODY, leftIndent=10, firstLineIndent=-8, spaceAfter=2)))
+            i += 1
         elif k == "ol":
-            for i, it in enumerate(payload, 1):
-                story.append(Paragraph(f'<b><font color="{ACCENT_HEX}">{i}.</font></b> {inline(it)}',
+            for idx, it in enumerate(payload, 1):
+                story.append(Paragraph(f'<b><font color="{ACCENT_HEX}">{idx}.</font></b> {inline(it)}',
                                        ParagraphStyle("ol_i", parent=BODY, leftIndent=12, firstLineIndent=-10, spaceAfter=2)))
+            i += 1
         elif k == "callout":
             kind, co_title, body_lines = payload
             story.extend(make_callout(kind, co_title, body_lines))
+            i += 1
         elif k == "table":
             hdr, rows = payload
             story.append(make_table(hdr, rows))
             story.append(Spacer(1, 6))
+            i += 1
         elif k == "hr":
             story.append(Spacer(1, 4))
             line_table = Table([[""]], colWidths=[BODY_W], rowHeights=[0.5])
             line_table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), RULE)]))
             story.append(line_table)
             story.append(Spacer(1, 4))
+            i += 1
+        else:
+            i += 1
 
     doc.build(story)
 
