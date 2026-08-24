@@ -380,9 +380,10 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
                     f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}',
                     ParagraphStyle("co_li", parent=CO_BODY, leftIndent=10, firstLineIndent=-10, spaceAfter=1.5)))
         elif k2 == "ol":
-            for n, it in enumerate(p2, 1):
+            for it in p2:
+                num, text_val = (it[0], it[1]) if (isinstance(it, tuple) and len(it) == 2) else (1, it)
                 body_paras.append(Paragraph(
-                    f'<b>{n}.</b> {inline(it)}',
+                    f'<b>{num}.</b> {inline(text_val)}',
                     ParagraphStyle("co_oi", parent=CO_BODY, leftIndent=12, firstLineIndent=-10, spaceAfter=1.5)))
 
     inner = Table([[Paragraph(inline(label), CO_LABEL)]] + [[p] for p in body_paras],
