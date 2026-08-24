@@ -183,6 +183,59 @@ OUTPUT:
 The transcript chunk follows. Output bullets only.
 """
 
+MARATHON_CHAPTER_SYSTEM = """You are an expert Subject Master and Technical Author writing an exhaustive, textbook-grade chapter for a comprehensive study handbook from lecture transcript chunks.
+
+TARGET DEPTH:
+- Target 1,500 to 2,500 words for this specific chapter.
+- Write in full, thorough detail. Do NOT write high-level summaries.
+- Cover all chronological events, names, dates, rules, formulas, technical definitions, and exam traps.
+
+OUTPUT FORMAT (Valid Markdown):
+## Chapter {chap_num}: {chap_title}
+
+### 1. Overview and Core Foundations
+<Thorough multi-paragraph foundational breakdown>
+
+### 2. Exhaustive Concepts, Rules and Detailed Breakdowns
+<Comprehensive sub-sections covering all granular facts in these transcript chunks>
+
+| Parameter / Feature | Detail / Formulation | Examination Significance |
+|---|---|---|
+| ... | ... | ... |
+
+> [!def] Key Term / Concept
+> <Accurate definition>
+
+> [!warning] Common Exam Trap / Examiner Trick
+> <Frequent pitfalls and traps to avoid>
+
+> [!tip] Pro-Tip / Mental Shortcut
+> <Rule of thumb for rapid problem solving>
+
+### 3. Case Studies, Solved Problems or Comparative Tables
+| Scenario / Trigger | Applied Principle | Outcome Example |
+|---|---|---|
+| ... | ... | ... |
+
+> [!example] Practical Application / Solved Exam Question
+> **Context**: <Scenario or sentence>
+> **Analysis**: <Detailed step-by-step breakdown>
+> **Takeaway**: <Key exam lesson>
+
+### 4. Chapter Recap: Revise in 60 Seconds
+- <Key takeaway 1>
+- <Key takeaway 2>
+- <Key takeaway 3>
+- <Key takeaway 4>
+
+RULES:
+1. Ground all explanations strictly in the transcript chunks.
+2. Use ASCII punctuation only (`->` instead of unicode arrows, standard hyphens and quotes).
+3. Do not refer to "the video", "the lecture", "the speaker". Write directly as an authoritative textbook.
+4. Output ONLY the chapter markdown. No preamble, no code-fence wrappers.
+"""
+
+
 
 # === opt-in feature snippets ================================================
 # Each entry below is appended to the base system prompt ONLY when the user
@@ -1012,6 +1065,65 @@ Use short headings and bullets only. Do not add facts or a preamble."""
     return reduced
 
 
+def author_marathon_handbook(transcript: str, *, title_hint: Optional[str] = None,
+                             duration_seconds: Optional[float] = None,
+                             on_progress: ProgressFn = None,
+                             cost_sink: Optional[dict] = None) -> str:
+    """Generate an exhaustive 25-50 page multi-chapter handbook for long videos (> 2 hours)."""
+    # 1. Parse raw or sectioned transcript chunks
+    raw_chunks = split_transcript(transcript, 8000)
+    total_chunks = len(raw_chunks)
+    if total_chunks <= 1:
+        # Fallback to single pass if only 1 chunk
+        return ""
+
+    # 2. Determine chapter count: target ~8 to 14 chapters (roughly 3-6 chunks per chapter)
+    num_chapters = min(14, max(6, total_chunks // 4))
+    chunk_step = max(1, total_chunks // num_chapters)
+
+    main_title = (title_hint or "Comprehensive Course Masterclass Handbook").strip()
+    chapters_md: list[str] = []
+
+    for chap_idx in range(num_chapters):
+        start_c = chap_idx * chunk_step
+        end_c = (chap_idx + 1) * chunk_step if chap_idx < num_chapters - 1 else total_chunks
+        chapter_chunks = raw_chunks[start_c:end_c]
+        combined_text = "\n\n".join(chapter_chunks)
+
+        chap_num = chap_idx + 1
+        if on_progress:
+            on_progress(f"Authoring Handbook Chapter {chap_num}/{num_chapters} (chunks {start_c+1}-{end_c})...")
+
+        # Derive chapter title from text snippet or chunk content
+        first_line = combined_text.strip().split("\n")[0]
+        chap_title_hint = f"Module {chap_num}"
+        if "## Chunk" in first_line:
+            chap_title_hint = f"Section {chap_num}"
+
+        system_prompt = MARATHON_CHAPTER_SYSTEM.replace("{chap_num}", str(chap_num)).replace("{chap_title}", chap_title_hint)
+        user_prompt = f"COURSE TITLE: {main_title}\nCHAPTER: {chap_num}\n\nTRANSCRIPT CHUNKS (detailed lecture content):\n{combined_text}"
+
+        try:
+            chap_md = _author(
+                system_prompt,
+                user_prompt,
+                max_tokens=6500,
+                cost_sink=cost_sink,
+            )
+            chap_clean = strip_wrappers(chap_md)
+            chapters_md.append(chap_clean)
+        except Exception as err:
+            print(f"[marathon_chapter_{chap_num}_error] {err}", flush=True)
+            # Fallback for this single chapter
+            chap_summary = _author(SUMMARISE_SYSTEM, combined_text[:12000], max_tokens=1500, cost_sink=cost_sink)
+            chapters_md.append(f"## Chapter {chap_num}: Module {chap_num}\n\n{chap_summary}")
+
+    # 3. Compile Master Markdown Document
+    header_block = f"# {main_title}\n\n### Comprehensive Study Handbook - Distilled from a {int(duration_seconds/60) if duration_seconds else 120}-Minute Masterclass\n\n"
+    master_text = header_block + "\n\n---\n\n".join(chapters_md)
+    return master_text
+
+
 # --- public API --------------------------------------------------------------
 
 def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None,
@@ -1033,6 +1145,21 @@ def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None
     prompt so the model emits the extra markdown the renderer expects.
     """
     transcript = Path(transcript_path).read_text(encoding="utf-8")
+
+    # Marathon Videos (> 2 hours / 7200 seconds): Route to multi-chapter handbook engine!
+    if not system_override and duration_seconds and duration_seconds >= 7200:
+        if on_progress:
+            on_progress("Detected marathon masterclass (>2h). Initializing multi-chapter handbook engine...")
+        handbook_md = author_marathon_handbook(
+            transcript,
+            title_hint=title_hint,
+            duration_seconds=duration_seconds,
+            on_progress=on_progress,
+            cost_sink=cost_sink,
+        )
+        if handbook_md and len(handbook_md.strip()) > 3000:
+            return handbook_md
+
     if _needs_condensation() or est_tokens(transcript) > 200000:
         body = condense(transcript, on_progress=on_progress)
         body_label = ("CONDENSED TRANSCRIPT "
@@ -1040,6 +1167,7 @@ def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None
     else:
         body = transcript
         body_label = "TRANSCRIPT (raw with timestamps):"
+
 
     user_msg = "\n".join(p for p in [
         f"TITLE HINT: {title_hint}" if title_hint else "",
