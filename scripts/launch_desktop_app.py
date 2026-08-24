@@ -120,28 +120,33 @@ def main() -> None:
     wait_for_service(f"http://127.0.0.1:{WEB_PORT}", timeout=20.0)
 
     browser_bin, args = find_browser_app_runner()
-    print("=" * 60)
-    print("  Cheatsheet Desktop is running!")
-    print("  Press Ctrl+C in this window or close the app to exit.")
-    print("=" * 60)
+    
+    # Launch desktop app window
+    subprocess.Popen([browser_bin] + args)
 
-    # Launch desktop app window and wait for it to be closed
-    app_proc = subprocess.Popen([browser_bin] + args)
+    print("=" * 60)
+    print("  Cheatsheet Desktop is active and ready!")
+    print("  App URL: http://localhost:3000/generate")
+    print("  Keep this window open while using Cheatsheet.")
+    print("  Press Ctrl+C or close this window to stop.")
+    print("=" * 60)
 
     try:
-        app_proc.wait()
+        while True:
+            time.sleep(1)
     except KeyboardInterrupt:
         pass
     finally:
-        print("\nClosing Cheatsheet desktop services...")
-        if app_proc.poll() is None:
-            app_proc.terminate()
+        print("\nStopping Cheatsheet desktop services...")
         for p in processes:
             try:
                 p.terminate()
                 p.wait(timeout=2.0)
             except Exception:
-                p.kill()
+                try:
+                    p.kill()
+                except Exception:
+                    pass
         print("Done.")
 
 
