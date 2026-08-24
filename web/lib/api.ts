@@ -1,4 +1,4 @@
-export type JobKind = 'cheatsheet' | 'book';
+export type JobKind = 'cheatsheet' | 'book' | 'mcq';
 
 // Opt-in PDF enhancements selected on the generate form. Each flag drives a
 // piece of the prompt + a piece of the PDF builder — see bot/cache.py and

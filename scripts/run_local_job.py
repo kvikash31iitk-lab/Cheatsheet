@@ -30,9 +30,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from api.youtube_urls import validate_public_youtube_url
 from bot import cache as bot_cache
 from bot import config as bot_config
-from bot.author import author_book, author_cheatsheet
+from bot.author import author_book, author_cheatsheet, author_mcq
 from scripts.build_cheatsheet import build as build_cheatsheet
 from scripts.build_illustrated_book import build as build_book
+from scripts.build_mcq_handbook import build as build_mcq
 from scripts.transcribe_with_frames import extract_video_id, run_pipeline
 from scripts.ytdlp_client import YtDlpError
 
@@ -248,8 +249,8 @@ def run_url_job(
     emit = on_progress or (
         _progress if progress else (lambda *_args, **_kwargs: None)
     )
-    if kind not in {"cheatsheet", "book"}:
-        raise ValueError("kind must be 'cheatsheet' or 'book'")
+    if kind not in {"cheatsheet", "book", "mcq"}:
+        raise ValueError("kind must be 'cheatsheet', 'book', or 'mcq'")
 
     video_id = extract_video_id(url)
     root = Path(work_root) if work_root else DEFAULT_RUN_ROOT
@@ -418,6 +419,16 @@ def run_url_job(
                 if cost_sink is not None:
                     author_kwargs["cost_sink"] = cost_sink
                 markdown = author_cheatsheet(transcript_txt, **author_kwargs)
+            elif kind == "mcq":
+                author_kwargs = {
+                    "title_hint": title,
+                    "duration_seconds": duration_seconds,
+                    "on_progress": emit,
+                    "features": feats,
+                }
+                if cost_sink is not None:
+                    author_kwargs["cost_sink"] = cost_sink
+                markdown = author_mcq(transcript_txt, **author_kwargs)
             else:
                 if frames_index is None:
                     raise RuntimeError("Book mode requires extracted frames index")
@@ -495,6 +506,12 @@ def run_url_job(
                         title or "Cheatsheet",
                         features=feats,
                         source_url=url,
+                    )
+                elif kind == "mcq":
+                    build_mcq(
+                        output_md,
+                        temporary_pdf,
+                        title or "Solved MCQ Handbook",
                     )
                 else:
                     build_book(
@@ -590,9 +607,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("url", help="Public YouTube URL (https only)")
     parser.add_argument(
         "--kind",
-        choices=("cheatsheet", "book"),
+        choices=("cheatsheet", "book", "mcq"),
         default="cheatsheet",
-        help="Output type",
+        help="Output type (cheatsheet, book, mcq)",
     )
     parser.add_argument(
         "--work-dir",

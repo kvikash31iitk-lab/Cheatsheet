@@ -92,8 +92,9 @@ from scripts.transcribe_with_frames import (  # noqa: E402
 from scripts.ytdlp_client import YtDlpError  # noqa: E402
 from scripts.build_cheatsheet import build as build_cheatsheet  # noqa: E402
 from scripts.build_illustrated_book import build as build_book  # noqa: E402
+from scripts.build_mcq_handbook import build as build_mcq  # noqa: E402
 from scripts.run_local_job import run_url_job  # noqa: E402
-from bot.author import author_book, author_cheatsheet  # noqa: E402
+from bot.author import author_book, author_cheatsheet, author_mcq  # noqa: E402
 from bot import cache as bot_cache  # noqa: E402
 
 from api.db import (  # noqa: E402
@@ -160,7 +161,7 @@ def _calc_cost_paise_for(
     ``per_30min`` is passed in (not read from settings here) so callers can
     fetch the value once per request instead of per-call."""
     slabs = max(1, math.ceil(max(1.0, duration_seconds) / (30 * 60)))
-    return slabs * per_30min[kind]
+    return slabs * per_30min.get(kind, per_30min.get("cheatsheet", 0))
 
 
 # What each provider/backend ACTUALLY costs us (paise). These power the cost
@@ -1088,7 +1089,7 @@ async def library(
 
 class CreateRequest(BaseModel):
     url: str = Field(..., min_length=10)
-    kind: Literal["cheatsheet", "book"]
+    kind: Literal["cheatsheet", "book", "mcq"]
     # Opt-in PDF enhancements. Each string is a short flag; unknown values
     # are silently dropped server-side (forward-compat with newer clients).
     # Empty list = the legacy/default PDF (no enhancements). See author.py
@@ -2016,6 +2017,16 @@ async def _run_job(job_id: str) -> None:
                 cost_sink=cost_sink,
                 features=features,
             )
+        elif kind == "mcq":
+            md_text = await asyncio.to_thread(
+                author_mcq,
+                result["transcript_txt"],
+                title_hint=meta["title"],
+                duration_seconds=meta["duration"],
+                on_progress=lambda m: emit(m, max(progress_state["p"], 0.72)),
+                cost_sink=cost_sink,
+                features=features,
+            )
         else:
             md_text = await asyncio.to_thread(
                 author_book,
@@ -2043,15 +2054,14 @@ async def _run_job(job_id: str) -> None:
                 features=features,
                 source_url=url,
             )
+        elif kind == "mcq":
+            await asyncio.to_thread(
+                build_mcq,
+                md_path,
+                pdf_path,
+                meta["title"],
+            )
         else:
-            # image_base must be the PARENT of the frames/ dir, because the
-            # BOOK_SYSTEM prompt forces the LLM to write `![..](frames/<name>.jpg)`
-            # and make_image_flowable resolves to IMAGE_BASE / path. Passing the
-            # frames dir itself produced "frames/frames/<name>.jpg" lookups and
-            # `[missing image: ...]` placeholders in every book PDF — caught
-            # 2026-05-29 from a user-reported PDF. bot/worker.py already does
-            # the right thing (`cache.slot(video_id)`); only the API path was
-            # off-by-one.
             await asyncio.to_thread(
                 build_book,
                 md_path,

@@ -758,7 +758,7 @@ function GenerateForm() {
         >
           Output type
         </label>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 28 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12, marginBottom: 28 }}>
           <KindCard
             kind="cheatsheet"
             selected={kind === 'cheatsheet'}
@@ -767,6 +767,15 @@ function GenerateForm() {
             title="Cheatsheet"
             sub="Single page · key terms, formulas, structure."
             time="~30 seconds"
+          />
+          <KindCard
+            kind="mcq"
+            selected={kind === 'mcq'}
+            onClick={() => setKind('mcq')}
+            icon={<Ic.check size={16} />}
+            title="Solved MCQs / PYQ"
+            sub="Every question with options, answer key, derivations & traps."
+            time="~45 seconds"
           />
           <KindCard
             kind="book"
@@ -824,10 +833,10 @@ function GenerateForm() {
         {(() => {
           if (!preview) return null;
           const freeLeft =
-            kind === 'cheatsheet'
-              ? (me?.free_cheatsheets_left ?? 0)
-              : (me?.free_books_left ?? 0);
-          const cost = preview.cost_paise[kind];
+            kind === 'book'
+              ? (me?.free_books_left ?? 0)
+              : (me?.free_cheatsheets_left ?? 0);
+          const cost = preview.cost_paise?.[kind as 'cheatsheet' | 'book'] ?? preview.cost_paise?.cheatsheet ?? 0;
           const walletPaise = me?.wallet_balance_paise ?? 0;
           const willCost = freeLeft === 0;
           const cantAfford = willCost && walletPaise < cost;
@@ -893,10 +902,10 @@ function GenerateForm() {
                 return true;
               }
               const freeLeft =
-                kind === 'cheatsheet'
-                  ? (me?.free_cheatsheets_left ?? 0)
-                  : (me?.free_books_left ?? 0);
-              const cost = preview.cost_paise[kind];
+                kind === 'book'
+                  ? (me?.free_books_left ?? 0)
+                  : (me?.free_cheatsheets_left ?? 0);
+              const cost = preview.cost_paise?.[kind as 'cheatsheet' | 'book'] ?? preview.cost_paise?.cheatsheet ?? 0;
               const walletPaise = me?.wallet_balance_paise ?? 0;
               return freeLeft === 0 && walletPaise < cost;
             })()}

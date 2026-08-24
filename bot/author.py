@@ -92,6 +92,65 @@ QUALITY FLOOR:
 - Write directly. Avoid empty meta-phrases like "is discussed" or "the importance of" when a concrete explanation can be given instead.
 """
 
+MCQ_SYSTEM = """You are an elite competitive examination tutor and academic author (specializing in UPSC, EPFO, SSC, Banking, State PSCs, Engineering, and Medical exams).
+Your task is to extract and solve EVERY SINGLE Multiple-Choice Question (MCQ / PYQ) discussed in the lecture video transcript, preceded by a high-yield Executive Concept & Formula Summary.
+
+OUTPUT FORMAT — must be valid markdown that follows this exact skeleton:
+
+# <Comprehensive Subject & Exam Title — e.g. UPSC EPFO 2026: General Science Chemistry Solved PYQs>
+
+### Solved MCQ Handbook & Concept Master Guide
+
+## Executive Concept & Formula Summary
+- Core theoretical rules, equations, formulas, constitutional articles, or principles tested across these questions.
+- Write clear, high-density bullet points that students can revise in 2 minutes.
+
+| Q# | Topic / Concept Tested | Correct Answer | Core Key Takeaway |
+|---|---|---|---|
+| Q1 | <Specific Subtopic> | **(A)** | <One-line core reason or rule> |
+| Q2 | <Specific Subtopic> | **(C)** | <One-line core reason or rule> |
+
+---
+
+## Question 1: <Short Descriptive Headline of the Question>
+> **Topic**: <Subject > Specific Topic> | **Exam / Year**: <e.g. UPSC EPFO 2023 / PYQ> | **Difficulty**: <Easy / Moderate / Hard>
+
+**Q.** <Complete and exact problem statement from the lecture>
+
+- **(A)** <Option A text>
+- **(B)** <Option B text>
+- **(C)** <Option C text>
+- **(D)** <Option D text>
+
+> [!correct] Correct Answer: (A)
+> **Core Reason**: <Direct 1-2 sentence explanation of why option A is correct.>
+
+### Step-by-Step Explanation
+1. <Step 1: Fundamental definition, principle, or governing formula.>
+2. <Step 2: Analysis of given parameters, chemical reaction, or factual provisions.>
+3. <Step 3: Logical deduction leading directly to the correct answer.>
+
+### Option Analysis
+- **Option (A) [CORRECT]**: <Clear justification of why this statement/value is accurate.>
+- **Option (B) [INCORRECT]**: <Specific reason why this is false, misleading, or an exam distractor.>
+- **Option (C) [INCORRECT]**: <Specific reason why this is false.>
+- **Option (D) [INCORRECT]**: <Specific reason why this is false.>
+
+> [!tip] Exam Trap / Key Memory Rule
+> <Crucial shortcut, mnemonic, or common misconception to avoid in the exam.>
+
+---
+
+## Question 2: <Next Question Headline>
+(Repeat same structure for every question)
+
+RULES:
+1. Extract ALL questions: Do not skip or summarize questions. If the lecture covers 10, 25, or 50 questions, write out each one completely.
+2. Maintain all four options (A, B, C, D) exactly.
+3. Use clean ASCII chemistry/math formatting (e.g. `2H2(g) + O2(g) -> 2H2O(l)`, `0 -> +1`).
+4. Output ONLY markdown: No preamble, no outer backtick code fences.
+"""
+
 
 BOOK_SYSTEM = """You are a technical writer producing a chapter-by-chapter illustrated book from a video transcript and a list of available image frames.
 
@@ -1160,3 +1219,52 @@ def author_book(transcript_path: Path, frames_index_path: Path, *,
         title = (title_hint or "Illustrated Book Notes").replace('\n', ' ').strip()
         cleaned = f"# {title}\n\n### distilled from video walkthrough\n\n{cleaned}"
     return cleaned
+
+
+def author_mcq(transcript_path: Path, *,
+               title_hint: Optional[str] = None,
+               duration_seconds: Optional[float] = None,
+               on_progress: ProgressFn = None,
+               system_override: Optional[str] = None,
+               cost_sink: Optional[dict] = None,
+               features: Optional[list[str]] = None) -> str:
+    """Return solved MCQ handbook markdown text."""
+    transcript = Path(transcript_path).read_text(encoding="utf-8")
+    if _needs_condensation() or est_tokens(transcript) > 200000:
+        body = condense(transcript, on_progress=on_progress)
+        body_label = "CONDENSED TRANSCRIPT (section summaries with all questions preserved):"
+    else:
+        body = transcript
+        body_label = "TRANSCRIPT (raw with timestamps):"
+
+    user_msg = "\n".join(p for p in [
+        f"TITLE HINT: {title_hint}" if title_hint else "",
+        (f"SOURCE LENGTH: {duration_seconds/60:.0f} minutes"
+         if duration_seconds else ""),
+        "",
+        body_label,
+        body,
+    ] if p)
+
+    if on_progress:
+        on_progress("Extracting MCQs and compiling solved handbook...")
+
+    sys_prompt = system_override or MCQ_SYSTEM
+
+    # Scale max tokens generously based on duration
+    output_tokens = 8192
+    if duration_seconds and duration_seconds > 1800:
+        output_tokens = 16384
+
+    raw = _author(
+        sys_prompt,
+        user_msg,
+        max_tokens=output_tokens,
+        cost_sink=cost_sink,
+    )
+    cleaned = strip_wrappers(raw)
+    if not any(line.lstrip().startswith("#") for line in cleaned.splitlines()):
+        title = (title_hint or "Solved MCQ Handbook").replace('\n', ' ').strip()
+        cleaned = f"# {title}\n\n### Solved MCQ Handbook & Concept Master Guide\n\n{cleaned}"
+    return cleaned
+

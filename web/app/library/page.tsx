@@ -9,7 +9,7 @@ import { getLibrary, listPlaylists, retryPlaylistJob, stopPlaylistJob, type Job 
 
 
 
-type Filter = 'all' | 'cheatsheet' | 'book' | 'playlist' | 'failed';
+type Filter = 'all' | 'cheatsheet' | 'mcq' | 'book' | 'playlist' | 'failed';
 
 export default function LibraryPage() {
   const [items, setItems] = useState<Job[] | null>(null);
@@ -49,12 +49,13 @@ export default function LibraryPage() {
       (acc, j) => {
         acc.all++;
         if (j.kind === 'cheatsheet') acc.cheatsheet++;
+        if (j.kind === 'mcq') acc.mcq++;
         if (j.kind === 'book') acc.book++;
         if (j.status.state === 'error') acc.failed++;
         return acc;
       },
-      { all: 0, cheatsheet: 0, book: 0, failed: 0 },
-    ) : { all: 0, cheatsheet: 0, book: 0, failed: 0 };
+      { all: 0, cheatsheet: 0, mcq: 0, book: 0, failed: 0 },
+    ) : { all: 0, cheatsheet: 0, mcq: 0, book: 0, failed: 0 };
     return base;
   }, [items]);
 
@@ -77,6 +78,7 @@ export default function LibraryPage() {
     const q = query.trim().toLowerCase();
     return items.filter((j) => {
       if (filter === 'cheatsheet' && j.kind !== 'cheatsheet') return false;
+      if (filter === 'mcq' && j.kind !== 'mcq') return false;
       if (filter === 'book' && j.kind !== 'book') return false;
       if (filter === 'failed' && j.status.state !== 'error') return false;
       if (q) {
@@ -185,6 +187,7 @@ export default function LibraryPage() {
             [
               { l: 'All', k: 'all', n: query ? filtered.length + filteredPlaylists.length : counts.all + playlists.length },
               { l: 'Cheatsheets', k: 'cheatsheet', n: counts.cheatsheet },
+              { l: 'MCQ Notes', k: 'mcq', n: counts.mcq },
               { l: 'Book Notes', k: 'book', n: counts.book },
               { l: 'Playlists', k: 'playlist', n: filteredPlaylists.length },
               { l: 'Failed', k: 'failed', n: counts.failed },
@@ -667,15 +670,19 @@ function NoteCard({ job }: { job: Job }) {
           )}
           <div style={{ position: 'absolute', top: 10, left: 10 }}>
             <Tag
-              tone={isCheat ? 'accent' : 'ink'}
+              tone={job.kind === 'book' ? 'ink' : 'accent'}
               style={{
-                background: isCheat ? 'rgba(240,228,212,.95)' : 'rgba(28,25,22,.92)',
-                color: isCheat ? 'var(--c-accent-ink)' : '#fff',
+                background: job.kind === 'book' ? 'rgba(28,25,22,.92)' : 'rgba(240,228,212,.95)',
+                color: job.kind === 'book' ? '#fff' : 'var(--c-accent-ink)',
               }}
             >
-              {isCheat ? (
+              {job.kind === 'cheatsheet' ? (
                 <>
                   <Ic.zap size={10} /> Cheatsheet
+                </>
+              ) : job.kind === 'mcq' ? (
+                <>
+                  <Ic.check size={10} /> Solved MCQs
                 </>
               ) : (
                 <>
