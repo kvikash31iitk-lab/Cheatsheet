@@ -50,11 +50,9 @@ export function AppBar() {
   const [me, setMe] = useState<Me | null>(null);
 
   useEffect(() => {
-    if (status === 'authenticated') {
-      getMe()
-        .then(setMe)
-        .catch(() => undefined);
-    }
+    getMe()
+      .then(setMe)
+      .catch(() => undefined);
   }, [status]);
 
   return (
@@ -109,7 +107,7 @@ export function AppBar() {
             alignItems: 'center',
           }}
         >
-          {status === 'loading' ? null : user ? (
+          {status === 'loading' && !me ? null : (user || me) ? (
             <>
               <Link href="/dashboard" style={{ color: 'inherit', textDecoration: 'none' }}>
                 Dashboard
@@ -145,15 +143,33 @@ export function AppBar() {
                   Admin
                 </Link>
               )}
-              <span className="app-session-only" style={{ color: 'var(--c-line-2)' }}>·</span>
-              <span className="app-session-only" style={{ display: 'inline-flex' }}>
-                <Avatar src={user.image} name={user.name} />
-              </span>
-              <span className="app-session-only">
-                <Btn variant="ghost" size="sm" onClick={() => signOut({ callbackUrl: '/' })}>
-                  Sign out
-                </Btn>
-              </span>
+              {user ? (
+                <>
+                  <span className="app-session-only" style={{ color: 'var(--c-line-2)' }}>·</span>
+                  <span className="app-session-only" style={{ display: 'inline-flex' }}>
+                    <Avatar src={user.image} name={user.name} />
+                  </span>
+                  <span className="app-session-only">
+                    <Btn variant="ghost" size="sm" onClick={() => signOut({ callbackUrl: '/' })}>
+                      Sign out
+                    </Btn>
+                  </span>
+                </>
+              ) : (
+                <span
+                  style={{
+                    fontSize: 11.5,
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--c-mint)',
+                    background: 'var(--c-surface-2)',
+                    padding: '3px 8px',
+                    borderRadius: 6,
+                    border: '1px solid var(--c-line)',
+                  }}
+                >
+                  💻 Local PC
+                </span>
+              )}
             </>
           ) : (
             <>

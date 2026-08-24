@@ -97,9 +97,9 @@ function GenerateForm() {
 
   const valid = YT_RE.test(url);
 
-  // Debounced preview fetch when URL becomes valid
+  // Debounced preview fetch when URL becomes valid (single video mode only)
   useEffect(() => {
-    if (!valid) {
+    if (!valid || mode === 'playlist') {
       setPreview(null);
       setPreviewError(null);
       return;
@@ -118,7 +118,7 @@ function GenerateForm() {
         });
     }, 400);
     return () => clearTimeout(t);
-  }, [url, valid]);
+  }, [url, valid, mode]);
 
   // Restore active playlist job from localStorage on mount
   useEffect(() => {

@@ -18,15 +18,23 @@ function adminEmails(): string[] {
     .filter(Boolean);
 }
 
+function isLocalDesktop(req: any): boolean {
+  const host = req.headers.get('host') || '';
+  return (
+    host.includes('localhost') ||
+    host.includes('127.0.0.1') ||
+    process.env.DESKTOP_MODE === '1'
+  );
+}
+
 export default auth((req) => {
   const path = req.nextUrl.pathname;
+  const isLocal = isLocalDesktop(req);
 
-  // /api/* requests forwarded to FastAPI: inject X-User-ID and the shared
-  // secret if the user is signed in. NextAuth lives at /auth/* (separate
-  // basePath) so there's no clash here.
+  // 1. /api/* requests forwarded to FastAPI: inject X-User-ID and the shared secret
   if (path.startsWith('/api/')) {
     const headers = new Headers(req.headers);
-    const userId = req.auth?.user?.id;
+    const userId = req.auth?.user?.id || (isLocal ? 'local-user' : undefined);
     if (userId) {
       headers.set('X-User-ID', userId);
       headers.set('X-Internal-Token', process.env.INTERNAL_API_TOKEN ?? '');
@@ -34,7 +42,15 @@ export default auth((req) => {
     return NextResponse.next({ request: { headers } });
   }
 
-  // 2. Protected app pages: bounce to /login when no session.
+  // Local Desktop mode: zero login required!
+  if (isLocal) {
+    if (path === '/login' || path === '/') {
+      return NextResponse.redirect(new URL('/generate', req.url));
+    }
+    return NextResponse.next();
+  }
+
+  // 2. Protected app pages: bounce to /login when no session (production only)
   if (!req.auth && PROTECTED_PREFIXES.some((p) => path.startsWith(p))) {
     const url = new URL('/login', req.url);
     url.searchParams.set('next', path);
@@ -54,16 +70,7 @@ export const config = {
   matcher: [
     /*
      * Run on everything except:
-     *  - auth/*       — Auth.js's own handler routes. CRITICAL: this
-     *                   exclusion is the entire reason OAuth works at all.
-     *                   Without it, the middleware (Edge runtime) and the
-     *                   /auth/[...nextauth]/route.ts handler (Node runtime)
-     *                   BOTH process auth requests, each setting their own
-     *                   PKCE/state/csrf cookies derived with different
-     *                   runtime crypto. The cookies stomp each other and
-     *                   decryption fails with "pkceCodeVerifier value could
-     *                   not be parsed" on callback. See git log for the
-     *                   2026-05-29 debug session.
+     *  - auth/*       — Auth.js's own handler routes.
      *  - _next/static, _next/image — Next internals
      *  - favicon.ico, robots.txt   — static assets
      */
