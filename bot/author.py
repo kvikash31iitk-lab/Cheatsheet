@@ -379,16 +379,55 @@ _SUMMARY_BLOCK_RE = re.compile(
 )
 
 
-def strip_wrappers(md: str) -> str:
-    """Remove preamble lines and outer code fences the model sometimes adds.
+def clean_markdown_math(text: str) -> str:
+    r"""Convert raw LaTeX math notation (\frac{}, \approx, \sqrt{}, \text{}, etc.) to clean standard typography."""
+    # 0. Arrows with annotations
+    text = re.sub(r'\\xrightarrow(?:\[(.*?)\])?\{(.*?)\}', r' -> [\2] -> ', text)
 
-    The preamble-strip ("delete everything before the first ``#``") is great
-    for catching the "Here is the cheatsheet:" boilerplate models like to
-    add, but it also nukes the opt-in `<!--SUMMARY-->` block when the model
-    correctly places it above the title (per the SUMMARY snippet in
-    author.py). We pull that block out FIRST, run the preamble strip
-    normally, then re-prepend it so the PDF builder can still find it.
-    """
+    # 1. Un-nest \frac{a}{b} iteratively (up to 5 levels)
+    for _ in range(5):
+        def repl_frac(m):
+            num = m.group(1).strip()
+            den = m.group(2).strip()
+            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±', '~']) and not (s.startswith('(') and s.endswith(')'))
+            num_clean = f"({num})" if has_op(num) else num
+            den_clean = f"({den})" if has_op(den) else den
+            return f"{num_clean}/{den_clean}"
+        text = re.sub(r'\\(?:frac|tfrac|dfrac)\{([^{}]+)\}\{([^{}]+)\}', repl_frac, text)
+
+    # 2. Text formatting macros
+    text = re.sub(r'\\(?:text|mathrm|mathbf|textbf)\{([^}]+)\}', r'**\1**', text)
+    text = re.sub(r'\\(?:mathit|textit)\{([^}]+)\}', r'*\1*', text)
+    text = re.sub(r'\\sqrt\{([^}]+)\}', r'√(\1)', text)
+    text = re.sub(r'\\sqrt([0-9a-zA-Z])', r'√\1', text)
+
+    # 3. Greek & math symbols
+    symbols = {
+        r'\approx': '≈', r'\sim': '~', r'\neq': '≠', r'\ne': '≠',
+        r'\leq': '≤', r'\le': '≤', r'\geq': '≥', r'\ge': '≥',
+        r'\times': '×', r'\div': '÷', r'\pm': '±', r'\mp': '∓',
+        r'\cdot': '·', r'\circ': '°', r'\degree': '°', r'\infty': '∞',
+        r'\rightarrow': '->', r'\to': '->', r'\leftarrow': '<-',
+        r'\Rightarrow': '=>', r'\Leftarrow': '<=', r'\Leftrightarrow': '<=>',
+        r'\pi': 'π', r'\theta': 'θ', r'\alpha': 'α', r'\beta': 'β',
+        r'\gamma': 'γ', r'\Delta': 'Δ', r'\delta': 'δ', r'\lambda': 'λ',
+        r'\mu': 'μ', r'\sigma': 'σ', r'\omega': 'ω', r'\Omega': 'Ω',
+        r'\phi': 'φ', r'\rho': 'ρ', r'\tau': 'τ', r'\epsilon': 'ε',
+        r'\sum': 'Σ', r'\prod': 'Π', r'\int': '∫', r'\partial': '∂',
+    }
+    for k, v in symbols.items():
+        text = re.sub(re.escape(k) + r'(?![a-zA-Z])', v, text)
+
+    # 4. Clean up math dollar signs $...$
+    text = re.sub(r'\$([^\$]+)\$', r'\1', text)
+    text = text.replace('$', '')
+    # Strip dangling LaTeX backslashes before words
+    text = re.sub(r'\\([a-zA-Z]+)', r'\1', text)
+    return text
+
+
+def strip_wrappers(md: str) -> str:
+    """Remove preamble lines, outer code fences, and format LaTeX math."""
     md = md.strip()
     # Strip outer ```markdown ... ``` fence
     if md.startswith("```"):
@@ -410,6 +449,7 @@ def strip_wrappers(md: str) -> str:
         if line.startswith("#"):
             md = "\n".join(lines[i:])
             break
+    md = clean_markdown_math(md)
     md = md.replace("→", "->").strip() + "\n"
     if summary_block:
         md = summary_block + "\n\n" + md

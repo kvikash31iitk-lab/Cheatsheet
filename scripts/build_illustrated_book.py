@@ -148,7 +148,54 @@ ACCENT_HEX = "#" + ACCENT.hexval()[2:]
 HIGHLIGHT_HEX = "#" + HIGHLIGHT.hexval()[2:]
 
 
+def _clean_latex_math(text: str) -> str:
+    r"""Convert raw LaTeX math expressions (\frac{}, \approx, \sqrt{}, \text{}, etc.) into clean typography."""
+    text = re.sub(r'\\xrightarrow(?:\[(.*?)\])?\{(.*?)\}', r' -> [\2] -> ', text)
+
+    for _ in range(5):
+        def repl_frac(m):
+            num = m.group(1).strip()
+            den = m.group(2).strip()
+            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±']) and not (s.startswith('(') and s.endswith(')'))
+            num_clean = f"({num})" if has_op(num) else num
+            den_clean = f"({den})" if has_op(den) else den
+            return f"{num_clean}/{den_clean}"
+        text = re.sub(r'\\(?:frac|tfrac|dfrac)\{([^{}]+)\}\{([^{}]+)\}', repl_frac, text)
+
+    text = re.sub(r'\\(?:text|mathrm|mathbf|textbf)\{([^}]+)\}', r'<b>\1</b>', text)
+    text = re.sub(r'\\(?:mathit|textit)\{([^}]+)\}', r'<i>\1</i>', text)
+    text = re.sub(r'\\sqrt\{([^}]+)\}', r'√(\1)', text)
+    text = re.sub(r'\\sqrt([0-9a-zA-Z])', r'√\1', text)
+
+    symbols = {
+        r'\approx': '~', r'\sim': '~', r'\neq': '!=', r'\ne': '!=',
+        r'\leq': '<=', r'\le': '<=', r'\geq': '>=', r'\ge': '>=',
+        r'\times': 'x', r'\div': '/', r'\pm': '+/-', r'\mp': '-/+',
+        r'\cdot': '*', r'\circ': ' deg', r'\degree': ' deg', r'\infty': 'inf',
+        r'\rightarrow': '->', r'\to': '->', r'\leftarrow': '<-',
+        r'\Rightarrow': '=>', r'\Leftarrow': '<=', r'\Leftrightarrow': '<=>',
+        r'\pi': 'pi', r'\theta': 'theta', r'\alpha': 'alpha', r'\beta': 'beta',
+        r'\gamma': 'gamma', r'\Delta': 'Delta', r'\delta': 'delta', r'\lambda': 'lambda',
+        r'\mu': 'mu', r'\sigma': 'sigma', r'\omega': 'omega', r'\Omega': 'Omega',
+        r'\phi': 'phi', r'\rho': 'rho', r'\tau': 'tau', r'\epsilon': 'epsilon',
+        r'\sum': 'SUM', r'\prod': 'PROD', r'\int': 'INT',
+    }
+    for k, v in symbols.items():
+        text = re.sub(re.escape(k) + r'(?![a-zA-Z])', v, text)
+
+    text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
+    text = re.sub(r'\^([0-9a-zA-Z+-]+)', r'<sup>\1</sup>', text)
+    text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
+    text = re.sub(r'_([0-9a-zA-Z+-]+)', r'<sub>\1</sub>', text)
+
+    text = re.sub(r'\$([^\$]+)\$', r'\1', text)
+    text = text.replace('$', '')
+    text = re.sub(r'\\([a-zA-Z]+)', r'\1', text)
+    return text
+
+
 def inline(text: str) -> str:
+    text = _clean_latex_math(text)
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     text = re.sub(r"\*\*(.+?)\*\*",
                   rf'<font color="{HIGHLIGHT_HEX}"><b>\1</b></font>', text)
@@ -156,6 +203,11 @@ def inline(text: str) -> str:
     text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)
     text = re.sub(r"`([^`]+?)`",
                   r'<font face="Courier" size="9.5" color="#3A6EA5">\1</font>', text)
+    text = re.sub(r"&lt;(/?)b&gt;", r"<\1b>", text)
+    text = re.sub(r"&lt;(/?)i&gt;", r"<\1i>", text)
+    text = re.sub(r"&lt;(/?)sup&gt;", r"<\1sup>", text)
+    text = re.sub(r"&lt;(/?)sub&gt;", r"<\1sub>", text)
+    text = re.sub(r"&lt;(/?)font(.*?)&gt;", r"<\1font\2>", text)
     return text
 
 
