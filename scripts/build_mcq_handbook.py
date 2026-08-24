@@ -311,7 +311,11 @@ def parse_blocks(md: str) -> list[tuple[str, any]]:
         if re.match(r"^\d+\.\s", s):
             items = []
             while i < N and re.match(r"^\d+\.\s", lines[i].strip()):
-                items.append(re.sub(r"^\d+\.\s*", "", lines[i].strip()))
+                m_num = re.match(r"^(\d+)\.\s*(.*)$", lines[i].strip())
+                if m_num:
+                    items.append((int(m_num.group(1)), m_num.group(2).strip()))
+                else:
+                    items.append((len(items) + 1, re.sub(r"^\d+\.\s*", "", lines[i].strip())))
                 i += 1
             blocks.append(("ol", items))
             continue
@@ -516,9 +520,10 @@ def build(src_path: Path, out_path: Path, title: str | None = None) -> int:
                 elif k2 == "p":
                     q_flowables.append(Paragraph(inline(p2), QUESTION_TEXT if (p2.startswith("**Q.**") or p2.startswith("Q.")) else BODY))
                 elif k2 == "ol":
-                    for idx, it in enumerate(p2, 1):
+                    for it in p2:
+                        num, text_val = (it[0], it[1]) if (isinstance(it, tuple) and len(it) == 2) else (1, it)
                         q_flowables.append(Paragraph(
-                            f'<b><font color="{ACCENT_HEX}">{idx}.</font></b> {inline(it)}',
+                            f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {inline(text_val)}',
                             ParagraphStyle("ol_i", parent=BODY, leftIndent=12, firstLineIndent=-10, spaceAfter=2, keepWithNext=1)
                         ))
                 elif k2 == "ul":
@@ -580,8 +585,9 @@ def build(src_path: Path, out_path: Path, title: str | None = None) -> int:
                                            ParagraphStyle("ul_i", parent=BODY, leftIndent=10, firstLineIndent=-8, spaceAfter=2)))
             i += 1
         elif k == "ol":
-            for idx, it in enumerate(payload, 1):
-                story.append(Paragraph(f'<b><font color="{ACCENT_HEX}">{idx}.</font></b> {inline(it)}',
+            for it in payload:
+                num, text_val = (it[0], it[1]) if (isinstance(it, tuple) and len(it) == 2) else (1, it)
+                story.append(Paragraph(f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {inline(text_val)}',
                                        ParagraphStyle("ol_i", parent=BODY, leftIndent=12, firstLineIndent=-10, spaceAfter=2)))
             i += 1
         elif k == "callout":

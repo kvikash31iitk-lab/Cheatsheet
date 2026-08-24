@@ -397,8 +397,42 @@ _SUMMARY_BLOCK_RE = re.compile(
 )
 
 
+def clean_ascii_tables(text: str) -> str:
+    """Convert ASCII box-drawn tables in code blocks to native Markdown tables."""
+    def repl_code_block(m):
+        code = m.group(1).strip()
+        lines = code.splitlines()
+        table_lines = [l for l in lines if '|' in l and not re.match(r'^\+[-+]+\+$', l.strip())]
+        if len(table_lines) >= 2 and any('+---' in l or '|---' in l for l in lines):
+            md_rows = []
+            for tl in table_lines:
+                cells = [c.strip() for c in tl.strip().strip('|').split('|')]
+                if len(cells) > 1 and not all(set(c).issubset({'-', '+', ' '}) for c in cells):
+                    if len(cells) == 1 or (len(cells) > 1 and all(not c for c in cells[1:])):
+                        continue
+                    md_rows.append('| ' + ' | '.join(cells) + ' |')
+            if len(md_rows) >= 2:
+                num_cols = len(md_rows[0].split('|')) - 2
+                sep = '| ' + ' | '.join([':---'] * num_cols) + ' |'
+                return '\n' + md_rows[0] + '\n' + sep + '\n' + '\n'.join(md_rows[1:]) + '\n'
+        return m.group(0)
+
+    return re.sub(r'```(?:[a-zA-Z0-9_-]+)?\n([\s\S]*?)\n```', repl_code_block, text)
+
+
 def clean_markdown_math(text: str) -> str:
     r"""Convert raw LaTeX math notation (\frac{}, \approx, \sqrt{}, \text{}, etc.) to clean standard typography."""
+    # 0. Set theory & brackets
+    text = text.replace(r'\{', '{').replace(r'\}', '}')
+    text = text.replace(r'\setminus', ' minus ')
+    text = text.replace(r'\emptyset', '∅')
+    text = text.replace(r'\cap', ' ∩ ')
+    text = text.replace(r'\cup', ' ∪ ')
+    text = text.replace(r'\in', ' ∈ ')
+    text = text.replace(r'\notin', ' ∉ ')
+    text = text.replace(r'\subset', ' ⊂ ')
+    text = text.replace(r'\subseteq', ' ⊆ ')
+
     # 0. Arrows with annotations
     text = re.sub(r'\\xrightarrow(?:\[(.*?)\])?\{(.*?)\}', r' -> [\2] -> ', text)
 
@@ -414,7 +448,7 @@ def clean_markdown_math(text: str) -> str:
         text = re.sub(r'\\(?:frac|tfrac|dfrac)\{([^{}]+)\}\{([^{}]+)\}', repl_frac, text)
 
     # 2. Text formatting macros
-    text = re.sub(r'\\(?:text|mathrm|mathbf|textbf)\{([^}]+)\}', r'**\1**', text)
+    text = re.sub(r'\\(?:text|mathrm|mathbf|textbf|boldsymbol)\{([^}]+)\}', r'**\1**', text)
     text = re.sub(r'\\(?:mathit|textit)\{([^}]+)\}', r'*\1*', text)
     text = re.sub(r'\\sqrt\{([^}]+)\}', r'√(\1)', text)
     text = re.sub(r'\\sqrt([0-9a-zA-Z])', r'√\1', text)
@@ -451,7 +485,7 @@ def clean_markdown_math(text: str) -> str:
 
 
 def strip_wrappers(md: str) -> str:
-    """Remove preamble lines, outer code fences, and format LaTeX math."""
+    """Remove preamble lines, outer code fences, and format LaTeX math and tables."""
     md = md.strip()
     # Strip outer ```markdown ... ``` fence
     if md.startswith("```"):
@@ -473,6 +507,7 @@ def strip_wrappers(md: str) -> str:
         if line.startswith("#"):
             md = "\n".join(lines[i:])
             break
+    md = clean_ascii_tables(md)
     md = clean_markdown_math(md)
     md = md.replace("→", "->").strip() + "\n"
     if summary_block:

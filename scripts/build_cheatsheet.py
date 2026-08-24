@@ -300,7 +300,12 @@ def parse_blocks(md: str):
         if re.match(r"^\d+\.\s+", stripped):
             items = []
             while i < len(lines) and re.match(r"^\d+\.\s+", lines[i].strip()):
-                items.append(re.sub(r"^\d+\.\s+", "", lines[i].strip())); i += 1
+                m_num = re.match(r"^(\d+)\.\s+(.*)$", lines[i].strip())
+                if m_num:
+                    items.append((int(m_num.group(1)), m_num.group(2).strip()))
+                else:
+                    items.append((len(items) + 1, re.sub(r"^\d+\.\s+", "", lines[i].strip())))
+                i += 1
             yield ("ol", items); continue
         if stripped.startswith(("- ", "* ", "+ ")):
             items = []
@@ -596,9 +601,14 @@ def make_ul(items):
 def make_ol(items):
     ns = ParagraphStyle("Num", parent=BODY, leading=13.2, alignment=TA_LEFT,
                         spaceAfter=2.2, leftIndent=14, firstLineIndent=-12)
-    return [Paragraph(
-        f'<b><font color="{ACCENT_HEX}">{n}.</font></b> {inline(it)}', ns)
-        for n, it in enumerate(items, 1)]
+    res = []
+    for item in items:
+        if isinstance(item, tuple) and len(item) == 2:
+            num, it = item
+        else:
+            num, it = 1, item
+        res.append(Paragraph(f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {inline(it)}', ns))
+    return res
 
 
 def _rule() -> Table:
