@@ -125,7 +125,14 @@ def _ascii_safe(text: str) -> str:
 
 def sanitize_math_expressions(text: str) -> str:
     r"""Convert raw LaTeX math expressions (\frac{}, \approx, \sqrt{}, \text{}, etc.) into clean typography."""
-    # 0. Arrows with captions: \xrightarrow[below]{above} -> --[above]-->
+    # 0. Clean set brackets, spacing, and arrows
+    text = text.replace(r'\{', '{').replace(r'\}', '}')
+    text = text.replace(r'\left\{', '{').replace(r'\right\}', '}')
+    text = text.replace(r'\left(', '(').replace(r'\right)', ')')
+    text = text.replace(r'\left[', '[').replace(r'\right]', ']')
+    text = text.replace(r'\setminus', ' minus ')
+    text = re.sub(r'\\(?:q?quad)', '  ', text)
+    text = text.replace(r'\,', ' ').replace(r'\;', ' ').replace(r'\:', ' ')
     text = re.sub(r'\\xrightarrow(?:\[(.*?)\])?\{(.*?)\}', r' --[\2]--> ', text)
 
     # 1. Un-nest \frac{a}{b} iteratively (up to 5 levels of nesting)
