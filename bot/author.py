@@ -423,6 +423,12 @@ def clean_markdown_math(text: str) -> str:
     text = text.replace('$', '')
     # Strip dangling LaTeX backslashes before words
     text = re.sub(r'\\([a-zA-Z]+)', r'\1', text)
+
+    # 5. Chemistry reactions & chemical formulas (e.g. 2H2 + O2 -> 2H2O => 2H₂ + O₂ → 2H₂O)
+    text = re.sub(r'(?<=\s)->(?=\s)', ' → ', text)
+    text = re.sub(r'(?<=\s)<->(?=\s)', ' ↔ ', text)
+    chem_sub_map = str.maketrans('0123456789+-', '₀₁₂₃₄₅₆₇₈₉₊₋')
+    text = re.sub(r'([A-Z][a-z]?|\))([0-9]+)', lambda m: m.group(1) + m.group(2).translate(chem_sub_map), text)
     return text
 
 

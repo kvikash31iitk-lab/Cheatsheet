@@ -175,6 +175,24 @@ def sanitize_math_expressions(text: str) -> str:
 def inline(text: str) -> str:
     """Escape XML and apply formatting for ReportLab Paragraphs."""
     text = sanitize_math_expressions(text)
+
+    # Convert Unicode sub/superscripts & arrows to ReportLab tags
+    sub_map = {
+        '₀': '<sub>0</sub>', '₁': '<sub>1</sub>', '₂': '<sub>2</sub>', '₃': '<sub>3</sub>', '₄': '<sub>4</sub>',
+        '₅': '<sub>5</sub>', '₆': '<sub>6</sub>', '₇': '<sub>7</sub>', '₈': '<sub>8</sub>', '₉': '<sub>9</sub>',
+        '₊': '<sub>+</sub>', '₋': '<sub>-</sub>',
+    }
+    sup_map = {
+        '⁰': '<sup>0</sup>', '¹': '<sup>1</sup>', '²': '<sup>2</sup>', '³': '<sup>3</sup>', '⁴': '<sup>4</sup>',
+        '⁵': '<sup>5</sup>', '⁶': '<sup>6</sup>', '⁷': '<sup>7</sup>', '⁸': '<sup>8</sup>', '⁹': '<sup>9</sup>',
+        '⁺': '<sup>+</sup>', '⁻': '<sup>-</sup>',
+    }
+    for k, v in sub_map.items():
+        text = text.replace(k, v)
+    for k, v in sup_map.items():
+        text = text.replace(k, v)
+    text = text.replace('→', '&rarr;').replace('←', '&larr;').replace('↔', '&harr;').replace('Δ', '&Delta;').replace('°', '&deg;')
+
     text = _ascii_safe(text)
 
     # XML escape
@@ -199,6 +217,8 @@ def inline(text: str) -> str:
     text = re.sub(r"&lt;(/?)sup&gt;", r"<\1sup>", text)
     text = re.sub(r"&lt;(/?)sub&gt;", r"<\1sub>", text)
     text = re.sub(r"&lt;(/?)font(.*?)&gt;", r"<\1font\2>", text)
+    text = text.replace("&amp;rarr;", "&rarr;").replace("&amp;larr;", "&larr;").replace("&amp;harr;", "&harr;")
+    text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;")
     return text
 
 
