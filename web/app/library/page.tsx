@@ -45,8 +45,7 @@ export default function LibraryPage() {
 
 
   const counts = useMemo(() => {
-    if (!items) return { all: 0, cheatsheet: 0, book: 0, failed: 0 };
-    return items.reduce(
+    const base = items ? items.reduce(
       (acc, j) => {
         acc.all++;
         if (j.kind === 'cheatsheet') acc.cheatsheet++;
@@ -55,8 +54,23 @@ export default function LibraryPage() {
         return acc;
       },
       { all: 0, cheatsheet: 0, book: 0, failed: 0 },
-    );
+    ) : { all: 0, cheatsheet: 0, book: 0, failed: 0 };
+    return base;
   }, [items]);
+
+  const filteredPlaylists = useMemo(() => {
+    if (!playlists) return [];
+    const q = query.trim().toLowerCase();
+    return playlists.filter((pl) => {
+      if (q) {
+        const title = (pl.title || pl.playlist_title || '').toLowerCase();
+        const url = (pl.playlist_url || '').toLowerCase();
+        const hasItemMatch = pl.items?.some((it: any) => (it.title || '').toLowerCase().includes(q));
+        if (!title.includes(q) && !url.includes(q) && !hasItemMatch) return false;
+      }
+      return true;
+    });
+  }, [playlists, query]);
 
   const filtered = useMemo(() => {
     if (!items) return [];
@@ -169,10 +183,10 @@ export default function LibraryPage() {
         >
           {(
             [
-              { l: 'All', k: 'all', n: counts.all + playlists.length },
+              { l: 'All', k: 'all', n: query ? filtered.length + filteredPlaylists.length : counts.all + playlists.length },
               { l: 'Cheatsheets', k: 'cheatsheet', n: counts.cheatsheet },
               { l: 'Book Notes', k: 'book', n: counts.book },
-              { l: 'Playlists', k: 'playlist', n: playlists.length },
+              { l: 'Playlists', k: 'playlist', n: filteredPlaylists.length },
               { l: 'Failed', k: 'failed', n: counts.failed },
             ] as { l: string; k: Filter; n: number }[]
           ).map((t) => {
@@ -229,11 +243,11 @@ export default function LibraryPage() {
         )}
 
         {/* Playlist section when filter is 'playlist' or 'all' */}
-        {(filter === 'playlist' || filter === 'all') && playlists.length > 0 && (
+        {(filter === 'playlist' || filter === 'all') && filteredPlaylists.length > 0 && (
           <div style={{ marginBottom: 32 }}>
             {filter === 'all' && (
               <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--c-ink)', marginBottom: 12 }}>
-                📑 Playlists ({playlists.length})
+                📑 Playlists ({filteredPlaylists.length})
               </h2>
             )}
             <div
@@ -243,7 +257,7 @@ export default function LibraryPage() {
                 gap: 16,
               }}
             >
-              {playlists.map((pl) => (
+              {filteredPlaylists.map((pl) => (
                 <PlaylistCard
                   key={pl.id}
                   pl={pl}
@@ -300,6 +314,8 @@ function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
     }
   };
 
+  const displayTitle = pl.title || pl.playlist_title || 'YouTube Playlist';
+
   return (
     <div
       style={{
@@ -313,7 +329,7 @@ function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
       }}
     >
       <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <Tag tone="accent">PLAYLIST</Tag>
             {isRunning && <Tag tone="mint">⚡ Processing</Tag>}
@@ -322,8 +338,54 @@ function PlaylistCard({ pl, onReload }: { pl: any; onReload?: () => void }) {
             {completedCount} / {pl.total_videos || items.length} Completed
           </span>
         </div>
-        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--c-ink)', marginBottom: 8, wordBreak: 'break-all' }}>
-          {pl.playlist_url}
+
+        {/* Clean Playlist Title */}
+        <div style={{ marginBottom: 10 }}>
+          <div
+            style={{
+              fontWeight: 700,
+              fontSize: 14.5,
+              color: 'var(--c-ink)',
+              lineHeight: 1.35,
+              marginBottom: 5,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              minHeight: 38,
+            }}
+            title={displayTitle}
+          >
+            {displayTitle}
+          </div>
+
+          {/* Clean YouTube link */}
+          {pl.playlist_url && (
+            <a
+              href={pl.playlist_url}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                fontSize: 11,
+                color: 'var(--c-ink-3)',
+                textDecoration: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                fontFamily: 'var(--font-mono)',
+                maxWidth: '100%',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+              title={pl.playlist_url}
+            >
+              <Ic.yt size={12} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {pl.playlist_url.replace(/^https?:\/\/(www\.)?youtube\.com\//, '')}
+              </span>
+            </a>
+          )}
         </div>
       </div>
 

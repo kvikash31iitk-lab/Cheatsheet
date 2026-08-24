@@ -77,6 +77,23 @@ def extract_playlist_info(playlist_url: str) -> tuple[list[dict[str, Any]], str 
             index += 1
         except json.JSONDecodeError:
             continue
+
+    if not found_playlist_title and videos:
+        first_title = videos[0]["title"]
+        parts = [p.strip() for p in re.split(r'[|–—]', first_title) if p.strip()]
+        if len(parts) >= 2:
+            cleaned_segs = []
+            for seg in parts:
+                if re.search(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+\b', seg, re.IGNORECASE):
+                    continue
+                if re.search(r'\bby\s+[a-zA-Z]+\s+(?:sir|mam|ma\'am)\b', seg, re.IGNORECASE):
+                    continue
+                cleaned_segs.append(seg)
+            if cleaned_segs:
+                found_playlist_title = " | ".join(cleaned_segs[:2])
+        if not found_playlist_title:
+            found_playlist_title = first_title
+
     return videos, found_playlist_title
 
 

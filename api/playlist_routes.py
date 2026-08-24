@@ -188,8 +188,11 @@ async def get_playlist_status(
         if manifest_path.is_file():
             try:
                 data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                p_title = data.get("playlist_title") or data.get("title")
                 return {
                     "id": job_id,
+                    "title": p_title,
+                    "playlist_title": p_title,
                     "status": data.get("status", "unknown"),
                     "summary": data.get("summary"),
                     "manifest": data,
@@ -208,14 +211,56 @@ async def get_playlist_status(
         except Exception:
             pass
 
+    p_title = (manifest_data.get("playlist_title") or manifest_data.get("title")) if manifest_data else job.get("playlist_title")
+
     return {
         "id": job_id,
+        "title": p_title,
+        "playlist_title": p_title,
         "status": job["status"],
         "progress": job["progress"],
         "summary": job["summary"],
         "error": job["error"],
         "manifest": manifest_data,
     }
+
+
+def _resolve_playlist_title(data: dict[str, Any], items_data: list[dict[str, Any]]) -> str:
+    """Extract or infer a clean, meaningful playlist/course title."""
+    stored = data.get("playlist_title") or data.get("title")
+    if stored and str(stored).strip() and not str(stored).strip().startswith("http"):
+        return str(stored).strip()
+
+    summary = data.get("summary")
+    if isinstance(summary, dict):
+        s_title = summary.get("playlist_title") or summary.get("title")
+        if s_title and str(s_title).strip() and not str(s_title).strip().startswith("http"):
+            return str(s_title).strip()
+
+    # Derive from item titles
+    if items_data:
+        titles = [it.get("title") for it in items_data if it.get("title") and not str(it.get("title")).startswith("http")]
+        if titles:
+            first = titles[0]
+            segments = [s.strip() for s in re.split(r'[|–—]', first) if s.strip()]
+            if len(segments) >= 2:
+                cleaned_segs = []
+                for seg in segments:
+                    if re.search(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+\b', seg, re.IGNORECASE):
+                        continue
+                    if re.search(r'\bby\s+[a-zA-Z]+\s+(?:sir|mam|ma\'am)\b', seg, re.IGNORECASE):
+                        continue
+                    cleaned_segs.append(seg)
+                if cleaned_segs:
+                    return " | ".join(cleaned_segs[:2])
+            return first
+
+    # Fallback to URL or generic name
+    url = data.get("playlist_url") or ""
+    m_list = re.search(r'[?&]list=([^&]+)', url)
+    if m_list:
+        return f"YouTube Playlist ({m_list.group(1)[:12]})"
+    return "YouTube Playlist"
 
 
 @router.get("/list")
@@ -316,8 +361,20 @@ async def list_playlists(
                 disk_status = data.get("status", "completed")
                 computed_status = "completed" if disk_status == "running" else disk_status
 
+            pl_title = _resolve_playlist_title(data, items_data)
+
+            # Backfill manifest on disk if playlist_title was missing
+            if not data.get("playlist_title") and pl_title and pl_title != "YouTube Playlist":
+                try:
+                    data["playlist_title"] = pl_title
+                    manifest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+
             results.append({
                 "id": job_dir.name,
+                "title": pl_title,
+                "playlist_title": pl_title,
                 "playlist_url": data.get("playlist_url"),
                 "status": computed_status,
                 "active_video": data.get("active_video") if computed_status == "running" else None,

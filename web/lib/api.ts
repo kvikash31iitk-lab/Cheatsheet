@@ -376,7 +376,31 @@ export async function stopPlaylistJob(id: string): Promise<{ id: string; status:
   return res.json();
 }
 
-export async function listPlaylists(): Promise<any[]> {
+export interface PlaylistItem {
+  item_key: string;
+  title: string;
+  status?: string;
+  current_subtask?: string;
+  video_id?: string;
+  has_pdf: boolean;
+  error?: string;
+  orig_idx?: number;
+}
+
+export interface PlaylistJob {
+  id: string;
+  title?: string;
+  playlist_title?: string;
+  playlist_url: string;
+  status: string;
+  active_video?: any;
+  created_at?: string;
+  total_videos: number;
+  summary?: any;
+  items: PlaylistItem[];
+}
+
+export async function listPlaylists(): Promise<PlaylistJob[]> {
   const res = await fetch('/api/playlist/list');
   if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to fetch playlists'));
   return res.json();
