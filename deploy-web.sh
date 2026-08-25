@@ -24,6 +24,8 @@ if [[ ! -d "$INSTALL_DIR/.git" ]]; then
   exit 1
 fi
 
+chown -R "$BOT_USER:$BOT_USER" "$INSTALL_DIR"
+
 echo "==> pulling latest code..."
 sudo -u "$BOT_USER" git -C "$INSTALL_DIR" pull --rebase --autostash
 
