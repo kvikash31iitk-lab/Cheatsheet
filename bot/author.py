@@ -239,23 +239,19 @@ CRITICAL RULES:
    - Formulas: `x^2 + y^2 = r^2`, `P = V * I`
    - Chemistry: `2H2 + O2 -> 2H2O`
    - Do NOT output raw unparsed LaTeX macros like `\\frac{}{}`, `\\approx`, `\\text{}`, or enclosing `$`.
-6. VISUAL DIAGRAMS FOR ARRANGEMENTS & GEOMETRY: When explaining seating arrangements (circular or linear), geometry figures, or set theory / syllogisms, emit a structured diagram block:
+6. VISUAL DIAGRAMS FOR LOGICAL PUZZLES & GEOMETRY:
+   - Use visual diagram blocks ONLY for quantitative/reasoning problems (DILR, Seating Puzzles, Geometry, Set Theory).
+   - NEVER use seating or row diagrams for general lists, government schemes, airports, dates, or social security schemes.
+   - Diagram syntax (ONLY for puzzles/reasoning):
 ```arrangement:circular
 seats: 8
 facing: inward
 occupants: ["A", "B", "C", "D", "E", "F", "G", "H"]
 ```
-or
+or (for linear seating puzzles with short names/letters only):
 ```arrangement:linear
-slots: ["P", "Q", "R", "S", "T", "U", "V"]
+slots: ["P", "Q", "R", "S", "T"]
 facing: North
-```
-or
-```diagram:triangle
-vertices: ["A", "B", "C"]
-base: "Base (b)"
-height: "Height (h)"
-hypotenuse: "Hypotenuse (c)"
 ```
 7. Output ONLY markdown: No conversational preamble, no wrapping in code blocks.
 """
@@ -272,6 +268,7 @@ OUTPUT:
 
 The transcript chunk follows. Output bullets only.
 """
+
 
 MARATHON_CHAPTER_SYSTEM = """You are an elite Competitive Examination Author and Subject Master creating an exhaustive, textbook-grade chapter for a Master Study Handbook (targeting SSC CGL, CHSL, CPO, CDS, UPSC, and Banking exams).
 

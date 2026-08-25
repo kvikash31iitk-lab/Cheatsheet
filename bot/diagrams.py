@@ -121,11 +121,16 @@ def make_linear_row_diagram(spec: dict[str, Any], width: float = 460, height: fl
     title = str(spec.get("title", f"Row Facing {facing}"))
 
     n = max(len(slots), 1)
-    box_w = min(44.0, (width - 80) / max(n, 1))
+    max_label_len = max([len(str(s)) for s in slots] + [1])
+    box_w = min(110.0, max(44.0, max_label_len * 7.0))
     box_h = 30.0
-    spacing = 8.0
+    spacing = 10.0
     total_w = n * box_w + (n - 1) * spacing
-    start_x = (width - total_w) / 2.0
+    
+    # Auto-expand drawing width if slots exceed standard width
+    drawing_w = max(width, total_w + 90.0)
+    d = Drawing(drawing_w, height)
+    start_x = (drawing_w - total_w) / 2.0
     y = 22.0
     
     # Orientation Header
@@ -147,14 +152,17 @@ def make_linear_row_diagram(spec: dict[str, Any], width: float = 460, height: fl
         display_name = name_str if not is_empty else "-"
         if " (" in display_name and len(display_name) > 4:
             display_name = re.sub(r"\s*\([^\)]+\)", "", display_name)
-        f_size = 9.5 if len(display_name) <= 2 else 8.0
-        offset_x = len(display_name) * (f_size * 0.28)
-        d.add(String(bx + box_w/2 - offset_x, y + 10, display_name, fontName="Helvetica-Bold", fontSize=f_size, fillColor=colors.HexColor("#0F172A")))
+            
+        f_size = 8.5 if len(display_name) <= 6 else (7.0 if len(display_name) <= 12 else 6.0)
+        # Approximate centered X position
+        offset_x = min(box_w / 2.0 - 2, len(display_name) * (f_size * 0.26))
+        d.add(String(bx + box_w/2.0 - offset_x, y + 10, display_name, fontName="Helvetica-Bold", fontSize=f_size, fillColor=colors.HexColor("#0F172A")))
         
         # Position Index
-        d.add(String(bx + box_w/2 - 3, y - 10, str(i+1), fontName="Helvetica", fontSize=7.5, fillColor=colors.HexColor("#64748B")))
+        d.add(String(bx + box_w/2.0 - 3, y - 10, str(i+1), fontName="Helvetica", fontSize=7.5, fillColor=colors.HexColor("#64748B")))
 
     return d
+
 
 
 def make_geometry_triangle(spec: dict[str, Any], width: float = 280, height: float = 140) -> Drawing:
