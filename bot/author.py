@@ -230,15 +230,16 @@ OUTPUT FORMAT — must be valid markdown that follows this exact structure:
 > <Precise academic definition>
 
 CRITICAL RULES:
-1. ZERO LOSS / EXHAUSTIVE COVERAGE: Capture 100% of the substantive material from start to finish. If the instructor explains 15 concepts, 8 examples, or 5 derivations, author sections for ALL of them. Never summarize a multi-step proof or explanation into a single bullet point.
-2. NO SCREENSHOT FRAMES: Do NOT insert random video frame screenshots or image tags. Focus 100% on rich, structured typography, analytical tables, callouts, formulas, and vector diagrams.
-3. PRESERVE TIMESTAMPS: Include timestamp ranges in chapter and sub-section headings (e.g. `## Chapter 2: Parallel Row Seating [15:30 - 32:15]`).
-4. MATHEMATICAL & CHEMICAL TYPOGRAPHY: Format all formulas, equations, fractions, and reactions in clean readable notation:
+1. ZERO LOSS & ATOMIC SUB-TOPIC ISOLATION: Capture 100% of the substantive material from start to finish. Every single government scheme, theorem, law, formula, algorithm, or case study discussed in the lecture MUST receive its own dedicated `###` subsection and its own dedicated `> [!def]` Definition Card. Never combine multiple distinct schemes or topics into one broad summary.
+2. RICH STRUCTURAL BOXES: Include formal Definition cards (> [!def]), Step-by-step Worked Examples (> [!example]), Pro Tips (> [!tip]), Pitfalls & Watch Outs (> [!warning]), and Chapter Master Revision Matrices (> [!revise]).
+3. NO SCREENSHOT FRAMES: Do NOT insert random video frame screenshots or image tags. Focus 100% on rich, structured typography, analytical tables, callouts, formulas, and vector diagrams.
+4. PRESERVE TIMESTAMPS: Include timestamp ranges in chapter and sub-section headings (e.g. `## Chapter 2: Parallel Row Seating [15:30 - 32:15]`).
+5. MATHEMATICAL & CHEMICAL TYPOGRAPHY: Format all formulas, equations, fractions, and reactions in clean readable notation:
    - Fractions: `(a + b)/c` or `(6 + 4 + 10)/60 = 20/60 = 1/3`
    - Formulas: `x^2 + y^2 = r^2`, `P = V * I`
    - Chemistry: `2H2 + O2 -> 2H2O`
    - Do NOT output raw unparsed LaTeX macros like `\\frac{}{}`, `\\approx`, `\\text{}`, or enclosing `$`.
-5. VISUAL DIAGRAMS FOR ARRANGEMENTS & GEOMETRY: When explaining seating arrangements (circular or linear), geometry figures, or set theory / syllogisms, emit a structured diagram block:
+6. VISUAL DIAGRAMS FOR ARRANGEMENTS & GEOMETRY: When explaining seating arrangements (circular or linear), geometry figures, or set theory / syllogisms, emit a structured diagram block:
 ```arrangement:circular
 seats: 8
 facing: inward
@@ -256,7 +257,7 @@ base: "Base (b)"
 height: "Height (h)"
 hypotenuse: "Hypotenuse (c)"
 ```
-6. Output ONLY markdown: No conversational preamble, no wrapping in code blocks.
+7. Output ONLY markdown: No conversational preamble, no wrapping in code blocks.
 """
 
 SUMMARISE_SYSTEM = """You are condensing one section of a longer video transcript into a tight bullet list of facts and concepts that downstream document authors can use.

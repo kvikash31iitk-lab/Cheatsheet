@@ -2062,13 +2062,15 @@ async def _run_job(job_id: str) -> None:
                 meta["title"],
             )
         else:
+            frames_dir = result.get("frames_dir")
+            img_base = Path(frames_dir).parent if frames_dir else None
             await asyncio.to_thread(
                 build_book,
                 md_path,
                 pdf_path,
-                meta["title"],
-                Path(result["frames_dir"]).parent,
-                None,
+                title=meta["title"],
+                image_base=img_base,
+                subtitle=None,
                 features=features,
                 source_url=url,
             )
