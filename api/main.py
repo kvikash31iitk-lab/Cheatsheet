@@ -2164,7 +2164,7 @@ async def _run_job(job_id: str) -> None:
 
 
 @app.get("/api/download-desktop")
-async def download_desktop(password: str = Query("", description="Access password")):
+async def download_desktop(password: str = ""):
     if password.strip().lower() != "sristy":
         raise HTTPException(403, "Invalid download key. Access restricted.")
     from fastapi.responses import FileResponse
