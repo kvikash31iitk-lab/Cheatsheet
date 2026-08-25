@@ -616,8 +616,10 @@ GROQ_FALLBACK_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compoun
 def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                  cost_sink: Optional[dict] = None) -> str:
     prompt_tokens = est_tokens(system) + est_tokens(user)
-    if prompt_tokens >= TPM_LIMIT_TOKENS:
-        raise ValueError(f"prompt is too large ({prompt_tokens} tokens)")
+    if prompt_tokens > 25000:
+        # Emergency trim user message so it comfortably fits inside Groq context window
+        user = user[:75000]
+        prompt_tokens = est_tokens(system) + est_tokens(user)
 
     request_max_tokens = min(max_tokens, 8000)
     from bot.config import GROQ_API_KEY, GROQ_API_KEYS
@@ -632,6 +634,12 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
     for api_k in keys_pool:
         client = Groq(api_key=api_k)
         for model in models:
+            # For models with smaller TPM caps, trim prompt to prevent 413
+            if "qwen" in model.lower() or "20b" in model.lower():
+                model_user = user[:18000] if len(user) > 18000 else user
+            else:
+                model_user = user
+
             model_options = {}
             if "qwen" in model.lower():
                 model_options = {
@@ -639,8 +647,6 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                     "reasoning_format": "hidden",
                 }
                 request_max_tokens = min(request_max_tokens, TPM_LIMIT_TOKENS)
-
-            model_user = user
             for attempt in range(1, 3):
                 try:
                     resp = client.chat.completions.create(

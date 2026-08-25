@@ -30,10 +30,17 @@ class AuthorLimitTests(unittest.TestCase):
         self.assertEqual(kwargs["reasoning_format"], "hidden")
         self.assertLessEqual(kwargs["max_tokens"], author.TPM_LIMIT_TOKENS)
 
-    def test_groq_rejects_prompt_with_no_completion_room(self):
-        oversized = "x" * (author.TPM_LIMIT_TOKENS * 3)
-        with self.assertRaisesRegex(ValueError, "prompt is too large"):
-            author._author_groq("system", oversized, max_tokens=1000)
+    @patch("groq.Groq")
+    def test_groq_handles_large_prompt_gracefully(self, groq_cls):
+        response = MagicMock()
+        response.choices[0].message.content = "# Trimmed output"
+        response.usage = None
+        create = groq_cls.return_value.chat.completions.create
+        create.return_value = response
+
+        oversized = "x" * 90000
+        result = author._author_groq("system", oversized, max_tokens=1000)
+        self.assertEqual(result, "# Trimmed output")
 
     @patch("bot.author.time.sleep")
     @patch("groq.Groq")
