@@ -2161,6 +2161,39 @@ async def _run_job(job_id: str) -> None:
         _in_flight_jobs.discard(job_id)
 
 
+@app.get("/api/download-desktop")
+async def download_desktop():
+    from fastapi.responses import FileResponse
+    zip_path = Path(__file__).resolve().parent.parent / "web" / "public" / "downloads" / "Cheatsheet_Desktop_Latest.zip"
+    if not zip_path.exists():
+        import subprocess
+        subprocess.run([sys.executable, "scripts/package_desktop_release.py"], check=True)
+
+    version_file = Path(__file__).resolve().parent.parent / "version.json"
+    ver = "2.1.0"
+    if version_file.exists():
+        try:
+            ver = json.loads(version_file.read_text(encoding="utf-8")).get("version", "2.1.0")
+        except Exception:
+            pass
+    return FileResponse(
+        str(zip_path),
+        media_type="application/zip",
+        filename=f"Cheatsheet_Desktop_v{ver}.zip",
+    )
+
+
+@app.get("/api/version")
+async def get_version():
+    version_file = Path(__file__).resolve().parent.parent / "version.json"
+    if version_file.exists():
+        try:
+            return json.loads(version_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"version": "2.1.0", "release_name": "Exhaustive Academic Engine"}
+
+
 if __name__ == "__main__":
     import uvicorn
 

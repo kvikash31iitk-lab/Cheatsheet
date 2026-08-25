@@ -33,6 +33,11 @@ const NavBar = () => (
       </Link>
     </nav>
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <a href="/downloads/Cheatsheet_Desktop_Latest.zip" download="Cheatsheet_Desktop_v2.1.zip" style={{ textDecoration: 'none' }}>
+        <Btn variant="ghost" size="md" icon={<Ic.download size={13} />}>
+          Desktop App (v2.1)
+        </Btn>
+      </a>
       <Link href="/login" style={{ textDecoration: 'none' }}>
         <Btn variant="ghost" size="md">Log in</Btn>
       </Link>
@@ -45,11 +50,18 @@ const NavBar = () => (
 
 const Hero = () => (
   <section style={{ padding: '72px 56px 56px', textAlign: 'center', position: 'relative' }}>
-    <Link href="/upsc" style={{ textDecoration: 'none' }}>
-      <Tag tone="accent" style={{ marginBottom: 24, padding: '5px 12px', cursor: 'pointer' }}>
-        <Ic.sparkle size={11} /> New · UPSC daily digest →
-      </Tag>
-    </Link>
+    <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 24, flexWrap: 'wrap' }}>
+      <Link href="/upsc" style={{ textDecoration: 'none' }}>
+        <Tag tone="accent" style={{ padding: '5px 12px', cursor: 'pointer' }}>
+          <Ic.sparkle size={11} /> New · UPSC daily digest →
+        </Tag>
+      </Link>
+      <a href="/downloads/Cheatsheet_Desktop_Latest.zip" download="Cheatsheet_Desktop_v2.1.zip" style={{ textDecoration: 'none' }}>
+        <Tag tone="mint" style={{ padding: '5px 12px', cursor: 'pointer' }}>
+          <Ic.download size={11} /> Plug & Play Desktop App v2.1 Available
+        </Tag>
+      </a>
+    </div>
     <h1
       style={{
         fontFamily: 'var(--font-serif)',
@@ -74,21 +86,23 @@ const Hero = () => (
         margin: '0 auto 36px',
       }}
     >
-      Paste a link. Get a clean cheatsheet or a full set of book-style notes — formatted, downloadable,
+      Paste a link. Get a clean cheatsheet, solved MCQ handbook, or an exhaustive master academic handbook — formatted, downloadable,
       and built for how students actually study.
     </p>
-    <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 14 }}>
+    <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
       <Link href="/generate" style={{ textDecoration: 'none' }}>
         <Btn variant="primary" size="xl" iconRight={<Ic.arrow size={16} />}>
-          Start free — 5 cheatsheets
+          Start Web App — Free
         </Btn>
       </Link>
-      <Btn variant="secondary" size="xl" icon={<Ic.play size={13} />}>
-        Watch demo · 90s
-      </Btn>
+      <a href="/downloads/Cheatsheet_Desktop_Latest.zip" download="Cheatsheet_Desktop_v2.1.zip" style={{ textDecoration: 'none' }}>
+        <Btn variant="secondary" size="xl" icon={<Ic.download size={15} />}>
+          Download for PC (v2.1)
+        </Btn>
+      </a>
     </div>
     <div style={{ fontSize: 12.5, color: 'var(--c-ink-3)' }}>
-      No credit card · 5 cheatsheets + 2 book notes free · Pay only for what you use
+      No credit card · Free web version + 100% offline desktop edition · Zero setup plug-and-play
     </div>
   </section>
 );

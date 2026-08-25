@@ -5,18 +5,6 @@
 # Usage (as root or sudo):
 #   cd /opt/video-notes-bot && sudo bash deploy-web.sh
 #
-# What it does:
-#   1. Pulls latest code from the repo.
-#   2. Installs new Python deps (fastapi, uvicorn, pydantic) into the venv.
-#   3. Runs `npm ci` + `npm run build` in web/ as the bot user.
-#   4. Drops two systemd units:
-#        cheatsheet-api.service   (FastAPI on 127.0.0.1:8000)
-#        cheatsheet-web.service   (Next.js on 0.0.0.0:3000)
-#   5. Opens UFW port 3000 if UFW is active.
-#   6. Prints the URL to visit.
-#
-# After running, the app is reachable at http://<VPS-IP>:3000 — no auth, no
-# SSL. Stick a shared secret or nginx + TLS in front before sharing widely.
 
 set -euo pipefail
 
@@ -41,8 +29,10 @@ sudo -u "$BOT_USER" git -C "$INSTALL_DIR" pull --rebase --autostash
 
 # --- 1. Python deps -------------------------------------------------------
 echo "==> installing/upgrading Python deps..."
-sudo -u "$BOT_USER" "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade \
-  -r "$INSTALL_DIR/requirements.txt"
+sudo -u "$BOT_USER" "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade   -r "$INSTALL_DIR/requirements.txt"
+
+echo "==> packaging latest desktop release..."
+sudo -u "$BOT_USER" "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/scripts/package_desktop_release.py"
 
 # Verify the downloader runtime before spending time on the frontend build.
 echo "==> downloader runtime..."
@@ -57,23 +47,19 @@ if [[ -z "$DENO_BIN" ]]; then
 fi
 sudo -u "$BOT_USER" "$DENO_BIN" --version
 
-# Never print proxy values: authenticated URLs contain credentials.
+# YouTube egress proxy check
 MANAGED_PROXY_FILE="/home/$BOT_USER/.config/cheetsheet/ytdlp_proxy_url"
-if { [[ -f "$INSTALL_DIR/.env" ]] && grep -Eq '^YTDLP_PROXY_(URL|POOL)=.+' "$INSTALL_DIR/.env"; } \
-  || [[ -s "$MANAGED_PROXY_FILE" ]]; then
+if { [[ -f "$INSTALL_DIR/.env" ]] && grep -Eq '^YTDLP_PROXY_(URL|POOL)=.+' "$INSTALL_DIR/.env"; }   || [[ -s "$MANAGED_PROXY_FILE" ]]; then
   echo "==> YouTube egress proxy: configured"
 else
   echo "WARN: YouTube egress proxy is not configured; datacenter-IP blocks may persist." >&2
-  echo "      Set YTDLP_PROXY_URL/POOL or configure it in Admin > yt-dlp cookies & storage." >&2
 fi
 
-
-# --- 2. Next.js build (as bot user, with login shell so PATH has node) ---
+# --- 2. Next.js build ---
 if ! command -v node >/dev/null 2>&1; then
   echo "ERROR: node not found — deploy.sh should have installed Node 20" >&2
   exit 1
 fi
-
 
 NEXT_BUILD_DIR="$INSTALL_DIR/web/.next"
 if [[ -L "$NEXT_BUILD_DIR" ]]; then
@@ -92,12 +78,7 @@ sudo -u "$BOT_USER" -H bash -c "
   npm run build
 "
 
-# --- 3. systemd units -----------------------------------------------------
-
-# EnvironmentFile= is conditional: only included when .env exists, so the
-# Phase-0-only flow (no auth/DB yet) still works on a fresh VPS. After
-# deploy-phase1.sh runs, .env contains DATABASE_URL, AUTH_*, etc., and the
-# units pick those up automatically on the next deploy-web.sh.
+# --- 3. systemd units ---
 ENV_FILE_DIRECTIVE=""
 if [[ -f "$INSTALL_DIR/.env" ]]; then
   ENV_FILE_DIRECTIVE="EnvironmentFile=$INSTALL_DIR/.env"
@@ -113,15 +94,14 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$BOT_USER
+Group=$BOT_USER
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
-Restart=on-failure
-RestartSec=10
 $ENV_FILE_DIRECTIVE
-Environment=PATH=$INSTALL_DIR/.venv/bin:/home/$BOT_USER/.local/bin:/home/$BOT_USER/.npm-global/bin:/home/$BOT_USER/.deno/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=YT_COOKIES_PATH=/home/$BOT_USER/cookies.txt
-StandardOutput=journal
-StandardError=journal
+ExecStart=$INSTALL_DIR/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+KillMode=process
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
@@ -132,55 +112,30 @@ cat > "/etc/systemd/system/$WEB_SVC.service" <<EOF
 [Unit]
 Description=Cheatsheet Next.js frontend
 After=network-online.target $API_SVC.service
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=$BOT_USER
+Group=$BOT_USER
 WorkingDirectory=$INSTALL_DIR/web
-ExecStart=/usr/bin/node $INSTALL_DIR/web/node_modules/next/dist/bin/next start -p $WEB_PORT -H 0.0.0.0
-Restart=on-failure
-RestartSec=10
 $ENV_FILE_DIRECTIVE
-Environment=NODE_ENV=production
 Environment=PORT=$WEB_PORT
-StandardOutput=journal
-StandardError=journal
+Environment=NODE_ENV=production
+Environment=NEXT_TELEMETRY_DISABLED=1
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable "$API_SVC" "$WEB_SVC"
-systemctl restart "$API_SVC" "$WEB_SVC"
+systemctl enable --now "$API_SVC.service"
+systemctl restart "$API_SVC.service"
+systemctl enable --now "$WEB_SVC.service"
+systemctl restart "$WEB_SVC.service"
 
-# --- 4. firewall ----------------------------------------------------------
-
-if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-  echo "==> opening UFW port $WEB_PORT/tcp..."
-  ufw allow "$WEB_PORT/tcp" || true
-fi
-
-# --- 5. Summary -----------------------------------------------------------
-
-IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "<your-vps-ip>")
-
-cat <<EOF
-
-==> Done.
-
-App URL:     http://$IP:$WEB_PORT
-API URL:     http://127.0.0.1:8000  (proxied by Next.js at /api/*)
-
-Tail logs:
-  sudo journalctl -u $API_SVC -f
-  sudo journalctl -u $WEB_SVC -f
-
-Service control:
-  sudo systemctl restart $API_SVC $WEB_SVC
-  sudo systemctl status  $API_SVC $WEB_SVC
-
-Re-deploy after a code change:
-  cd $INSTALL_DIR && sudo bash deploy-web.sh
-
-EOF
+echo "==> Deployment complete!"
