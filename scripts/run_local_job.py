@@ -270,7 +270,7 @@ def run_url_job(
         _record_stage(manifest_path, manifest, current_stage, "complete")
         emit(f"URL validated: {url}")
 
-        extract_frames = kind == "book"
+        extract_frames = False
         feats = bot_cache.normalize_features(features or [])
         emit(f"Features: {', '.join(feats) or 'none'}")
 
@@ -430,8 +430,6 @@ def run_url_job(
                     author_kwargs["cost_sink"] = cost_sink
                 markdown = author_mcq(transcript_txt, **author_kwargs)
             else:
-                if frames_index is None:
-                    raise RuntimeError("Book mode requires extracted frames index")
                 author_kwargs = {
                     "title_hint": title,
                     "duration_seconds": duration_seconds,
@@ -442,7 +440,7 @@ def run_url_job(
                     author_kwargs["cost_sink"] = cost_sink
                 markdown = author_book(
                     transcript_txt,
-                    Path(frames_index),
+                    Path(frames_index) if frames_index else None,
                     **author_kwargs,
                 )
             output_md.write_text(markdown, encoding="utf-8")

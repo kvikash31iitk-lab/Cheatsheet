@@ -1946,7 +1946,7 @@ async def _run_job(job_id: str) -> None:
             channel,
         )
 
-        extract_frames = kind == "book"
+        extract_frames = False
 
         # ---- resumable pipeline -------------------------------------------
         # The expensive steps (yt-dlp download + ffmpeg frame extraction +
@@ -2030,8 +2030,8 @@ async def _run_job(job_id: str) -> None:
         else:
             md_text = await asyncio.to_thread(
                 author_book,
-                result["transcript_with_frames"],
-                result["frames_index"],
+                result.get("transcript_txt") or result.get("transcript_with_frames"),
+                None,
                 title_hint=meta["title"],
                 duration_seconds=meta["duration"],
                 on_progress=lambda m: emit(m, max(progress_state["p"], 0.72)),

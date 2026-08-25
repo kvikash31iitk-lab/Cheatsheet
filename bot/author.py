@@ -171,81 +171,92 @@ hypotenuse: "Hypotenuse (c)"
 """
 
 
-BOOK_SYSTEM = """You are a technical writer producing a chapter-by-chapter illustrated book from a video transcript and a list of available image frames.
+BOOK_SYSTEM = """You are an elite academic textbook author and subject-matter expert producing an exhaustive, master-level academic handbook from a lecture transcript.
 
-OUTPUT FORMAT — must be valid markdown that follows this exact skeleton:
+CORE PHILOSOPHY:
+Author an exhaustive, high-fidelity academic handbook. Do not summarize or skip steps. Capture 100% of concepts, mathematical derivations, case studies, specific numbers, and teacher explanations. Include timestamp markers for each section.
 
-# <Book title>
+OUTPUT FORMAT — must be valid markdown that follows this exact structure:
 
-## Foreword
+# <Comprehensive Master Handbook Title>
 
-<2-3 short paragraphs setting up what this book covers and who it is for>
-
----
-
-## Chapter 1 — <Chapter title>
-
-### Why this chapter matters
-
-<one short paragraph>
-
-![<caption>](frames/<filename>.jpg)
-
-### <Section heading>
-
-<paragraphs / bullets / tables>
-
-> [!def] <term>
-> <definition>
-
-> [!tip] <title>
-> <pro tip body>
-
-### <Another section>
-
-...
-
-> [!revise] Revise in 60 Seconds
-> - <key point>
-> - <key point>
-> - <key point>
+## Executive Course Overview & Conceptual Roadmap
+<In-depth multi-paragraph foundation setting up the theoretical framework, prerequisites, core theorems, and chapter architecture>
 
 ---
 
-## Chapter 2 — <Chapter title>
+## Chapter 1: <Chapter Title> [00:00 - 15:30]
 
-(same structure)
+### 1.1 <Core Concept / Sub-topic Name>
+<Exhaustive conceptual explanation. Explain the 'why' and 'how' behind the principles. Preserve all background context and foundational logic without skipping steps.>
 
-...
+> [!def] <Key Term / Law / Principle>
+> <Formal academic definition and mathematical formulation>
 
-## Glossary
+### 1.2 <Detailed Derivations, Worked Examples & Step-by-Step Logic>
+<Step-by-step walkthrough of every intermediate mathematical calculation, derivation, algorithm step, or logical puzzle sequence.>
 
-> [!def] <Term>
-> <definition>
+> [!example] Worked Example: <Problem / Case Title>
+> - **Problem Statement**: ...
+> - **Step-by-Step Solution**: ...
+> - **Final Calculation & Result**: ...
 
-CHAPTER STRUCTURE:
-- Aim for 5-7 chapters depending on transcript length.
-- Each chapter: "Why this chapter matters" → 2-4 sub-sections → "Revise in 60 Seconds" callout.
-- Include 2-4 image references per chapter at moments where a frame matches the topic. Use the EXACT filename from the frames index provided.
-- Use `> [!def]`, `> [!tip]`, `> [!warning]`, `> [!example]`, `> [!revise]`, `> [!note]` callouts liberally.
-- End with a Glossary section of definition callouts.
+> [!tip] Crucial Exam Insights & Teacher Rules
+> <Key heuristics, memory tricks, caveats, and common misconceptions explained by the instructor>
 
-CALLOUT BRACKET SYNTAX (exact):
-> [!def] Term
-> body line
-> body line
+### 1.3 <Comparative Analysis & Structural Rules>
+| Parameter / Concept | Primary Rule / Mechanism | Exception / Edge Case | Practical Application |
+| :--- | :--- | :--- | :--- |
+| ... | ... | ... | ... |
 
-INLINE:
-- **bold** for the 1-2 key terms per paragraph
-- *italic* for emphasis
-- `code` for filenames, commands
+> [!warning] Common Pitfalls & Watch Outs
+> <Edge cases where students frequently make mistakes>
 
-RULES:
-1. Image references MUST use only filenames from the FRAMES INDEX section of the user message. Do not invent paths.
-2. The transcript is the source of truth. Do not invent facts.
-3. Do not refer to "the video", "YouTube", "the speaker", "the transcript". Write as a textbook author.
-4. Output ONLY the markdown. No preamble, no code-fence wrappers around the document.
-5. Use `->` not `→` for arrows.
+> [!revise] Chapter 1 Master Revision Matrix
+> - <Exhaustive bullet summary of all critical laws, formulas, and facts in this chapter>
+
+---
+
+(Repeat the same exhaustive chapter structure for EVERY section of the transcript from start [00:00] to the final timestamp)
+
+---
+
+## Master Glossary & Analytical Index
+
+> [!def] <Core Term 1>
+> <Precise academic definition>
+
+> [!def] <Core Term 2>
+> <Precise academic definition>
+
+CRITICAL RULES:
+1. ZERO LOSS / EXHAUSTIVE COVERAGE: Capture 100% of the substantive material from start to finish. If the instructor explains 15 concepts, 8 examples, or 5 derivations, author sections for ALL of them. Never summarize a multi-step proof or explanation into a single bullet point.
+2. NO SCREENSHOT FRAMES: Do NOT insert random video frame screenshots or image tags. Focus 100% on rich, structured typography, analytical tables, callouts, formulas, and vector diagrams.
+3. PRESERVE TIMESTAMPS: Include timestamp ranges in chapter and sub-section headings (e.g. `## Chapter 2: Parallel Row Seating [15:30 - 32:15]`).
+4. MATHEMATICAL & CHEMICAL TYPOGRAPHY: Format all formulas, equations, fractions, and reactions in clean readable notation:
+   - Fractions: `(a + b)/c` or `(6 + 4 + 10)/60 = 20/60 = 1/3`
+   - Formulas: `x^2 + y^2 = r^2`, `P = V * I`
+   - Chemistry: `2H2 + O2 -> 2H2O`
+   - Do NOT output raw unparsed LaTeX macros like `\\frac{}{}`, `\\approx`, `\\text{}`, or enclosing `$`.
+5. VISUAL DIAGRAMS FOR ARRANGEMENTS & GEOMETRY: When explaining seating arrangements (circular or linear), geometry figures, or set theory / syllogisms, emit a structured diagram block:
+```arrangement:circular
+seats: 8
+facing: inward
+occupants: ["A", "B", "C", "D", "E", "F", "G", "H"]
+```
+or
+```arrangement:linear
+slots: ["P", "Q", "R", "S", "T", "U", "V"]
+facing: North
+```
+or
+```diagram:triangle
+vertices: ["A", "B", "C"]
+base: "Base (b)"
+height: "Height (h)"
+hypotenuse: "Hypotenuse (c)"
+```
+6. Output ONLY markdown: No conversational preamble, no wrapping in code blocks.
 """
 
 SUMMARISE_SYSTEM = """You are condensing one section of a longer video transcript into a tight bullet list of facts and concepts that downstream document authors can use.
@@ -1265,49 +1276,43 @@ callouts. Do not pad with generic prose and do not define garbled terms.
     return cleaned
 
 
-def author_book(transcript_path: Path, frames_index_path: Path, *,
+def author_book(transcript_path: Path, frames_index_path: Optional[Path] = None, *,
                 title_hint: Optional[str] = None,
                 duration_seconds: Optional[float] = None,
                 on_progress: ProgressFn = None,
                 system_override: Optional[str] = None,
                 cost_sink: Optional[dict] = None,
                 features: Optional[list[str]] = None) -> str:
-    """Return illustrated-book markdown. Caller writes it and renders the PDF.
-
-    Same ``system_override`` / ``cost_sink`` / ``features`` semantics as
-    :func:`author_cheatsheet`.
+    """Return exhaustive academic master handbook markdown text.
+    
+    Zero-loss academic book covering 100% of concepts, derivations, and worked examples.
     """
     transcript = Path(transcript_path).read_text(encoding="utf-8")
-    if _needs_condensation():
-        body = condense(transcript, on_progress=on_progress)
-        body_label = "CONDENSED TRANSCRIPT (bullet summaries by section):"
-    else:
-        body = transcript
-        body_label = "TRANSCRIPT (raw with timestamps):"
-    frames = json.loads(Path(frames_index_path).read_text(encoding="utf-8"))
-    frames_lines = "\n".join(
-        f"  - t={f['timestamp']:>7.1f}s  {f['file']}" for f in frames
-    )
+    body = transcript
+    body_label = "RAW TRANSCRIPT WITH TIMESTAMPS (exhaustively author all topics without skipping):"
     user_msg = (
         (f"TITLE HINT: {title_hint}\n" if title_hint else "")
         + (f"SOURCE LENGTH: {duration_seconds/60:.0f} minutes\n"
            if duration_seconds else "")
-        + "\nFRAMES INDEX (you may reference any of these by filename):\n"
-        + frames_lines
-        + f"\n\n{body_label}\n"
+        + f"\n{body_label}\n"
         + body
     )
     if on_progress:
-        on_progress("Writing illustrated book...")
+        on_progress("Authoring exhaustive academic master handbook...")
     base_prompt = system_override or BOOK_SYSTEM
     full_prompt = (
         base_prompt if system_override
         else _compose_system_prompt(base_prompt, BOOK_FEATURE_SNIPPETS, features)
     )
-    # Books already get a generous 8K — bump by 2K when features are on so
-    # the Q&A appendix + mermaid + summary block don't run out of room on
-    # longer chapters.
-    max_out = 8000 + (2000 if features else 0)
+    # Scale token output to maximum for full textbook depth
+    dur_m = (duration_seconds / 60.0) if duration_seconds else 30.0
+    if dur_m <= 20.0:
+        max_out = 8192
+    elif dur_m <= 60.0:
+        max_out = 12288
+    else:
+        max_out = 16384
+
     raw = _author(
         full_prompt,
         user_msg,
@@ -1316,8 +1321,8 @@ def author_book(transcript_path: Path, frames_index_path: Path, *,
     )
     cleaned = strip_wrappers(raw)
     if not any(line.lstrip().startswith("#") for line in cleaned.splitlines()):
-        title = (title_hint or "Illustrated Book Notes").replace('\n', ' ').strip()
-        cleaned = f"# {title}\n\n### distilled from video walkthrough\n\n{cleaned}"
+        title = (title_hint or "Exhaustive Academic Handbook").replace('\n', ' ').strip()
+        cleaned = f"# {title}\n\n### Comprehensive Master Lecture Handbook\n\n{cleaned}"
     return cleaned
 
 

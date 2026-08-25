@@ -48,14 +48,14 @@ if sys.platform == "win32":
 # ============================================================================
 SRC = Path(r"C:\Users\HP\Documents\Claude\Video notes\output\book.md")
 OUT = Path(r"C:\Users\HP\Documents\Claude\Video notes\output\book.pdf")
-TITLE = "From Zero to Your First Agentic AI Workflow"
-SUBTITLE = "Student Notes on Building with Claude Code"
-RUNNING_HEADER = "AGENTIC AI WORKFLOWS WITH CLAUDE CODE"
-RUNNING_RIGHT = "Student Notes"
-COVER_FOOTER = "Companion notes - based on a 26-minute walkthrough"
+TITLE = "Academic Master Handbook"
+SUBTITLE = "Comprehensive Master Lecture Handbook"
+RUNNING_HEADER = "EXHAUSTIVE ACADEMIC MASTER HANDBOOK"
+RUNNING_RIGHT = "Master Notes"
+COVER_FOOTER = "Cheatsheet AI  *  Exhaustive Academic Master Handbook"
 COVER_TAGLINE = [
-    "A visual, revise-friendly companion to a hands-on tutorial",
-    "on building agentic workflows with Claude Code.",
+    "An exhaustive, high-fidelity academic handbook covering",
+    "100% of concepts, derivations, heuristics, and worked examples.",
 ]
 # Defaults saved at import time so build() can reset after each call.
 # The UPSC pipeline sets these globals before calling build(); without a
@@ -249,6 +249,24 @@ def parse_blocks(md: str):
 
         if re.match(r"^---+$", stripped):
             yield ("hr", None); i += 1; continue
+
+        # Code fence / Diagram block
+        if stripped.startswith("```"):
+            fence_head = stripped[3:].strip()
+            buf = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                buf.append(lines[i])
+                i += 1
+            if i < len(lines) and lines[i].strip().startswith("```"):
+                i += 1
+            if fence_head in ("arrangement:circular", "arrangement:linear", "diagram:triangle", "diagram:venn"):
+                yield ("diagram", (fence_head, "\n".join(buf)))
+            elif fence_head == "mermaid":
+                yield ("mermaid", "\n".join(buf))
+            else:
+                yield ("code", "\n".join(buf))
+            continue
 
         m = IMAGE_RE.match(stripped)
         if m:
@@ -753,15 +771,18 @@ def body_page(canv, doc):
 
 def render_block(kind, payload, story):
     if kind == "h1":
-        story.append(PageBreak())
-        story.append(Paragraph(inline(payload), H1))
+        # Document title is already rendered on cover; if top of story, ignore extra pagebreak
+        if not (story and isinstance(story[-1], PageBreak)):
+            story.append(Spacer(1, 0.3 * cm))
         return
     if kind == "h2":
         m = re.match(r"^Chapter\s+(\d+)\s*[-:.—]\s*(.+)$", payload, re.IGNORECASE)
-        # Only insert a PageBreak if the previous flowable isn't already one —
-        # otherwise the cover's NextPageTemplate+PageBreak doubles up here.
-        if not (story and isinstance(story[-1], PageBreak)):
+        # Break page for new chapters (except if already on a fresh page)
+        if m and not (story and isinstance(story[-1], PageBreak)):
             story.append(PageBreak())
+        elif not (story and isinstance(story[-1], PageBreak)):
+            story.append(Spacer(1, 0.4 * cm))
+            
         if m:
             story.append(Paragraph(f"CHAPTER {m.group(1)}", CHAP_LABEL))
             story.append(Paragraph(inline(m.group(2)), H1))
@@ -778,6 +799,18 @@ def render_block(kind, payload, story):
         story.extend(make_ul(payload)); return
     if kind == "ol":
         story.extend(make_ol(payload)); return
+    if kind == "diagram":
+        try:
+            from bot.diagrams import render_diagram_flowable
+            dtype, content = payload
+            dw = render_diagram_flowable(dtype, content)
+            if dw:
+                story.append(Spacer(1, 0.2 * cm))
+                story.append(dw)
+                story.append(Spacer(1, 0.3 * cm))
+        except Exception:
+            pass
+        return
     if kind == "image":
         story.extend(make_image_flowable(*payload)); return
     if kind == "callout":
@@ -876,28 +909,29 @@ def build(src: Path | None = None, out: Path | None = None,
     ``source_url`` — the YouTube URL. Only used by the QR-code half of the
     ``chapters`` feature.
     """
-    global IMAGE_BASE, TITLE, SUBTITLE, SHOW_QR, SOURCE_URL
+    global IMAGE_BASE, TITLE, SUBTITLE, RUNNING_HEADER, RUNNING_RIGHT, COVER_FOOTER, COVER_TAGLINE, MASTHEAD_PATH, SHOW_QR, SOURCE_URL
     src = Path(src) if src else SRC
     out = Path(out) if out else OUT
+    md = src.read_text(encoding="utf-8")
+
     if title:
         TITLE = title
-    if subtitle:
-        SUBTITLE = subtitle
+    else:
+        m_title = re.search(r"^#\s+(.+)$", md, re.MULTILINE)
+        if m_title:
+            TITLE = m_title.group(1).strip()
+
+    SUBTITLE = subtitle or "Comprehensive Master Lecture Handbook"
+    RUNNING_HEADER = re.sub(r"[*_`]", "", TITLE)[:65]
+    RUNNING_RIGHT = "Master Handbook"
+    COVER_FOOTER = "Cheatsheet AI  *  Exhaustive Academic Master Handbook"
     if image_base:
         IMAGE_BASE = Path(image_base)
     feats = set(features or ())
 
-    # Cover-page QR is opt-in via the `chapters` feature. Reset on every
-    # build() so a feature-enabled run followed by a no-feature run in the
-    # same process doesn't leak state.
-    # QR was originally part of `chapters`, but the UPSC digest wants the QR
-    # without the chapter-index page (the digest's own intro + "Must-read
-    # three" callout already serves as the table of contents). Accept `qr`
-    # as a standalone flag; keep `chapters` implying QR for backward compat.
+    # Reset opt-in flags
     SHOW_QR = bool(source_url) and ("qr" in feats or "chapters" in feats)
     SOURCE_URL = source_url
-
-    md = src.read_text(encoding="utf-8")
 
     try:
         # --- preprocess for features -------------------------------------------
@@ -925,9 +959,9 @@ def build(src: Path | None = None, out: Path | None = None,
         )
         frame_cover = Frame(0, 0, PAGE_W, PAGE_H, id="cover", showBoundary=0,
                             leftPadding=2*cm, rightPadding=2*cm,
-                            topPadding=2*cm, bottomPadding=2*cm)
-        frame_body = Frame(MARGIN_L, MARGIN_B, BODY_W,
-                           PAGE_H - MARGIN_T - MARGIN_B, id="body", showBoundary=0)
+                            topPadding=3*cm, bottomPadding=2*cm)
+        frame_body  = Frame(MARGIN_L, MARGIN_B, BODY_W,
+                            PAGE_H - MARGIN_T - MARGIN_B, id="body", showBoundary=0)
         doc.addPageTemplates([
             PageTemplate(id="cover", frames=[frame_cover], onPage=cover_page),
             PageTemplate(id="body",  frames=[frame_body],  onPage=body_page),
@@ -936,9 +970,7 @@ def build(src: Path | None = None, out: Path | None = None,
         print(f"OK: {out}  ({out.stat().st_size/1024:.1f} kB)")
         return out
     finally:
-        # Reset UPSC-specific globals so they don't bleed into the next
-        # video-book build running in the same process.
-        global RUNNING_HEADER, RUNNING_RIGHT, COVER_FOOTER, COVER_TAGLINE, MASTHEAD_PATH
+        # Reset globals
         RUNNING_HEADER = _D_RUNNING_HEADER
         RUNNING_RIGHT = _D_RUNNING_RIGHT
         COVER_FOOTER = _D_COVER_FOOTER
