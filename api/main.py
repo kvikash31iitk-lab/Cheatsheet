@@ -1510,21 +1510,28 @@ def _serialize(gen: Generation) -> dict[str, Any]:
         if gen.video_id
         else None,
     }
-    if gen.status in ("queued", "running"):
-        base["status"] = {
-            "state": gen.status,
-            "step": gen.step or "",
-            "progress": gen.progress,
-        }
-    elif gen.status == "done":
+    st = (gen.status or "").lower()
+    if st in ("done", "completed", "complete", "success"):
         base["status"] = {
             "state": "done",
             "pdf_url": f"/api/files/{gen.id}/pdf",
             "markdown": gen.markdown or "",
             "meta": base["meta"] or {},
         }
-    elif gen.status == "error":
+    elif st in ("error", "failed", "failure"):
         base["status"] = {"state": "error", "message": gen.error_message or "unknown"}
+    elif st in ("queued", "pending"):
+        base["status"] = {
+            "state": "queued",
+            "step": gen.step or "Queued",
+            "progress": gen.progress or 0.0,
+        }
+    else:
+        base["status"] = {
+            "state": "running",
+            "step": gen.step or "Processing...",
+            "progress": gen.progress or 0.0,
+        }
     return base
 
 

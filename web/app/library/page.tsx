@@ -51,7 +51,8 @@ export default function LibraryPage() {
         if (j.kind === 'cheatsheet') acc.cheatsheet++;
         if (j.kind === 'mcq') acc.mcq++;
         if (j.kind === 'book') acc.book++;
-        if (j.status.state === 'error') acc.failed++;
+        const st = String((j.status as any)?.state || (j as any).status || '');
+        if (st === 'error' || st === 'failed') acc.failed++;
         return acc;
       },
       { all: 0, cheatsheet: 0, mcq: 0, book: 0, failed: 0 },
@@ -80,7 +81,8 @@ export default function LibraryPage() {
       if (filter === 'cheatsheet' && j.kind !== 'cheatsheet') return false;
       if (filter === 'mcq' && j.kind !== 'mcq') return false;
       if (filter === 'book' && j.kind !== 'book') return false;
-      if (filter === 'failed' && j.status.state !== 'error') return false;
+      const st = String((j.status as any)?.state || (j as any).status || '');
+      if (filter === 'failed' && st !== 'error' && st !== 'failed') return false;
       if (q) {
         const title = j.meta?.title?.toLowerCase() ?? '';
         const ch = j.meta?.channel?.toLowerCase() ?? '';
@@ -614,8 +616,9 @@ function EmptyState({ filter, hasAny }: { filter: Filter; hasAny: boolean }) {
 
 function NoteCard({ job }: { job: Job }) {
   const meta = job.meta;
-  const isFailed = job.status.state === 'error';
-  const isDone = job.status.state === 'done';
+  const state = String((job.status as any)?.state || (job as any).status || 'queued');
+  const isFailed = state === 'error' || state === 'failed';
+  const isDone = state === 'done' || state === 'completed';
   const isCheat = job.kind === 'cheatsheet';
 
   return (
