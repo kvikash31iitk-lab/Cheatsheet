@@ -273,6 +273,83 @@ OUTPUT:
 The transcript chunk follows. Output bullets only.
 """
 
+MARATHON_CHAPTER_SYSTEM = """You are an elite Competitive Examination Author and Subject Master creating an exhaustive, textbook-grade chapter for a Master Study Handbook (targeting SSC CGL, CHSL, CPO, CDS, UPSC, and Banking exams).
+
+DOCUMENT GOAL & DEPTH:
+- Target 1,800 to 2,500 words for this specific chapter.
+- Do NOT write high-level summaries. Write complete, detailed rules/concepts with logic, mathematical/syntactic formulations, comparison matrices, and error-spotting exam questions.
+
+OUTPUT FORMAT (Valid Markdown):
+# Chapter {chap_num}: {chap_title}
+
+## Overview and Core Concepts
+<In-depth 2-3 paragraph breakdown explaining the foundational logic, modern testing patterns, and conceptual framework of these concepts>
+
+## Rules and Grammar Formulas
+### Rule 1: <Rule/Concept Title>
+- **Rule Formulation**: <Clear mathematical/syntax formula, e.g. Subject + Verb + Formula or Event -> Cause -> Consequence>
+- **Grammar/Concept Logic**: <Why this rule applies with deep analytical reasoning>
+- **Correct vs Incorrect Table**:
+| Incorrect Sentence / Trap Scenario | Correct Sentence / Accurate Fact | Explanation of Error / Nuance |
+|---|---|---|
+| ... | ... | ... |
+| ... | ... | ... |
+
+> [!def] Key Grammar Term / Core Definition
+> <Clear definition of the underlying term or concept>
+
+> [!warning] Common Exam Trap / Examiner Trick
+> <Specific traps examiners set to deceive candidates in competitive tests>
+
+> [!tip] Quick Revision Shortcut / Rule of Thumb
+> <High-speed mental shortcut for instant problem solving>
+
+### Rule 2: <Next Rule/Concept Title>
+(Repeat same thorough structure with Rule Formulation, Logic, Correct vs Incorrect Table, and Callouts)
+
+### Rule 3: <Next Rule/Concept Title>
+...
+
+## Master Comparison and Decision Matrix
+| Condition / Trigger | Rule to Apply | Example |
+|---|---|---|
+| ... | ... | ... |
+| ... | ... | ... |
+| ... | ... | ... |
+| ... | ... | ... |
+
+## Exam Practice and Solved Examples
+> [!example] Solved Exam Problem 1
+> **Sentence / Question**: <Sentence with underlined error or multiple choice question>
+> **Analysis**: <Detailed step-by-step grammatical/historical reason>
+> **Correct Version**: <Corrected formulation>
+
+> [!example] Solved Exam Problem 2
+> **Sentence / Question**: <Sentence with underlined error>
+> **Analysis**: <Detailed step-by-step grammatical/historical reason>
+> **Correct Version**: <Corrected formulation>
+
+> [!example] Solved Exam Problem 3
+> **Sentence / Question**: <Sentence with underlined error>
+> **Analysis**: <Detailed step-by-step grammatical/historical reason>
+> **Correct Version**: <Corrected formulation>
+
+## Chapter Summary: Revise in 60 Seconds
+- <Key takeaway 1>
+- <Key takeaway 2>
+- <Key takeaway 3>
+- <Key takeaway 4>
+- <Key takeaway 5>
+
+RULES:
+1. Ground all explanations strictly in the transcript chunks.
+2. Maintain strict ASCII markdown syntax (`->` instead of unicode arrows, standard hyphens and quotes).
+3. Do not refer to "the video", "the lecture", "the speaker". Write directly as an authoritative textbook.
+4. Output ONLY the chapter markdown. No preamble, no code-fence wrappers.
+"""
+
+
+
 
 # === opt-in feature snippets ================================================
 # Each entry below is appended to the base system prompt ONLY when the user
@@ -1181,6 +1258,65 @@ Use short headings and bullets only. Do not add facts or a preamble."""
     return reduced
 
 
+def author_marathon_handbook(transcript: str, *, title_hint: Optional[str] = None,
+                             duration_seconds: Optional[float] = None,
+                             on_progress: ProgressFn = None,
+                             cost_sink: Optional[dict] = None) -> str:
+    """Generate an exhaustive 25-50 page multi-chapter handbook for long videos (> 2 hours)."""
+    # 1. Parse raw or sectioned transcript chunks
+    raw_chunks = split_transcript(transcript, 8000)
+    total_chunks = len(raw_chunks)
+    if total_chunks <= 1:
+        # Fallback to single pass if only 1 chunk
+        return ""
+
+    # 2. Determine chapter count: target ~8 to 14 chapters (roughly 3-6 chunks per chapter)
+    num_chapters = min(14, max(6, total_chunks // 4))
+    chunk_step = max(1, total_chunks // num_chapters)
+
+    main_title = (title_hint or "Comprehensive Course Masterclass Handbook").strip()
+    chapters_md: list[str] = []
+
+    for chap_idx in range(num_chapters):
+        start_c = chap_idx * chunk_step
+        end_c = (chap_idx + 1) * chunk_step if chap_idx < num_chapters - 1 else total_chunks
+        chapter_chunks = raw_chunks[start_c:end_c]
+        combined_text = "\n\n".join(chapter_chunks)
+
+        chap_num = chap_idx + 1
+        if on_progress:
+            on_progress(f"Authoring Handbook Chapter {chap_num}/{num_chapters} (chunks {start_c+1}-{end_c})...")
+
+        # Derive chapter title from text snippet or chunk content
+        first_line = combined_text.strip().split("\n")[0]
+        chap_title_hint = f"Module {chap_num}"
+        if "## Chunk" in first_line:
+            chap_title_hint = f"Section {chap_num}"
+
+        system_prompt = MARATHON_CHAPTER_SYSTEM.replace("{chap_num}", str(chap_num)).replace("{chap_title}", chap_title_hint)
+        user_prompt = f"COURSE TITLE: {main_title}\nCHAPTER: {chap_num}\n\nTRANSCRIPT CHUNKS (detailed lecture content):\n{combined_text}"
+
+        try:
+            chap_md = _author(
+                system_prompt,
+                user_prompt,
+                max_tokens=6500,
+                cost_sink=cost_sink,
+            )
+            chap_clean = strip_wrappers(chap_md)
+            chapters_md.append(chap_clean)
+        except Exception as err:
+            print(f"[marathon_chapter_{chap_num}_error] {err}", flush=True)
+            # Fallback for this single chapter
+            chap_summary = _author(SUMMARISE_SYSTEM, combined_text[:12000], max_tokens=1500, cost_sink=cost_sink)
+            chapters_md.append(f"## Chapter {chap_num}: Module {chap_num}\n\n{chap_summary}")
+
+    # 3. Compile Master Markdown Document
+    header_block = f"# {main_title}\n\n### Comprehensive Study Handbook - Distilled from a {int(duration_seconds/60) if duration_seconds else 120}-Minute Masterclass\n\n"
+    master_text = header_block + "\n\n---\n\n".join(chapters_md)
+    return master_text
+
+
 # --- public API --------------------------------------------------------------
 
 def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None,
@@ -1202,6 +1338,21 @@ def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None
     prompt so the model emits the extra markdown the renderer expects.
     """
     transcript = Path(transcript_path).read_text(encoding="utf-8")
+
+    # Marathon Videos (> 2 hours / 7200 seconds): Route to multi-chapter handbook engine!
+    if not system_override and duration_seconds and duration_seconds >= 7200:
+        if on_progress:
+            on_progress("Detected marathon masterclass (>2h). Initializing multi-chapter handbook engine...")
+        handbook_md = author_marathon_handbook(
+            transcript,
+            title_hint=title_hint,
+            duration_seconds=duration_seconds,
+            on_progress=on_progress,
+            cost_sink=cost_sink,
+        )
+        if handbook_md and len(handbook_md.strip()) > 3000:
+            return handbook_md
+
     if _needs_condensation() or est_tokens(transcript) > 200000:
         body = condense(transcript, on_progress=on_progress)
         body_label = ("CONDENSED TRANSCRIPT "
@@ -1209,6 +1360,7 @@ def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None
     else:
         body = transcript
         body_label = "TRANSCRIPT (raw with timestamps):"
+
 
     user_msg = "\n".join(p for p in [
         f"TITLE HINT: {title_hint}" if title_hint else "",
@@ -1323,6 +1475,45 @@ def author_book(transcript_path: Path, frames_index_path: Optional[Path] = None,
         title = (title_hint or "Exhaustive Academic Handbook").replace('\n', ' ').strip()
         cleaned = f"# {title}\n\n### Comprehensive Master Lecture Handbook\n\n{cleaned}"
     return cleaned
+
+
+MCQ_SYSTEM = """You are an expert Examination Master creating a comprehensive Solved Multiple Choice Question (MCQ) & PYQ Handbook from a lecture transcript.
+
+OUTPUT FORMAT (Valid Markdown):
+# <Course / Subject Title> - Solved MCQs & PYQ Bank
+
+## Executive Concept & Formula Summary
+<Key concepts, definitions, and formulas needed for solving these questions>
+
+## Question 1: <Short Topic Title>
+> Target Exam: Relevant Competitive Exam | Difficulty: Medium
+
+**Q.** <Complete, clear question statement>
+
+- **(A)** <Option A>
+- **(B)** <Option B>
+- **(C)** <Option C>
+- **(D)** <Option D>
+
+> [!correct] (B) <Option Text>
+> **Direct Explanation**: <Why B is strictly correct with formulas or rules>
+> **Option Elimination**:
+> - **(A)** <Why A is incorrect>
+> - **(C)** <Why C is incorrect>
+> - **(D)** <Why D is incorrect>
+
+> [!tip] Shortcut / Elimination Rule
+> <Mental trick for solving in under 30 seconds>
+
+---
+
+## Question 2: ...
+
+RULES:
+1. Ground all questions and options strictly in the lecture transcript.
+2. Use ASCII punctuation only (`->`, `~`, `-`).
+3. Output ONLY valid markdown. No preamble.
+"""
 
 
 def author_mcq(transcript_path: Path, *,
