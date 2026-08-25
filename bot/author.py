@@ -532,40 +532,38 @@ def _strip_reasoning(md: str) -> str:
     return re.sub(r"<think>.*?</think>\s*", "", md, flags=re.DOTALL).strip()
 
 
-# --- providers ---------------------------------------------------------------
+TPM_LIMIT_TOKENS = 8000
+GROQ_FALLBACK_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-20b")
+
 
 def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                  cost_sink: Optional[dict] = None) -> str:
-    # Groq Llama 3.3 70B Versatile supports up to 128k context with 30k TPM.
-    # Trim or summarize if user message is exceptionally huge.
     prompt_tokens = est_tokens(system) + est_tokens(user)
-    if prompt_tokens > 25000:
-        # Emergency trim to fit inside Groq window
-        user = user[:75000]
-        prompt_tokens = est_tokens(system) + est_tokens(user)
+    if prompt_tokens >= TPM_LIMIT_TOKENS:
+        raise ValueError(f"prompt is too large ({prompt_tokens} tokens)")
 
     request_max_tokens = min(max_tokens, 8000)
     from bot.config import GROQ_API_KEY, GROQ_API_KEYS
     keys_pool = list(dict.fromkeys(GROQ_API_KEYS or [GROQ_API_KEY]))
     from groq import Groq
     
-    # Active Groq models on user account
-    models = ["openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-20b"]
+    primary = AUTHORING_MODEL if AUTHORING_MODEL and not AUTHORING_MODEL.startswith("gemini-") else "openai/gpt-oss-120b"
+    fallbacks = GROQ_FALLBACK_MODELS or ("openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-20b")
+    models = [primary] + [m for m in fallbacks if m != primary]
+    
+    last_err = None
     for api_k in keys_pool:
         client = Groq(api_key=api_k)
         for model in models:
-            # For 8k TPM models, keep prompt under 6000 tokens to avoid 413
-            if model in ("qwen/qwen3.6-27b", "openai/gpt-oss-20b"):
-                model_user = user[:18000] if len(user) > 18000 else user
-            else:
-                model_user = user
-
             model_options = {}
-            if model.startswith("qwen/"):
+            if "qwen" in model.lower():
                 model_options = {
                     "reasoning_effort": "none",
                     "reasoning_format": "hidden",
                 }
+                request_max_tokens = min(request_max_tokens, TPM_LIMIT_TOKENS)
+
+            model_user = user
             for attempt in range(1, 3):
                 try:
                     resp = client.chat.completions.create(
@@ -597,8 +595,8 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                 except Exception as exc:
                     last_err = exc
                     error_text = str(exc).casefold()
-                    if any(tok in error_text for tok in ("rate limit", "429", "quota", "too large")):
-                        print(f"[author] groq model {model!r} rate limited on key ...{api_k[-6:]}; rotating", flush=True)
+                    if any(tok in error_text for tok in ("rate limit", "429", "quota", "too large", "not_found", "does not exist", "unrecognized")):
+                        print(f"[author] groq model {model!r} rate limited or unavailable; rotating", flush=True)
                         break
                     wait = 3 * attempt
                     time.sleep(wait)

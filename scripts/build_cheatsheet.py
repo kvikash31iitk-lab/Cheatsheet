@@ -318,6 +318,7 @@ def parse_blocks(md: str):
             items = []
             while i < len(lines) and lines[i].strip().startswith(("- ", "* ", "+ ")):
                 items.append(lines[i].strip()[2:].strip()); i += 1
+            yield ("ul", items); continue
         if stripped.startswith("```"):
             fence = stripped[3:].strip()
             buf = []

@@ -31,19 +31,19 @@ if not exist ".venv" (
     echo [*] Creating virtual environment (.venv)...
     python -m venv .venv
     echo [*] Installing dependencies into .venv...
-    .venv\Scripts\pip install -r requirements.txt
+    "%~dp0.venv\Scripts\pip.exe" install -r "%~dp0requirements.txt"
 )
 
 :: 4. Use virtual environment python if present
-if exist ".venv\Scripts\python.exe" (
-    set "PY_EXEC=.venv\Scripts\python.exe"
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PY_EXEC=%~dp0.venv\Scripts\python.exe"
 ) else (
     set "PY_EXEC=python"
 )
 
 :: 5. Launch Desktop Engine
 echo [*] Starting Cheatsheet Local Engine...
-%PY_EXEC% scripts\launch_desktop_app.py
+"%PY_EXEC%" "%~dp0scripts\launch_desktop_app.py"
 
 if %ERRORLEVEL% NEQ 0 (
     echo.

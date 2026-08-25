@@ -54,8 +54,11 @@ def make_circular_seating_diagram(spec: dict[str, Any], width: float = 380, heig
     if isinstance(occupants, dict):
         occupants = [occupants.get(i, occupants.get(str(i), "-")) for i in range(1, len(occupants) + 1)]
     if not occupants:
-        seats_cnt = int(spec.get("seats", 8))
-        occupants = [f"P{i}" for i in range(1, seats_cnt + 1)]
+        try:
+            seats_cnt = int(spec.get("seats", 8))
+        except (ValueError, TypeError):
+            seats_cnt = 8
+        occupants = [f"P{i}" for i in range(1, max(seats_cnt, 1) + 1)]
         
     facing = str(spec.get("facing", "inward")).lower()
     title = str(spec.get("title", "")).strip()
@@ -69,7 +72,7 @@ def make_circular_seating_diagram(spec: dict[str, Any], width: float = 380, heig
     if title:
         d.add(String(10, height - 14, title, fontName="Helvetica-Bold", fontSize=9, fillColor=colors.HexColor("#1E3A8A")))
 
-    n = len(occupants)
+    n = max(len(occupants), 1)
     for i, name in enumerate(occupants):
         angle = math.pi / 2 - (2 * math.pi * i / n)
         sx = cx + r_seats * math.cos(angle)
@@ -81,7 +84,7 @@ def make_circular_seating_diagram(spec: dict[str, Any], width: float = 380, heig
         d.add(Line(tx, ty, sx, sy, strokeColor=colors.HexColor("#CBD5E1"), strokeWidth=1, strokeDashArray=[2, 2]))
         
         # Seat bubble
-        name_str = str(name).strip()
+        name_str = str(name).strip() if name else "-"
         is_empty = name_str in ("-", "", "None")
         seat_color = colors.HexColor("#FFFFFF") if not is_empty else colors.HexColor("#F8FAFC")
         border_color = colors.HexColor("#1E3A8A") if not is_empty else colors.HexColor("#94A3B8")
@@ -108,13 +111,16 @@ def make_linear_row_diagram(spec: dict[str, Any], width: float = 460, height: fl
     if isinstance(slots, dict):
         slots = [slots.get(i, slots.get(str(i), "-")) for i in range(1, len(slots) + 1)]
     if not slots:
-        length = int(spec.get("length", spec.get("seats", 7)))
-        slots = ["-"] * length
+        try:
+            length = int(spec.get("length", spec.get("seats", 7)))
+        except (ValueError, TypeError):
+            length = 7
+        slots = ["-"] * max(length, 1)
 
     facing = str(spec.get("facing", "North")).title()
     title = str(spec.get("title", f"Row Facing {facing}"))
 
-    n = len(slots)
+    n = max(len(slots), 1)
     box_w = min(44.0, (width - 80) / max(n, 1))
     box_h = 30.0
     spacing = 8.0
@@ -168,9 +174,9 @@ def make_geometry_triangle(spec: dict[str, Any], width: float = 280, height: flo
     d.add(Rect(ox, oy, 12, 12, fillColor=None, strokeColor=colors.HexColor("#16A34A"), strokeWidth=1))
     
     # Vertices
-    vA = vertices[0] if len(vertices) > 0 else "A"
-    vB = vertices[1] if len(vertices) > 1 else "B"
-    vC = vertices[2] if len(vertices) > 2 else "C"
+    vA = str(vertices[0]) if len(vertices) > 0 else "A"
+    vB = str(vertices[1]) if len(vertices) > 1 else "B"
+    vC = str(vertices[2]) if len(vertices) > 2 else "C"
     d.add(String(ox - 14, oy - 2, vB, fontName="Helvetica-Bold", fontSize=10, fillColor=colors.HexColor("#0F172A")))
     d.add(String(ox + w + 4, oy - 2, vC, fontName="Helvetica-Bold", fontSize=10, fillColor=colors.HexColor("#0F172A")))
     d.add(String(ox - 14, oy + h, vA, fontName="Helvetica-Bold", fontSize=10, fillColor=colors.HexColor("#0F172A")))
@@ -191,8 +197,8 @@ def make_venn_diagram(spec: dict[str, Any], width: float = 340, height: float = 
     r = 50.0
 
     sets = spec.get("sets", ["Set A", "Set B"])
-    setA_name = sets[0] if len(sets) > 0 else "A"
-    setB_name = sets[1] if len(sets) > 1 else "B"
+    setA_name = str(sets[0]) if len(sets) > 0 else "A"
+    setB_name = str(sets[1]) if len(sets) > 1 else "B"
     
     labels = spec.get("labels", {})
     valA = str(labels.get("A", labels.get("only_A", "")))
@@ -221,15 +227,18 @@ def make_venn_diagram(spec: dict[str, Any], width: float = 340, height: float = 
 
 def render_diagram_flowable(kind: str, spec_text: str) -> Optional[Drawing]:
     """Parse spec and return appropriate ReportLab Drawing flowable."""
-    spec = parse_diagram_spec(spec_text)
-    kind_clean = kind.lower().strip()
-    
-    if "circular" in kind_clean or kind_clean in ("arrangement:circular", "diagram:circular"):
-        return make_circular_seating_diagram(spec)
-    elif "linear" in kind_clean or "row" in kind_clean or kind_clean in ("arrangement:linear", "diagram:linear"):
-        return make_linear_row_diagram(spec)
-    elif "triangle" in kind_clean or "geometry" in kind_clean or kind_clean in ("diagram:triangle", "diagram:geometry"):
-        return make_geometry_triangle(spec)
-    elif "venn" in kind_clean or kind_clean in ("diagram:venn", "diagram:set"):
-        return make_venn_diagram(spec)
+    try:
+        spec = parse_diagram_spec(spec_text)
+        kind_clean = kind.lower().strip()
+        
+        if "circular" in kind_clean or kind_clean in ("arrangement:circular", "diagram:circular"):
+            return make_circular_seating_diagram(spec)
+        elif "linear" in kind_clean or "row" in kind_clean or kind_clean in ("arrangement:linear", "diagram:linear"):
+            return make_linear_row_diagram(spec)
+        elif "triangle" in kind_clean or "geometry" in kind_clean or kind_clean in ("diagram:triangle", "diagram:geometry"):
+            return make_geometry_triangle(spec)
+        elif "venn" in kind_clean or kind_clean in ("diagram:venn", "diagram:set"):
+            return make_venn_diagram(spec)
+    except Exception:
+        pass
     return None

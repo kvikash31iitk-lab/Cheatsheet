@@ -553,11 +553,13 @@ async def download_playlist_zip(
 async def download_trial_handbook():
     """Direct public download for the 50-page 10-hour trial grammar handbook."""
     from fastapi.responses import FileResponse
-    handbook_pdf = Path("/opt/video-notes-bot/web_work/marathon_10hr_trial/Master_100_Rules_Grammar_Handbook.pdf")
+    handbook_pdf = Path(__file__).resolve().parent.parent / "web_work" / "marathon_10hr_trial" / "Master_100_Rules_Grammar_Handbook.pdf"
+    if not handbook_pdf.is_file():
+        handbook_pdf = Path("/opt/video-notes-bot/web_work/marathon_10hr_trial/Master_100_Rules_Grammar_Handbook.pdf")
     if not handbook_pdf.is_file():
         raise HTTPException(404, "Handbook PDF not found")
     return FileResponse(
-        handbook_pdf,
+        str(handbook_pdf),
         media_type="application/pdf",
         filename="100_Golden_Rules_Grammar_Complete_Handbook_50Pages.pdf",
     )

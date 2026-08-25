@@ -219,16 +219,28 @@ def inline(text: str) -> str:
                   rf'<font color="{HIGHLIGHT_HEX}"><b>\1</b></font>', text)
     text = re.sub(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])", r"<i>\1</i>", text)
     text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)
+    text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)", lambda m: f'<u>{m.group(1)}</u>', text)
     text = re.sub(r"`([^`]+?)`",
                   r'<font face="Courier" size="9.5" color="#3A6EA5">\1</font>', text)
     text = re.sub(r"&lt;(/?)b&gt;", r"<\1b>", text)
     text = re.sub(r"&lt;(/?)i&gt;", r"<\1i>", text)
+    text = re.sub(r"&lt;(/?)u&gt;", r"<\1u>", text)
     text = re.sub(r"&lt;(/?)sup&gt;", r"<\1sup>", text)
     text = re.sub(r"&lt;(/?)sub&gt;", r"<\1sub>", text)
     text = re.sub(r"&lt;(/?)font(.*?)&gt;", r"<\1font\2>", text)
     text = text.replace("&amp;rarr;", "&rarr;").replace("&amp;larr;", "&larr;").replace("&amp;harr;", "&harr;")
     text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;")
     return text
+
+
+def safe_paragraph(text: str, style) -> Paragraph:
+    """Construct a Paragraph with safe fallback if inner XML is malformed."""
+    try:
+        return Paragraph(inline(text), style)
+    except Exception:
+        clean = re.sub(r"<[^>]+>", "", text)
+        clean = clean.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return Paragraph(clean, style)
 
 
 # --- markdown block parser -------------------------------------------------

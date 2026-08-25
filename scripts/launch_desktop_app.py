@@ -52,7 +52,7 @@ def open_default_browser(url: str = "http://localhost:3000/generate") -> None:
         webbrowser.open(url, new=2)
     except Exception:
         if sys.platform == "win32":
-            os.system(f"start {url}")
+            os.system(f'start "" "{url}"')
 
 
 def main() -> None:
@@ -82,18 +82,30 @@ def main() -> None:
     if not is_port_open(WEB_PORT):
         print(f"[2/3] Launching web interface on http://localhost:{WEB_PORT}...")
         web_dir = PROJECT_ROOT / "web"
-        npm_cmd = shutil.which("npm.cmd") or shutil.which("npm") or "npm"
-        web_env = os.environ.copy()
-        web_env["DESKTOP_MODE"] = "1"
-        web_proc = subprocess.Popen(
-            [npm_cmd, "start"],
-            cwd=str(web_dir),
-            env=web_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-        )
-        processes.append(web_proc)
+        npm_cmd = shutil.which("npm.cmd") or shutil.which("npm")
+        if npm_cmd:
+            # Build if .next doesn't exist
+            next_build = web_dir / ".next"
+            if not next_build.exists():
+                print("      Building Next.js frontend (first run)...")
+                try:
+                    subprocess.run([npm_cmd, "run", "build"], cwd=str(web_dir), check=True)
+                except Exception:
+                    pass
+
+            web_env = os.environ.copy()
+            web_env["DESKTOP_MODE"] = "1"
+            web_proc = subprocess.Popen(
+                [npm_cmd, "start"],
+                cwd=str(web_dir),
+                env=web_env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+            processes.append(web_proc)
+        else:
+            print("WARN: npm not found on PATH. Frontend may need manual start.")
     else:
         print(f"[2/3] Web interface is already active on port {WEB_PORT}.")
 
@@ -120,8 +132,11 @@ def main() -> None:
         print("\nStopping Cheatsheet desktop services...")
         for p in processes:
             try:
-                p.terminate()
-                p.wait(timeout=2.0)
+                if sys.platform == "win32":
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True)
+                else:
+                    p.terminate()
+                    p.wait(timeout=2.0)
             except Exception:
                 try:
                     p.kill()

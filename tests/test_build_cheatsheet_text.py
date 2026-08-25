@@ -15,7 +15,7 @@ class CheatsheetTextRenderingTests(unittest.TestCase):
     def test_inline_normalizes_before_escaping_markup(self):
         rendered = inline("Value ≤ 10 → **reduce**")
 
-        self.assertIn("Value &lt;= 10 -&gt;", rendered)
+        self.assertIn("Value &lt;= 10 &rarr;", rendered)
         self.assertNotIn("→", rendered)
 
     def test_summary_markers_are_never_printed_as_document_text(self):

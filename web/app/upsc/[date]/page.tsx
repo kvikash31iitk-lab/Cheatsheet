@@ -14,11 +14,12 @@ function formatDate(iso: string): string {
 }
 
 type RouteProps = {
-  params: Promise<{ date: string }>;
+  params: { date: string } | Promise<{ date: string }>;
 };
 
 export async function generateMetadata({ params }: RouteProps): Promise<Metadata> {
-  const { date } = await params;
+  const resolved = await Promise.resolve(params);
+  const date = resolved.date;
   const issue = await serverFetchUpscIssue(date);
   if (!issue) return { title: 'Issue not found · UPSC Cheetsheet' };
   const human = formatDate(issue.date);
@@ -79,7 +80,8 @@ function NavBar() {
 export const dynamic = 'force-dynamic';
 
 export default async function UpscIssuePage({ params }: RouteProps) {
-  const { date } = await params;
+  const resolved = await Promise.resolve(params);
+  const date = resolved.date;
   const issue = await serverFetchUpscIssue(date);
   if (!issue) notFound();
 
