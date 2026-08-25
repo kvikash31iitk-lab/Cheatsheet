@@ -84,14 +84,14 @@ H2 = ParagraphStyle("H2", parent=ss["Heading2"], fontName="Helvetica-Bold",
 
 BODY = ParagraphStyle("Body", parent=ss["BodyText"], fontName="Helvetica",
                       fontSize=9.8, leading=13.5, textColor=INK,
-                      alignment=TA_LEFT, spaceAfter=3.5,
+                      alignment=TA_JUSTIFY, spaceAfter=3.5,
                       allowOrphans=0, allowWidows=0)
 
 CO_LABEL = ParagraphStyle("CoLabel", parent=ss["Normal"], fontName="Helvetica-Bold",
                           fontSize=8, leading=9.5, textColor=colors.white,
                           spaceAfter=0, alignment=TA_LEFT)
 CO_BODY = ParagraphStyle("CoBody", parent=BODY, fontSize=9.2, leading=12.2,
-                         spaceAfter=2, alignment=TA_LEFT)
+                         spaceAfter=2, alignment=TA_JUSTIFY)
 
 ACCENT_HEX = "#" + ACCENT.hexval()[2:]
 HIGHLIGHT_HEX = "#" + HIGHLIGHT.hexval()[2:]

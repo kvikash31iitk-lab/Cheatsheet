@@ -2164,7 +2164,9 @@ async def _run_job(job_id: str) -> None:
 
 
 @app.get("/api/download-desktop")
-async def download_desktop():
+async def download_desktop(password: str = Query("", description="Access password")):
+    if password.strip().lower() != "sristy":
+        raise HTTPException(403, "Invalid download key. Access restricted.")
     from fastapi.responses import FileResponse
     zip_path = Path(__file__).resolve().parent.parent / "web" / "public" / "downloads" / "Cheatsheet_Desktop_Latest.zip"
     if not zip_path.exists():

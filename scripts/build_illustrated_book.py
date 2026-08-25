@@ -36,7 +36,7 @@ from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 from reportlab.lib import colors
 from reportlab.platypus import (
     BaseDocTemplate, PageTemplate, Frame, Paragraph, Spacer, PageBreak,
-    NextPageTemplate, Table, TableStyle, KeepTogether, Image,
+    NextPageTemplate, Table, TableStyle, KeepTogether, Image, HRFlowable,
 )
 from PIL import Image as PILImage
 
@@ -69,10 +69,10 @@ IMAGE_BASE = Path(r"C:\Users\HP\Documents\Claude\Video notes\work\v1")
 # ============================================================================
 
 PAGE_W, PAGE_H = A4
-MARGIN_L = 2.2 * cm
-MARGIN_R = 2.2 * cm
-MARGIN_T = 2.4 * cm
-MARGIN_B = 2.4 * cm
+MARGIN_L = 1.3 * cm
+MARGIN_R = 1.3 * cm
+MARGIN_T = 1.5 * cm
+MARGIN_B = 1.5 * cm
 BODY_W = PAGE_W - MARGIN_L - MARGIN_R
 
 # Palette — softer, more notebook-feeling than the navy/gold trading deck
@@ -106,40 +106,40 @@ CALLOUTS = {
 ss = getSampleStyleSheet()
 
 H_TITLE = ParagraphStyle("HTitle", parent=ss["Title"], fontName="Helvetica-Bold",
-                         fontSize=32, leading=38, alignment=TA_CENTER,
-                         textColor=INK, spaceAfter=14)
+                         fontSize=28, leading=34, alignment=TA_CENTER,
+                         textColor=INK, spaceAfter=10)
 H_SUBTITLE = ParagraphStyle("HSubtitle", parent=ss["Title"], fontName="Helvetica-Oblique",
-                            fontSize=15, leading=20, alignment=TA_CENTER,
-                            textColor=ACCENT, spaceAfter=8)
+                            fontSize=13.5, leading=18, alignment=TA_CENTER,
+                            textColor=ACCENT, spaceAfter=6)
 H_META = ParagraphStyle("HMeta", parent=ss["Normal"], fontName="Helvetica",
-                        fontSize=11, leading=15, alignment=TA_CENTER, textColor=MUTED)
+                        fontSize=10, leading=14, alignment=TA_CENTER, textColor=MUTED)
 
 H1 = ParagraphStyle("H1", parent=ss["Heading1"], fontName="Helvetica-Bold",
-                    fontSize=24, leading=30, textColor=INK,
-                    spaceBefore=4, spaceAfter=14, keepWithNext=1)
+                    fontSize=19, leading=23, textColor=INK,
+                    spaceBefore=3, spaceAfter=7, keepWithNext=1)
 H2 = ParagraphStyle("H2", parent=ss["Heading2"], fontName="Helvetica-Bold",
-                    fontSize=15, leading=20, textColor=ACCENT,
-                    spaceBefore=14, spaceAfter=6, keepWithNext=1)
+                    fontSize=13, leading=16.5, textColor=ACCENT,
+                    spaceBefore=8, spaceAfter=3.5, keepWithNext=1)
 H3 = ParagraphStyle("H3", parent=ss["Heading3"], fontName="Helvetica-Bold",
-                    fontSize=12, leading=16, textColor=INK,
-                    spaceBefore=10, spaceAfter=4, keepWithNext=1)
+                    fontSize=11, leading=14, textColor=INK,
+                    spaceBefore=5, spaceAfter=2.5, keepWithNext=1)
 
 BODY = ParagraphStyle("Body", parent=ss["BodyText"], fontName="Helvetica",
-                      fontSize=11, leading=16.5, textColor=INK,
-                      alignment=TA_JUSTIFY, spaceAfter=8,
+                      fontSize=10, leading=14.2, textColor=INK,
+                      alignment=TA_JUSTIFY, spaceAfter=4,
                       allowOrphans=0, allowWidows=0)
 CAPTION = ParagraphStyle("Caption", parent=BODY, fontName="Helvetica-Oblique",
-                         fontSize=9.5, leading=12, textColor=MUTED,
-                         alignment=TA_CENTER, spaceBefore=4, spaceAfter=10)
+                         fontSize=8.5, leading=11, textColor=MUTED,
+                         alignment=TA_CENTER, spaceBefore=3, spaceAfter=6)
 CHAP_LABEL = ParagraphStyle("ChapLabel", parent=ss["Normal"],
-                            fontName="Helvetica-Bold", fontSize=10, leading=12,
-                            textColor=HIGHLIGHT, spaceAfter=4)
+                            fontName="Helvetica-Bold", fontSize=9.5, leading=11.5,
+                            textColor=HIGHLIGHT, spaceAfter=3)
 
 CO_LABEL = ParagraphStyle("CoLabel", parent=ss["Normal"], fontName="Helvetica-Bold",
                           fontSize=8.5, leading=11, textColor=colors.white,
-                          spaceAfter=4, alignment=TA_LEFT)
-CO_BODY = ParagraphStyle("CoBody", parent=BODY, fontSize=10.5, leading=15,
-                         spaceAfter=4, alignment=TA_JUSTIFY)
+                          spaceAfter=2, alignment=TA_LEFT)
+CO_BODY = ParagraphStyle("CoBody", parent=BODY, fontSize=9.5, leading=13.5,
+                         spaceAfter=2.5, alignment=TA_JUSTIFY)
 
 
 # --- inline formatting ------------------------------------------------------
@@ -431,37 +431,40 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
 
     inner = Table(
         [[label_para]] + [[p] for p in body_paras],
-        colWidths=[BODY_W - 0.4 * cm],
+        colWidths=[BODY_W - 0.25 * cm],
     )
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), spec["bar"]),
         ("BACKGROUND", (0, 1), (-1, -1), spec["tint"]),
-        ("LEFTPADDING", (0, 0), (-1, -1), 10),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-        ("TOPPADDING", (0, 0), (-1, 0), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
-        ("TOPPADDING", (0, 1), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, 0), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 3.5),
+        ("TOPPADDING", (0, 1), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 3.5),
         ("LINEBEFORE", (0, 0), (0, -1), 0, spec["bar"]),
     ]))
-    # Wrap in another table to get the strong left bar across the whole stack.
+    # Wrap in outer table to get the clean colored accent bar
     outer = Table([[inner]], colWidths=[BODY_W])
     outer.setStyle(TableStyle([
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
         ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ("LINEBEFORE", (0, 0), (0, 0), 3, spec["bar"]),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LINEBEFORE", (0, 0), (0, 0), 2.5, spec["bar"]),
     ]))
-    return [Spacer(1, 4), KeepTogether(outer), Spacer(1, 6)]
+    # Only keep together small callouts; allow multi-step worked examples to flow across page breaks
+    if len(body_paras) <= 3:
+        return [Spacer(1, 2), KeepTogether(outer), Spacer(1, 4)]
+    return [Spacer(1, 2), outer, Spacer(1, 4)]
 
 
 def make_table(header, rows):
     th = ParagraphStyle("th", parent=BODY, fontName="Helvetica-Bold",
-                        fontSize=10, leading=12, textColor=colors.white,
+                        fontSize=9.5, leading=12, textColor=colors.white,
                         alignment=TA_LEFT, spaceAfter=0)
     td = ParagraphStyle("td", parent=BODY, fontName="Helvetica",
-                        fontSize=9.5, leading=12, alignment=TA_LEFT, spaceAfter=0)
+                        fontSize=9, leading=11.5, alignment=TA_LEFT, spaceAfter=0)
     data = [[Paragraph(inline(c), th) for c in header]]
     for r in rows:
         data.append([Paragraph(inline(c), td) for c in r])
@@ -472,10 +475,10 @@ def make_table(header, rows):
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F4F8")]),
         ("LINEBELOW", (0, 0), (-1, 0), 0.7, HIGHLIGHT),
         ("LINEBELOW", (0, -1), (-1, -1), 0.4, RULE),
@@ -484,9 +487,9 @@ def make_table(header, rows):
 
 
 def make_ul(items):
-    bullet_style = ParagraphStyle("BulletPara", parent=BODY, leading=15,
-                                  alignment=TA_LEFT, spaceAfter=4,
-                                  leftIndent=18, firstLineIndent=-12)
+    bullet_style = ParagraphStyle("BulletPara", parent=BODY, leading=13.8,
+                                  alignment=TA_JUSTIFY, spaceAfter=2.5,
+                                  leftIndent=14, firstLineIndent=-10)
     out = []
     for it in items:
         out.append(Paragraph(
@@ -496,9 +499,9 @@ def make_ul(items):
 
 
 def make_ol(items):
-    num_style = ParagraphStyle("NumPara", parent=BODY, leading=15,
-                               alignment=TA_LEFT, spaceAfter=4,
-                               leftIndent=22, firstLineIndent=-18)
+    num_style = ParagraphStyle("NumPara", parent=BODY, leading=13.8,
+                               alignment=TA_JUSTIFY, spaceAfter=2.5,
+                               leftIndent=16, firstLineIndent=-12)
     out = []
     for n, it in enumerate(items, 1):
         out.append(Paragraph(
@@ -799,15 +802,13 @@ def render_block(kind, payload, story):
     if kind == "h1":
         # Document title is already rendered on cover; if top of story, ignore extra pagebreak
         if not (story and isinstance(story[-1], PageBreak)):
-            story.append(Spacer(1, 0.3 * cm))
+            story.append(Spacer(1, 0.25 * cm))
         return
     if kind == "h2":
         m = re.match(r"^Chapter\s+(\d+)\s*[-:.—]\s*(.+)$", payload, re.IGNORECASE)
-        # Break page for new chapters (except if already on a fresh page)
-        if m and not (story and isinstance(story[-1], PageBreak)):
-            story.append(PageBreak())
-        elif not (story and isinstance(story[-1], PageBreak)):
-            story.append(Spacer(1, 0.4 * cm))
+        if not (story and isinstance(story[-1], PageBreak)):
+            story.append(Spacer(1, 0.3 * cm))
+            story.append(HRFlowable(width="100%", thickness=0.6, color=RULE, spaceAfter=6, spaceBefore=4))
             
         if m:
             story.append(Paragraph(f"CHAPTER {m.group(1)}", CHAP_LABEL))

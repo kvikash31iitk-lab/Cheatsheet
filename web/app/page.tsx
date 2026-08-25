@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Btn, Tag, CSLogo } from '@/components/ui';
 import { Ic } from '@/components/icons';
 import { serverFetchUpscList } from '@/lib/upsc-api';
+import { DesktopDownloadBtn, DesktopDownloadTag } from '@/components/desktop-download-btn';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,11 +34,7 @@ const NavBar = () => (
       </Link>
     </nav>
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-      <a href="/downloads/Cheatsheet_Desktop_Latest.zip" download="Cheatsheet_Desktop_v2.1.zip" style={{ textDecoration: 'none' }}>
-        <Btn variant="ghost" size="md" icon={<Ic.download size={13} />}>
-          Desktop App (v2.1)
-        </Btn>
-      </a>
+      <DesktopDownloadBtn variant="ghost" size="md" label="Desktop App (v2.1)" />
       <Link href="/login" style={{ textDecoration: 'none' }}>
         <Btn variant="ghost" size="md">Log in</Btn>
       </Link>
@@ -56,11 +53,7 @@ const Hero = () => (
           <Ic.sparkle size={11} /> New · UPSC daily digest →
         </Tag>
       </Link>
-      <a href="/downloads/Cheatsheet_Desktop_Latest.zip" download="Cheatsheet_Desktop_v2.1.zip" style={{ textDecoration: 'none' }}>
-        <Tag tone="mint" style={{ padding: '5px 12px', cursor: 'pointer' }}>
-          <Ic.download size={11} /> Plug & Play Desktop App v2.1 Available
-        </Tag>
-      </a>
+      <DesktopDownloadTag />
     </div>
     <h1
       style={{
@@ -95,11 +88,7 @@ const Hero = () => (
           Start Web App — Free
         </Btn>
       </Link>
-      <a href="/downloads/Cheatsheet_Desktop_Latest.zip" download="Cheatsheet_Desktop_v2.1.zip" style={{ textDecoration: 'none' }}>
-        <Btn variant="secondary" size="xl" icon={<Ic.download size={15} />}>
-          Download for PC (v2.1)
-        </Btn>
-      </a>
+      <DesktopDownloadBtn variant="secondary" size="xl" label="Download for PC (v2.1)" />
     </div>
     <div style={{ fontSize: 12.5, color: 'var(--c-ink-3)' }}>
       No credit card · Free web version + 100% offline desktop edition · Zero setup plug-and-play
