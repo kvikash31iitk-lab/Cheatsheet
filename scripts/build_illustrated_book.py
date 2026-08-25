@@ -194,7 +194,21 @@ def _clean_latex_math(text: str) -> str:
     return text
 
 
+def _ascii_safe(text: str) -> str:
+    replacements = {
+        "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
+        "\u2013": "-", "\u2014": "-", "\u2010": "-", "\u2011": "-", "\u2012": "-",
+        "\u2212": "-", "\u00ad": "-", "\u2026": "...", "\u00a0": " ",
+        "\u200b": "", "\u200c": "", "\u200d": "", "\ufeff": "",
+        "₹": "Rs. ", "≈": "~", "≤": "<=", "≥": ">=", "≠": "!=",
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    return text
+
+
 def inline(text: str) -> str:
+    text = _ascii_safe(text)
     text = _clean_latex_math(text)
 
     # Convert Unicode sub/superscripts & arrows to ReportLab tags
