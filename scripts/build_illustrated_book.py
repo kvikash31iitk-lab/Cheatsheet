@@ -210,6 +210,10 @@ def _ascii_safe(text: str) -> str:
 def inline(text: str) -> str:
     text = _ascii_safe(text)
     text = _clean_latex_math(text)
+    # Strip orphaned bold/italic markers the LLM left unclosed (e.g. lone '**')
+    text = _clean_orphaned_markers(text)
+    if not text.strip():
+        return ''
 
     # Convert Unicode sub/superscripts & arrows to ReportLab tags
     sub_map = {
@@ -261,6 +265,41 @@ def safe_paragraph(text: str, style) -> Paragraph:
 
 CALLOUT_RE = re.compile(r"^>\s*\[!(\w+)\](.*)$")
 IMAGE_RE = re.compile(r"^!\[([^\]]*)\]\(([^)]+)\)\s*$")
+
+
+def _clean_orphaned_markers(text: str) -> str:
+    """Strip dangling bold/italic markers that the LLM left unclosed.
+
+    E.g. '**' alone, or '**word' without a closing '**'.
+    We only strip if the markers are genuinely orphaned (odd count or
+    the entire text is just markers + whitespace).
+    """
+    s = text.strip()
+    # Entire text is just marker noise (e.g. '**', '***', '* *')
+    if re.fullmatch(r'[\s*_`]+', s):
+        return ''
+    # Unclosed bold: odd number of '**' sequences
+    if s.count('**') % 2 != 0:
+        s = s.replace('**', '')
+    # Unclosed italic: odd number of lone '*' (not part of **)
+    temp = s.replace('**', '')
+    if temp.count('*') % 2 != 0:
+        s = re.sub(r'(?<!\*)\*(?!\*)', '', s)
+    return s.strip()
+
+
+def _clean_list_item(text: str) -> str:
+    """Sanitize a single bullet / numbered-list item.
+
+    Handles:
+      - Double-dash bullets: '- text' from original '- - text'
+      - Orphaned bold/italic markers
+      - Returns empty string for junk-only items
+    """
+    # Collapse leading dashes:  '- - text' → 'text', '-- text' → 'text'
+    text = re.sub(r'^[-*+]\s+', '', text.strip())
+    text = _clean_orphaned_markers(text)
+    return text.strip()
 
 
 def parse_blocks(md: str):
@@ -334,14 +373,24 @@ def parse_blocks(md: str):
         if re.match(r"^\d+\.\s+", stripped):
             items = []
             while i < len(lines) and re.match(r"^\d+\.\s+", lines[i].strip()):
-                items.append(re.sub(r"^\d+\.\s+", "", lines[i].strip())); i += 1
-            yield ("ol", items); continue
+                cleaned = _clean_list_item(re.sub(r"^\d+\.\s+", "", lines[i].strip()))
+                if cleaned:
+                    items.append(cleaned)
+                i += 1
+            if items:
+                yield ("ol", items)
+            continue
 
         if stripped.startswith(("- ", "* ", "+ ")):
             items = []
             while i < len(lines) and lines[i].strip().startswith(("- ", "* ", "+ ")):
-                items.append(lines[i].strip()[2:].strip()); i += 1
-            yield ("ul", items); continue
+                cleaned = _clean_list_item(lines[i].strip()[2:].strip())
+                if cleaned:
+                    items.append(cleaned)
+                i += 1
+            if items:
+                yield ("ul", items)
+            continue
 
         # Paragraph
         buf = [stripped]; i += 1
@@ -821,7 +870,10 @@ def render_block(kind, payload, story):
     if kind in ("h4", "h5", "h6"):
         story.append(Paragraph(inline(payload), H3)); return
     if kind == "p":
-        story.append(Paragraph(inline(payload), BODY)); return
+        rendered = inline(payload)
+        if rendered.strip():
+            story.append(Paragraph(rendered, BODY))
+        return
     if kind == "ul":
         story.extend(make_ul(payload)); return
     if kind == "ol":

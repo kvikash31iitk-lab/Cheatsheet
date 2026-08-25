@@ -206,6 +206,10 @@ def _clean_latex_math(text: str) -> str:
 
 def inline(text: str) -> str:
     text = _clean_latex_math(text)
+    # Strip orphaned bold/italic markers the LLM left unclosed (e.g. lone '**')
+    text = _clean_orphaned_markers(text)
+    if not text.strip():
+        return ''
 
     # Convert Unicode sub/superscripts & arrows to ReportLab tags
     sub_map = {
@@ -250,6 +254,25 @@ def inline(text: str) -> str:
 
 
 
+
+def _clean_orphaned_markers(text: str) -> str:
+    """Strip dangling bold/italic markers that the LLM left unclosed."""
+    s = text.strip()
+    if re.fullmatch(r'[\s*_`]+', s):
+        return ''
+    if s.count('**') % 2 != 0:
+        s = s.replace('**', '')
+    temp = s.replace('**', '')
+    if temp.count('*') % 2 != 0:
+        s = re.sub(r'(?<!\*)\*(?!\*)', '', s)
+    return s.strip()
+
+
+def _clean_list_item(text: str) -> str:
+    """Sanitize a single bullet / numbered-list item."""
+    text = re.sub(r'^[-*+]\s+', '', text.strip())
+    text = _clean_orphaned_markers(text)
+    return text.strip()
 
 
 CALLOUT_RE = re.compile(r"^>\s*\[!(\w+)\](.*)$")
@@ -317,8 +340,13 @@ def parse_blocks(md: str):
         if stripped.startswith(("- ", "* ", "+ ")):
             items = []
             while i < len(lines) and lines[i].strip().startswith(("- ", "* ", "+ ")):
-                items.append(lines[i].strip()[2:].strip()); i += 1
-            yield ("ul", items); continue
+                cleaned = _clean_list_item(lines[i].strip()[2:].strip())
+                if cleaned:
+                    items.append(cleaned)
+                i += 1
+            if items:
+                yield ("ul", items)
+            continue
         if stripped.startswith("```"):
             fence = stripped[3:].strip()
             buf = []
