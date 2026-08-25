@@ -462,16 +462,22 @@ def run_playlist_job(
         build_cheatsheet(
             master_md_path,
             master_pdf_path,
-            title="Master Consolidated Cheatsheet",
+            title=found_playlist_title or "Master Consolidated Cheatsheet",
             features=feats,
             source_url=playlist_url,
+        )
+    elif kind == "mcq":
+        from scripts.build_mcq_handbook import build as build_mcq
+        build_mcq(
+            master_md_path,
+            master_pdf_path,
+            title=found_playlist_title or "Master Consolidated Solved MCQ Handbook",
         )
     else:
         build_book(
             master_md_path,
             master_pdf_path,
-            title="Master Consolidated Book",
-            work_dir=root_dir,
+            title=found_playlist_title or "Master Consolidated Book",
             features=feats,
             source_url=playlist_url,
         )
