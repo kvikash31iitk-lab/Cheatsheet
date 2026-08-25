@@ -399,15 +399,17 @@ def run_playlist_job(
                 item_manifest["result"] = res
                 _atomic_write_json(manifest_path, manifest)
 
-                if clean_temp and video_out_dir.exists():
-                    for sub in video_out_dir.glob("*.tmp*"):
-                        try:
-                            if sub.is_file():
-                                sub.unlink()
-                            elif sub.is_dir():
-                                shutil.rmtree(sub)
-                        except Exception:
-                            pass
+                # Unconditionally prune temporary audio, video, chunks, and temp pdfs
+                if video_out_dir.exists():
+                    for pattern in ("*.mp3", "*.m4a", "*.mp4", "*.wav", "*.opus", "*.webm", "*.part", "*.tmp*", "*.json3"):
+                        for sub in video_out_dir.glob(pattern):
+                            try:
+                                if sub.is_file():
+                                    sub.unlink(missing_ok=True)
+                                elif sub.is_dir():
+                                    shutil.rmtree(sub, ignore_errors=True)
+                            except Exception:
+                                pass
                 return res
             else:
                 err_msg = f"{type(last_exception).__name__}: {last_exception}"

@@ -547,14 +547,26 @@ def run_url_job(
             pdf=pdf_quality,
         )
 
-        # Automatically clean up temporary audio and video media files to keep VPS disk free
+        # Automatically clean up temporary audio, video, chunks, and frames to keep disk light and clean
         try:
-            for pattern in ("session_full.mp3", "raw_audio.m4a", "raw_video.mp4", "*.part"):
+            # 1. Clean up in work_dir
+            for pattern in ("*.mp3", "*.m4a", "*.mp4", "*.wav", "*.opus", "*.webm", "*.part", "*.tmp*", "*.json3"):
                 for media_f in work_dir.glob(pattern):
                     try:
                         media_f.unlink(missing_ok=True)
                     except OSError:
                         pass
+            
+            # 2. Clean up temporary audio/video in source cache slot if transcript already written
+            if transcript_txt.exists() and transcript_txt.stat().st_size > 0:
+                cache_dir = bot_cache.slot(video_id)
+                if cache_dir.exists():
+                    for pattern in ("*.mp3", "*.m4a", "*.mp4", "*.wav", "*.opus", "*.webm", "*.part", "*.tmp*"):
+                        for media_f in cache_dir.glob(pattern):
+                            try:
+                                media_f.unlink(missing_ok=True)
+                            except OSError:
+                                pass
         except Exception:
             pass
 
