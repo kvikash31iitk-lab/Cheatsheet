@@ -616,12 +616,12 @@ GROQ_FALLBACK_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compoun
 def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                  cost_sink: Optional[dict] = None) -> str:
     prompt_tokens = est_tokens(system) + est_tokens(user)
-    if prompt_tokens > 25000:
-        # Emergency trim user message so it comfortably fits inside Groq context window
-        user = user[:75000]
+    if prompt_tokens > 4500:
+        # Keep prompt under 4500 tokens so total request + completion is strictly <= 7500 (under 8k TPM cap)
+        user = user[:13500]
         prompt_tokens = est_tokens(system) + est_tokens(user)
 
-    request_max_tokens = min(max_tokens, 8000)
+    request_max_tokens = min(max_tokens, max(1500, 7500 - prompt_tokens))
     from bot.config import GROQ_API_KEY, GROQ_API_KEYS
     keys_pool = list(dict.fromkeys(GROQ_API_KEYS or [GROQ_API_KEY]))
     from groq import Groq
@@ -634,19 +634,14 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
     for api_k in keys_pool:
         client = Groq(api_key=api_k)
         for model in models:
-            # For models with smaller TPM caps, trim prompt to prevent 413
-            if "qwen" in model.lower() or "20b" in model.lower():
-                model_user = user[:18000] if len(user) > 18000 else user
-            else:
-                model_user = user
-
+            model_user = user
             model_options = {}
             if "qwen" in model.lower():
                 model_options = {
                     "reasoning_effort": "none",
                     "reasoning_format": "hidden",
                 }
-                request_max_tokens = min(request_max_tokens, TPM_LIMIT_TOKENS)
+                request_max_tokens = min(request_max_tokens, 4000)
             for attempt in range(1, 3):
                 try:
                     resp = client.chat.completions.create(
@@ -1445,8 +1440,12 @@ def author_book(transcript_path: Path, frames_index_path: Optional[Path] = None,
     Zero-loss academic book covering 100% of concepts, derivations, and worked examples.
     """
     transcript = Path(transcript_path).read_text(encoding="utf-8")
-    body = transcript
-    body_label = "RAW TRANSCRIPT WITH TIMESTAMPS (exhaustively author all topics without skipping):"
+    if _needs_condensation() or est_tokens(transcript) > 4500:
+        body = condense(transcript, on_progress=on_progress)
+        body_label = "CONDENSED TRANSCRIPT (exhaustive section summaries with 100% concepts and details preserved):"
+    else:
+        body = transcript
+        body_label = "RAW TRANSCRIPT WITH TIMESTAMPS (exhaustively author all topics without skipping):"
     user_msg = (
         (f"TITLE HINT: {title_hint}\n" if title_hint else "")
         + (f"SOURCE LENGTH: {duration_seconds/60:.0f} minutes\n"
