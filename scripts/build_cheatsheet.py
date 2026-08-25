@@ -841,4 +841,6 @@ def build(src: Path | None = None, out: Path | None = None,
 
 
 if __name__ == "__main__":
-    build()
+    src_arg = sys.argv[1] if len(sys.argv) > 1 else None
+    out_arg = sys.argv[2] if len(sys.argv) > 2 else None
+    build(src=src_arg, out=out_arg)
