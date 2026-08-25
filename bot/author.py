@@ -1003,19 +1003,21 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
     from bot.config import GEMINI_API_KEY, GEMINI_API_KEYS, AUTHORING_MODEL
     
     primary_model = AUTHORING_MODEL
-    if not primary_model.startswith("gemini-"):
-        primary_model = "gemini-3.6-flash"
+    if not primary_model or primary_model.startswith("gemini-2.") or not primary_model.startswith("gemini-"):
+        primary_model = "gemini-3.5-flash-lite"
         
     models_to_try = [
         primary_model,
-        "gemini-3.6-flash",
         "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
         "gemini-3.1-pro-preview",
         "gemini-flash-latest",
         "gemini-pro-latest",
         "gemini-3.7-flash",
         "gemini-3.1-flash-lite"
     ]
+
     models_to_try = list(dict.fromkeys(models_to_try))
     
     keys_to_try = list(dict.fromkeys(GEMINI_API_KEYS or [GEMINI_API_KEY]))
@@ -1090,9 +1092,21 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
 
 def _author(system: str, user: str, *, max_tokens: int = 8000,
             cost_sink: Optional[dict] = None) -> str:
-    """Dispatch to the configured authoring provider."""
+    """Dispatch to the configured authoring provider with seamless auto-fallback."""
+    from bot.config import GEMINI_API_KEY, GEMINI_API_KEYS, GROQ_API_KEY
+
     if AUTHORING_PROVIDER == "groq":
-        return _author_groq(system, user, max_tokens=max_tokens, cost_sink=cost_sink)
+        try:
+            return _author_groq(system, user, max_tokens=max_tokens, cost_sink=cost_sink)
+        except Exception as exc:
+            if GEMINI_API_KEY or GEMINI_API_KEYS:
+                print(f"[author] groq failed ({exc}); falling back to gemini immediately", flush=True)
+                if cost_sink is not None:
+                    cost_sink["fallback_used"] = "gemini"
+                    cost_sink["fallback_reason"] = "groq_rate_limit"
+                return _author_gemini(system, user, max_tokens=max_tokens, cost_sink=cost_sink)
+            raise
+
     if AUTHORING_PROVIDER == "gemini":
         try:
             return _author_gemini(
@@ -1110,9 +1124,19 @@ def _author(system: str, user: str, *, max_tokens: int = 8000,
             raise
 
     if AUTHORING_PROVIDER == "ollama":
-        return _author_ollama(
-            system, user, max_tokens=max_tokens, cost_sink=cost_sink
-        )
+        try:
+            return _author_ollama(
+                system, user, max_tokens=max_tokens, cost_sink=cost_sink
+            )
+        except Exception as exc:
+            if GEMINI_API_KEY or GEMINI_API_KEYS:
+                print(f"[author] local ollama unavailable ({exc}); falling back to gemini", flush=True)
+                return _author_gemini(system, user, max_tokens=max_tokens, cost_sink=cost_sink)
+            if GROQ_API_KEY:
+                print(f"[author] local ollama unavailable ({exc}); falling back to groq", flush=True)
+                return _author_groq(system, user, max_tokens=max_tokens, cost_sink=cost_sink)
+            raise
+
     if AUTHORING_PROVIDER == "codex_cli":
         try:
             return _author_codex_cli(

@@ -457,12 +457,13 @@ def run_playlist_job(
     master_pdf_path = consolidated_dir / "master_cheatsheet.pdf"
     emit(f"Rendering master PDF to: {master_pdf_path}")
 
-
+    playlist_title_final = found_title or manifest.get("playlist_title") or "Master Consolidated Cheatsheet"
     if kind == "cheatsheet":
+
         build_cheatsheet(
             master_md_path,
             master_pdf_path,
-            title=found_playlist_title or "Master Consolidated Cheatsheet",
+            title=playlist_title_final,
             features=feats,
             source_url=playlist_url,
         )
@@ -471,13 +472,13 @@ def run_playlist_job(
         build_mcq(
             master_md_path,
             master_pdf_path,
-            title=found_playlist_title or "Master Consolidated Solved MCQ Handbook",
+            title=playlist_title_final,
         )
     else:
         build_book(
             master_md_path,
             master_pdf_path,
-            title=found_playlist_title or "Master Consolidated Book",
+            title=playlist_title_final,
             features=feats,
             source_url=playlist_url,
         )
