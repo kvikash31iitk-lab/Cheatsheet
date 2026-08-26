@@ -446,18 +446,39 @@ function GenerateForm() {
                             >
                               {isComplete ? '✅ ' : isFailed ? '❌ ' : '⚡ '} {title}
                             </span>
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 600,
-                                fontFamily: 'var(--font-mono)',
-                                color: isComplete ? 'var(--c-mint)' : isFailed ? 'var(--c-error)' : 'var(--c-accent)',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {item.status?.toUpperCase()}
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              {isComplete && playlistJobId && (
+                                <a
+                                  href={`http://127.0.0.1:8000/api/playlist/download/${playlistJobId}/item/${item.key || Object.keys(manifest?.items || {}).find(k => manifest?.items[k] === item) || item.result?.video_id || ''}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    fontSize: 11.5,
+                                    fontWeight: 600,
+                                    color: 'var(--c-accent)',
+                                    textDecoration: 'none',
+                                    background: 'rgba(232, 165, 131, 0.15)',
+                                    padding: '3px 8px',
+                                    borderRadius: 4,
+                                  }}
+                                >
+                                  📥 PDF
+                                </a>
+                              )}
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  fontFamily: 'var(--font-mono)',
+                                  color: isComplete ? 'var(--c-mint)' : isFailed ? 'var(--c-error)' : 'var(--c-accent)',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {item.status?.toUpperCase()}
+                              </span>
+                            </div>
                           </div>
+
 
                           {/* Show live active subtask message for running item */}
                           {isRunning && item.current_subtask && (
@@ -501,40 +522,82 @@ function GenerateForm() {
               )}
 
 
-              {playlistStatus.status === 'complete' && playlistStatus.summary && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-                  <div style={{ fontSize: 13, color: 'var(--c-mint)', fontWeight: 600 }}>
-                    🎉 Processed {playlistStatus.summary.successful_videos} / {playlistStatus.summary.total_videos} videos. Master PDF generated!
+              {playlistStatus.status === 'complete' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14, padding: '12px 14px', background: 'var(--c-surface-2)', borderRadius: 8, border: '1px solid var(--c-mint)' }}>
+                  <div style={{ fontSize: 13.5, color: 'var(--c-mint)', fontWeight: 600 }}>
+                    🎉 Processed {playlistStatus.summary?.successful_videos || completedCount} / {playlistStatus.summary?.total_videos || total} videos successfully!
                   </div>
-                  {playlistStatus.summary.successful_videos < playlistStatus.summary.total_videos && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (!playlistJobId) return;
-                        try {
-                          setPlaylistStatus({ ...playlistStatus, status: 'running', progress: 'Retrying remaining videos...' });
-                          await retryPlaylistJob(playlistJobId);
-                        } catch (e) {
-                          console.error('Retry failed', e);
-                        }
-                      }}
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <a
+                      href={`http://127.0.0.1:8000/api/playlist/download/${playlistJobId}/master`}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       style={{
-                        padding: '6px 12px',
-                        borderRadius: 6,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '8px 14px',
                         background: 'var(--c-accent)',
                         color: '#fff',
-                        border: 'none',
-                        fontSize: 12,
+                        borderRadius: 6,
                         fontWeight: 600,
-                        cursor: 'pointer',
-                        fontFamily: 'inherit',
+                        fontSize: 13,
+                        textDecoration: 'none',
                       }}
                     >
-                      🔄 Retry Remaining Videos
-                    </button>
-                  )}
+                      📖 Download 70-Page Master PDF
+                    </a>
+                    <a
+                      href={`http://127.0.0.1:8000/api/playlist/download/${playlistJobId}/zip`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '8px 14px',
+                        background: 'transparent',
+                        color: 'var(--c-ink)',
+                        border: '1.5px solid var(--c-line-2)',
+                        borderRadius: 6,
+                        fontWeight: 600,
+                        fontSize: 13,
+                        textDecoration: 'none',
+                      }}
+                    >
+                      📦 Download All 23 PDFs (ZIP)
+                    </a>
+                    {playlistStatus.summary && playlistStatus.summary.successful_videos < playlistStatus.summary.total_videos && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!playlistJobId) return;
+                          try {
+                            setPlaylistStatus({ ...playlistStatus, status: 'running', progress: 'Retrying remaining videos...' });
+                            await retryPlaylistJob(playlistJobId);
+                          } catch (e) {
+                            console.error('Retry failed', e);
+                          }
+                        }}
+                        style={{
+                          padding: '8px 14px',
+                          borderRadius: 6,
+                          background: 'transparent',
+                          color: 'var(--c-accent)',
+                          border: '1.5px solid var(--c-accent)',
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        🔄 Retry Remaining Videos
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
+
               {playlistStatus.error && (
                 <div style={{ fontSize: 13, color: 'var(--c-error)', marginTop: 12 }}>
                   ❌ {playlistStatus.error}
