@@ -38,63 +38,75 @@ TITLE = "Agentic AI Workflows with Claude Code - Cheat Sheet"
 # ============================================================================
 
 PAGE_W, PAGE_H = A4
-MARGIN_L = 1.6 * cm
-MARGIN_R = 1.6 * cm
-MARGIN_T = 1.4 * cm
-MARGIN_B = 1.35 * cm
+MARGIN_L = 1.5 * cm
+MARGIN_R = 1.5 * cm
+MARGIN_T = 1.3 * cm
+MARGIN_B = 1.3 * cm
 BODY_W = PAGE_W - MARGIN_L - MARGIN_R
 
-INK = colors.HexColor("#1A1F36")
-ACCENT = colors.HexColor("#3A6EA5")
-HIGHLIGHT = colors.HexColor("#D97706")
-MUTED = colors.HexColor("#5A6172")
-RULE = colors.HexColor("#D5DAE0")
-PAGE_RULE = colors.HexColor("#DCE3EB")
+INK = colors.HexColor("#000000")        # Pure pitch black ink for laser-sharp print contrast
+ACCENT = colors.HexColor("#1D4ED8")     # Deep rich sapphire royal blue
+HIGHLIGHT = colors.HexColor("#B45309")  # Warm amber/gold highlight
+MUTED = colors.HexColor("#1E293B")      # High contrast dark slate
+RULE = colors.HexColor("#CBD5E1")
+PAGE_RULE = colors.HexColor("#CBD5E1")
+
+
+# Multi-color highlight system:
+# **text** -> Bold Sapphire/Navy or Amber for facts
+# ==text== -> Golden Amber Highlight background tag or colored font
+# [red]...[/red], [green]...[/green], [blue]...[/blue], [purple]...[/purple] or tags
+COLOR_BLUE = "#1D4ED8"     # Core concepts, statutory references
+COLOR_AMBER = "#B45309"    # Key numbers, penalties, deadlines
+COLOR_GREEN = "#15803D"    # Valid, approved, positive conditions
+COLOR_RED = "#B91C1C"      # Prohibitions, disqualifications, violations
+COLOR_PURPLE = "#6D28D9"   # Definitions, authorities, sections
+COLOR_TEAL = "#0F766E"     # Case laws, landmark judgments
 
 CALLOUTS = {
-    "def":     {"label": "DEF",  "bar": colors.HexColor("#3A6EA5"), "tint": colors.HexColor("#EAF1F8")},
-    "example": {"label": "EX",   "bar": colors.HexColor("#2E7D52"), "tint": colors.HexColor("#E8F2EC")},
-    "tip":     {"label": "TIP",  "bar": colors.HexColor("#D97706"), "tint": colors.HexColor("#FBF1E1")},
-    "warning": {"label": "WARN", "bar": colors.HexColor("#B23A48"), "tint": colors.HexColor("#F8E7E9")},
-    "note":    {"label": "NOTE", "bar": colors.HexColor("#5A6172"), "tint": colors.HexColor("#F0F0EE")},
-    "revise":  {"label": "TLDR", "bar": colors.HexColor("#3A6EA5"), "tint": colors.HexColor("#F4F1E6")},
-    # Added with the v3 feature toggles. tldr = preview at section start;
-    # q = Q&A appendix entries. Same hues as the book builder so the visual
-    # language is consistent across both PDF formats.
-    "tldr":    {"label": "TL;DR", "bar": colors.HexColor("#0D7377"), "tint": colors.HexColor("#E0F2F1")},
-    "q":       {"label": "Q",     "bar": colors.HexColor("#7A4F8A"), "tint": colors.HexColor("#F1E8F5")},
+    "def":     {"label": "DEFINITION", "bar": colors.HexColor("#1D4ED8"), "tint": colors.HexColor("#EFF6FF")},
+    "example": {"label": "EXAM CASE",  "bar": colors.HexColor("#15803D"), "tint": colors.HexColor("#F0FDF4")},
+    "tip":     {"label": "KEY RULE",   "bar": colors.HexColor("#B45309"), "tint": colors.HexColor("#FEF3C7")},
+    "warning": {"label": "EXAM TRAP",  "bar": colors.HexColor("#B91C1C"), "tint": colors.HexColor("#FEF2F2")},
+    "note":    {"label": "NOTE",       "bar": colors.HexColor("#4B5563"), "tint": colors.HexColor("#F3F4F6")},
+    "revise":  {"label": "REVISION",   "bar": colors.HexColor("#0F766E"), "tint": colors.HexColor("#F0FDFA")},
+    "tldr":    {"label": "SUMMARY",    "bar": colors.HexColor("#0D7377"), "tint": colors.HexColor("#E6FFFA")},
+    "q":       {"label": "QUESTION",   "bar": colors.HexColor("#6D28D9"), "tint": colors.HexColor("#FAF5FF")},
+    "correct": {"label": "CORRECT",    "bar": colors.HexColor("#15803D"), "tint": colors.HexColor("#F0FDF4")},
 }
 
 ss = getSampleStyleSheet()
 
 DOC_TITLE = ParagraphStyle("DocTitle", parent=ss["Title"], fontName="Helvetica-Bold",
-                           fontSize=16.2, leading=19, alignment=TA_LEFT,
-                           textColor=INK, spaceAfter=3, keepWithNext=1)
+                           fontSize=16.5, leading=20, alignment=TA_LEFT,
+                           textColor=INK, spaceAfter=4, keepWithNext=1)
 DOC_SUB = ParagraphStyle("DocSub", parent=ss["Normal"], fontName="Helvetica-Oblique",
-                         fontSize=9.5, leading=12, textColor=MUTED, spaceAfter=7)
+                         fontSize=9.8, leading=13, textColor=MUTED, spaceAfter=8)
 
 H1 = ParagraphStyle("H1", parent=ss["Heading1"], fontName="Helvetica-Bold",
-                    fontSize=12.8, leading=16, textColor=ACCENT,
-                    spaceBefore=12, spaceAfter=4, keepWithNext=1,
+                    fontSize=13, leading=16.5, textColor=ACCENT,
+                    spaceBefore=11, spaceAfter=4, keepWithNext=1,
                     leftIndent=0, borderPadding=(0, 0, 2, 0),
                     borderColor=ACCENT, borderWidth=0)
 H2 = ParagraphStyle("H2", parent=ss["Heading2"], fontName="Helvetica-Bold",
-                    fontSize=11, leading=14, textColor=INK,
-                    spaceBefore=8, spaceAfter=3, keepWithNext=1)
+                    fontSize=11.2, leading=14.5, textColor=INK,
+                    spaceBefore=8, spaceAfter=3.0, keepWithNext=1)
 
 BODY = ParagraphStyle("Body", parent=ss["BodyText"], fontName="Helvetica",
-                      fontSize=9.8, leading=13.5, textColor=INK,
-                      alignment=TA_JUSTIFY, spaceAfter=3.5,
+                      fontSize=10.0, leading=14.0, textColor=INK,
+                      alignment=TA_JUSTIFY, spaceAfter=3.8,
                       allowOrphans=0, allowWidows=0)
 
 CO_LABEL = ParagraphStyle("CoLabel", parent=ss["Normal"], fontName="Helvetica-Bold",
-                          fontSize=8, leading=9.5, textColor=colors.white,
+                          fontSize=8.5, leading=10.5, textColor=colors.white,
                           spaceAfter=0, alignment=TA_LEFT)
-CO_BODY = ParagraphStyle("CoBody", parent=BODY, fontSize=9.2, leading=12.2,
-                         spaceAfter=2, alignment=TA_JUSTIFY)
+CO_BODY = ParagraphStyle("CoBody", parent=BODY, fontSize=9.4, leading=12.8,
+                         spaceAfter=2.0, alignment=TA_JUSTIFY, textColor=INK)
+
 
 ACCENT_HEX = "#" + ACCENT.hexval()[2:]
 HIGHLIGHT_HEX = "#" + HIGHLIGHT.hexval()[2:]
+
 
 
 def _ascii_safe(text: str) -> str:
@@ -190,11 +202,9 @@ def _clean_latex_math(text: str) -> str:
     for k, v in symbols.items():
         text = re.sub(re.escape(k) + r'(?![a-zA-Z])', v, text)
 
-    # 4. Superscripts and Subscripts
+    # 4. Superscripts and Subscripts (only explicit LaTeX or standalone math symbols)
     text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
-    text = re.sub(r'\^([0-9a-zA-Z+-]+)', r'<sup>\1</sup>', text)
     text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
-    text = re.sub(r'_([0-9a-zA-Z+-]+)', r'<sub>\1</sub>', text)
 
     # 5. Clean up math dollar signs $...$
     text = re.sub(r'\$([^\$]+)\$', r'\1', text)
@@ -229,28 +239,83 @@ def inline(text: str) -> str:
     text = text.replace('→', '&rarr;').replace('←', '&larr;').replace('↔', '&harr;').replace('Δ', '&Delta;').replace('°', '&deg;')
 
     text = _ascii_safe(text)
-    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    # Triple asterisks: bold + italic
-    text = re.sub(r"\*\*\*(.+?)\*\*\*", rf'<font color="{HIGHLIGHT_HEX}"><b><i>\1</i></b></font>', text)
+    # Convert unclosed <br> to self-closing <br/> for ReportLab paraparser compatibility
+    text = re.sub(r'<br\s*>', '<br/>', text, flags=re.IGNORECASE)
+    # 6. Color spans and markdown highlights:
+    # Highlight tag ==text== -> Deep Amber bold
+    text = re.sub(r"==([^=]+?)==", rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text)
+
+    # Color bbcode/markdown tags: [red]...[/red], [green]...[/green], [blue]...[/blue], [purple]...[/purple], [amber]...[/amber], [teal]...[/teal]
+    text = re.sub(r"\[red\](.*?)\[/red\]", rf'<font color="{COLOR_RED}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[green\](.*?)\[/green\]", rf'<font color="{COLOR_GREEN}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[blue\](.*?)\[/blue\]", rf'<font color="{COLOR_BLUE}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[purple\](.*?)\[/purple\]", rf'<font color="{COLOR_PURPLE}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[amber\](.*?)\[/amber\]", rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[teal\](.*?)\[/teal\]", rf'<font color="{COLOR_TEAL}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+
+    # Triple asterisks: bold + italic in rich amber
+    text = re.sub(r"\*\*\*(.+?)\*\*\*", rf'<font color="{COLOR_AMBER}"><b><i>\1</i></b></font>', text)
     # Convert italics first (only when not adjacent to *)
     text = re.sub(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])", r"<i>\1</i>", text)
     text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)
-    # Convert bold (and if it wraps any <i> tags, keep them properly nested)
+    
+    # Convert bold: Intelligent semantic coloring
+    # Numbers, sections, years, monetary amounts, penalties -> Amber
+    # Statutory acts, institutions, judicial cases, Latin maxims -> Royal Blue
+    # Prohibitions/Fines/Disqualifications -> Crimson Red
+    # Approvals/Exceptions/Permitted -> Emerald Green
     def _bold_repl(m):
-        inner = m.group(1)
-        return f'<font color="{HIGHLIGHT_HEX}"><b>{inner}</b></font>'
+        inner = m.group(1).strip()
+        # Prohibitions & Warnings
+        if re.search(r"\b(prohibit|forbidden|illegal|penalty|fine|imprisonment|punish|disqualif|void|offence|breach|guilty|fail|trap|warning|danger)\b", inner, re.I):
+            return f'<font color="{COLOR_RED}"><b>{inner}</b></font>'
+        # Statutory sections, articles, acts, institutions
+        elif re.search(r"\b(section|sec\.|article|art\.|act|code|tribunal|commission|board|cbt|epfo|ilo|ministry|court|parliament|ordinance)\b", inner, re.I):
+            return f'<font color="{COLOR_BLUE}"><b>{inner}</b></font>'
+        # Positive / thresholds / approvals
+        elif re.search(r"\b(valid|eligible|approved|entitled|exempt|allowed|permitted|benefit|relief|right)\b", inner, re.I):
+            return f'<font color="{COLOR_GREEN}"><b>{inner}</b></font>'
+        # Numbers, percentages, money, dates, time limits
+        elif re.search(r"(\b\d+[\d,\.]*\b|%|rs\.|rupees|days|months|years|hours|timeline|schedule|threshold|ceiling)", inner, re.I):
+            return f'<font color="{COLOR_AMBER}"><b>{inner}</b></font>'
+        else:
+            # Default strong keyword: Rich Navy / Dark Blue
+            return f'<font color="#1E3A8A"><b>{inner}</b></font>'
+            
     text = re.sub(r"\*\*(.+?)\*\*", _bold_repl, text)
     text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)", lambda m: f'<u>{m.group(1)}</u>', text)
-    text = re.sub(r"`([^`]+?)`", r'<font face="Courier" size="8.5" color="#3A6EA5">\1</font>', text)
+    text = re.sub(r"`([^`]+?)`", r'<font face="Courier" size="8.5" color="#1E3A8A">\1</font>', text)
+    
+    # 7. Automatic Statutory Fact Highlighting (Numbers with time/money/percentage units not already enclosed in font tags)
+    # Highlights: 7 days, 14 days, 2 months, 6 weeks, 120 days, 50%, Rs. 5000, etc.
+    fact_re = re.compile(
+        r'(?i)(?<![#\w>])'
+        r'('
+        r'\b\d+(?:[\.,]\d+)?\s*(?:-\s*)?'
+        r'(?:days?|working\s+days?|weeks?|months?|years?|hours?|percent|%|lakhs?|crores?|rs\.?|rupees|inr)\b'
+        r'|'
+        r'(?:rs\.?|inr|₹)\s*\d+(?:[\.,]\d+)?'
+        r')'
+        r'(?![^<]*>)'
+    )
+    text = fact_re.sub(rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text)
+
+    
     # Unescape allowed ReportLab tags
+    text = re.sub(r"&lt;a name=(.*?)&gt;", r'<a name=\1>', text)
+    text = re.sub(r"&lt;/a&gt;", r'</a>', text)
+    text = re.sub(r"&lt;a id=(.*?)&gt;", r'<a name=\1>', text)
     text = re.sub(r"&lt;(/?)b&gt;", r"<\1b>", text)
     text = re.sub(r"&lt;(/?)i&gt;", r"<\1i>", text)
+    text = re.sub(r"&lt;(/?)u&gt;", r"<\1u>", text)
     text = re.sub(r"&lt;(/?)sup&gt;", r"<\1sup>", text)
     text = re.sub(r"&lt;(/?)sub&gt;", r"<\1sub>", text)
     text = re.sub(r"&lt;(/?)font(.*?)&gt;", r"<\1font\2>", text)
     text = text.replace("&amp;rarr;", "&rarr;").replace("&amp;larr;", "&larr;").replace("&amp;harr;", "&harr;")
-    text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;")
+    text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;").replace("&amp;bull;", "&bull;")
     return text
+
+
 
 
 
@@ -578,62 +643,66 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), spec["bar"]),
         ("BACKGROUND", (0, 1), (-1, -1), spec["tint"]),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6.5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6.5),
-        ("TOPPADDING", (0, 0), (-1, 0), 2.5),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 2.5),
-        ("TOPPADDING", (0, 1), (-1, -1), 3.5),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 3.5),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.3, colors.white),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, 0), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 3.5),
+        ("TOPPADDING", (0, 1), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.white),
+        ("BOX", (0, 0), (-1, -1), 0.4, spec["bar"]),
     ]))
     outer = Table([[inner]], colWidths=[BODY_W])
     outer.setStyle(TableStyle([
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
         ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LINEBEFORE", (0, 0), (0, 0), 2.5, spec["bar"]),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ("LINEBEFORE", (0, 0), (0, 0), 3.0, spec["bar"]),
     ]))
-    return [Spacer(1, 1), KeepTogether(outer), Spacer(1, 2)]
+    return [Spacer(1, 2), KeepTogether(outer), Spacer(1, 3)]
 
 
 def make_table(header, rows):
     th = ParagraphStyle("th", parent=BODY, fontName="Helvetica-Bold",
-                        fontSize=9.4, leading=11.2, textColor=colors.white,
+                        fontSize=9.5, leading=12.2, textColor=colors.white,
                         alignment=TA_LEFT, spaceAfter=0)
     td = ParagraphStyle("td", parent=BODY, fontName="Helvetica",
-                        fontSize=9.2, leading=11.5, alignment=TA_LEFT, spaceAfter=0)
+                        fontSize=9.2, leading=12.2, alignment=TA_JUSTIFY, spaceAfter=0, textColor=INK)
     data = [[Paragraph(inline(c), th) for c in header]]
     for r in rows:
         data.append([Paragraph(inline(c), td) for c in r])
     col_w = BODY_W / len(header)
-    t = Table(data, colWidths=[col_w] * len(header))
+    t = Table(data, colWidths=[col_w] * len(header), repeatRows=1)
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F4F8")]),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.6, HIGHLIGHT),
-        ("LINEBELOW", (0, -1), (-1, -1), 0.3, RULE),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+        ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#CBD5E1")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#E2E8F0")),
+        ("LINEBELOW", (0, 0), (-1, 0), 1.0, colors.HexColor("#1E3A8A")),
     ]))
-    return t
+    return KeepTogether(t)
+
 
 
 def make_ul(items):
-    bs = ParagraphStyle("Bul", parent=BODY, leading=13.2, alignment=TA_LEFT,
-                        spaceAfter=2.2, leftIndent=12, firstLineIndent=-9)
+    bs = ParagraphStyle("Bul", parent=BODY, leading=14.2, alignment=TA_JUSTIFY,
+                        spaceAfter=3.0, leftIndent=12, firstLineIndent=-9, textColor=INK)
     return [Paragraph(
-        f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}', bs)
+        f'<font color="{ACCENT_HEX}"><b>&bull;</b></font> {inline(it)}', bs)
         for it in items]
 
 
+
 def make_ol(items):
-    ns = ParagraphStyle("Num", parent=BODY, leading=13.2, alignment=TA_LEFT,
-                        spaceAfter=2.2, leftIndent=14, firstLineIndent=-12)
+    ns = ParagraphStyle("Num", parent=BODY, leading=14.2, alignment=TA_JUSTIFY,
+                        spaceAfter=3.0, leftIndent=14, firstLineIndent=-12, textColor=INK)
     res = []
     for item in items:
         if isinstance(item, tuple) and len(item) == 2:
@@ -642,6 +711,7 @@ def make_ol(items):
             num, it = 1, item
         res.append(Paragraph(f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {inline(it)}', ns))
     return res
+
 
 
 def _rule() -> Table:
@@ -712,6 +782,54 @@ def page(canv, doc):
             canv.drawCentredString(x + size / 2, y - 0.22 * cm, "source video")
     canv.restoreState()
 
+def _parse_ascii_table(code_text: str):
+    """Detect and parse ASCII grid tables into native header and rows."""
+    lines = [l for l in code_text.strip().split('\n') if l.strip()]
+    if len(lines) < 3:
+        return None
+    border_lines = [l for l in lines if l.startswith('+') and '-' in l]
+    if len(border_lines) < 2:
+        return None
+    
+    first_b = border_lines[0]
+    col_starts = [i for i, ch in enumerate(first_b) if ch == '+']
+    if len(col_starts) < 3:  # Need at least 2 columns (+---+---+)
+        return None
+    
+    raw_rows = []
+    curr_cells = []
+    
+    for l in lines[1:]:
+        if l.startswith('+') and '-' in l:
+            if curr_cells:
+                row = [' '.join(c).strip().rstrip('|').strip() for c in curr_cells]
+                if any(row):
+                    raw_rows.append(row)
+                curr_cells = []
+            continue
+        if '|' in l:
+            pieces = []
+            for i in range(len(col_starts) - 1):
+                s = col_starts[i] + 1
+                e = col_starts[i+1] if col_starts[i+1] < len(l) else len(l)
+                cell_txt = l[s:e].strip().rstrip('|').strip() if s < len(l) else ''
+                pieces.append(cell_txt)
+            if not curr_cells:
+                curr_cells = [[p] for p in pieces]
+            else:
+                for i, p in enumerate(pieces):
+                    if i < len(curr_cells) and p:
+                        curr_cells[i].append(p)
+    if curr_cells:
+        row = [' '.join(c).strip().rstrip('|').strip() for c in curr_cells]
+        if any(row):
+            raw_rows.append(row)
+            
+    if len(raw_rows) >= 2:
+        return raw_rows[0], raw_rows[1:]
+    return None
+
+
 def render_block(kind, payload, story):
     if kind == "h1":
         story.append(Paragraph(inline(payload), DOC_TITLE)); return
@@ -733,7 +851,7 @@ def render_block(kind, payload, story):
     if kind == "quote":
         q = ParagraphStyle("q", parent=BODY, fontName="Helvetica-Oblique",
                            textColor=ACCENT, leftIndent=12, rightIndent=12,
-                           spaceBefore=2, spaceAfter=4, fontSize=9.4)
+                           spaceBefore=2, spaceAfter=4, fontSize=9.5)
         story.append(Paragraph(inline(payload), q)); return
     if kind == "table":
         story.append(Spacer(1, 1))
@@ -760,13 +878,29 @@ def render_block(kind, payload, story):
     if kind == "code":
         lang, code_text = payload
         code_text = _ascii_safe(code_text)
-        c_style = ParagraphStyle("CodeBlock", parent=BODY, fontName="Courier",
-                                 fontSize=6.5, leading=8.5, textColor=colors.HexColor("#2C3E50"),
-                                 backColor=colors.HexColor("#F8F9FA"), borderPadding=4,
-                                 borderWidth=0.4, borderColor=colors.HexColor("#E2E8F0"),
-                                 borderRadius=3, spaceBefore=3, spaceAfter=3)
-        story.append(Preformatted(code_text, c_style))
+        
+        # 1. If it's an ASCII grid table -> convert directly into a high-visibility native Table!
+        parsed_table = _parse_ascii_table(code_text)
+        if parsed_table:
+            story.append(Spacer(1, 2))
+            story.append(make_table(parsed_table[0], parsed_table[1]))
+            story.append(Spacer(1, 3))
+            return
+
+        # 2. For ASCII diagrams, trees, and code blocks -> Deep Black Courier-Bold with crisp contrast
+        is_diagram_tree = any(sym in code_text for sym in ("|", "-->", "->", "+--", "+==", "v", "^", "\\", "/"))
+        font_sz = 8.0 if is_diagram_tree else 8.5
+        line_height = 10.5 if is_diagram_tree else 11.5
+        
+        c_style = ParagraphStyle("CodeBlock", parent=BODY, fontName="Courier-Bold",
+                                 fontSize=font_sz, leading=line_height, textColor=colors.HexColor("#000000"),
+                                 backColor=colors.HexColor("#F1F5F9"), borderPadding=6,
+                                 borderWidth=0.8, borderColor=colors.HexColor("#94A3B8"),
+                                 borderRadius=4, spaceBefore=4, spaceAfter=4)
+        story.append(KeepTogether(Preformatted(code_text, c_style)))
         return
+
+
 
 
 def render(md: str, *, summary_md: str | None = None):

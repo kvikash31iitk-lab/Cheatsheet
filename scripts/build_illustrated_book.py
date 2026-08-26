@@ -75,29 +75,33 @@ MARGIN_T = 1.5 * cm
 MARGIN_B = 1.5 * cm
 BODY_W = PAGE_W - MARGIN_L - MARGIN_R
 
-# Palette — softer, more notebook-feeling than the navy/gold trading deck
-INK = colors.HexColor("#1A1F36")
-ACCENT = colors.HexColor("#3A6EA5")          # heading blue
-HIGHLIGHT = colors.HexColor("#D97706")       # bold keyword orange
-MUTED = colors.HexColor("#5A6172")
-RULE = colors.HexColor("#D5DAE0")
+# Palette — crisp, high contrast, readable typography
+INK = colors.HexColor("#0B0F19")             # Deep charcoal / near black for maximum readability
+ACCENT = colors.HexColor("#1D4ED8")          # Deep royal sapphire blue
+HIGHLIGHT = colors.HexColor("#B45309")       # Rich amber highlight
+MUTED = colors.HexColor("#374151")           # Dark slate gray
+RULE = colors.HexColor("#CBD5E1")
 PAGE_TINT = colors.HexColor("#FAFAF7")
 
+# Multi-color highlight system
+COLOR_BLUE = "#1D4ED8"     # Core concepts, statutory references
+COLOR_AMBER = "#B45309"    # Key numbers, penalties, deadlines
+COLOR_GREEN = "#15803D"    # Valid, approved, positive conditions
+COLOR_RED = "#B91C1C"      # Prohibitions, disqualifications, violations
+COLOR_PURPLE = "#6D28D9"   # Definitions, authorities, sections
+COLOR_TEAL = "#0F766E"     # Case laws, landmark judgments
+
 # Callout palette — left bar + light tint
-# Added in v3: `tldr` (forecast/preview at chapter start) and `q` (Q&A in the
-# self-test appendix). Picked deliberately distinct hues so the visual rhythm
-# of preview → content → recap stays legible: teal for forecast, orange for
-# in-section tips, blue for end-of-chapter revise, purple for the Q&A
-# appendix. Existing callouts are unchanged.
 CALLOUTS = {
-    "def":     {"label": "DEFINITION", "bar": colors.HexColor("#3A6EA5"), "tint": colors.HexColor("#EAF1F8")},
-    "example": {"label": "EXAMPLE",    "bar": colors.HexColor("#2E7D52"), "tint": colors.HexColor("#E8F2EC")},
-    "tip":     {"label": "PRO TIP",    "bar": colors.HexColor("#D97706"), "tint": colors.HexColor("#FBF1E1")},
-    "warning": {"label": "WATCH OUT",  "bar": colors.HexColor("#B23A48"), "tint": colors.HexColor("#F8E7E9")},
-    "note":    {"label": "NOTE",       "bar": colors.HexColor("#5A6172"), "tint": colors.HexColor("#F0F0EE")},
-    "revise":  {"label": "REVISE IN 60 SECONDS", "bar": colors.HexColor("#3A6EA5"), "tint": colors.HexColor("#F4F1E6")},
-    "tldr":    {"label": "WHY IN NEWS", "bar": colors.HexColor("#0D7377"), "tint": colors.HexColor("#E0F2F1")},
-    "q":       {"label": "QUESTION",   "bar": colors.HexColor("#7A4F8A"), "tint": colors.HexColor("#F1E8F5")},
+    "def":     {"label": "DEFINITION", "bar": colors.HexColor("#1D4ED8"), "tint": colors.HexColor("#EFF6FF")},
+    "example": {"label": "EXAMPLE",    "bar": colors.HexColor("#15803D"), "tint": colors.HexColor("#F0FDF4")},
+    "tip":     {"label": "PRO TIP",    "bar": colors.HexColor("#B45309"), "tint": colors.HexColor("#FEF3C7")},
+    "warning": {"label": "WATCH OUT",  "bar": colors.HexColor("#B91C1C"), "tint": colors.HexColor("#FEF2F2")},
+    "note":    {"label": "NOTE",       "bar": colors.HexColor("#4B5563"), "tint": colors.HexColor("#F3F4F6")},
+    "revise":  {"label": "REVISE IN 60 SECONDS", "bar": colors.HexColor("#0F766E"), "tint": colors.HexColor("#F0FDFA")},
+    "tldr":    {"label": "WHY IN NEWS", "bar": colors.HexColor("#0D7377"), "tint": colors.HexColor("#E6FFFA")},
+    "q":       {"label": "QUESTION",   "bar": colors.HexColor("#6D28D9"), "tint": colors.HexColor("#FAF5FF")},
+    "correct": {"label": "CORRECT",    "bar": colors.HexColor("#15803D"), "tint": colors.HexColor("#F0FDF4")},
 }
 
 
@@ -118,15 +122,15 @@ H1 = ParagraphStyle("H1", parent=ss["Heading1"], fontName="Helvetica-Bold",
                     fontSize=19, leading=23, textColor=INK,
                     spaceBefore=3, spaceAfter=7, keepWithNext=1)
 H2 = ParagraphStyle("H2", parent=ss["Heading2"], fontName="Helvetica-Bold",
-                    fontSize=13, leading=16.5, textColor=ACCENT,
-                    spaceBefore=8, spaceAfter=3.5, keepWithNext=1)
+                    fontSize=13.5, leading=17, textColor=ACCENT,
+                    spaceBefore=8, spaceAfter=4, keepWithNext=1)
 H3 = ParagraphStyle("H3", parent=ss["Heading3"], fontName="Helvetica-Bold",
-                    fontSize=11, leading=14, textColor=INK,
+                    fontSize=11, leading=14.5, textColor=INK,
                     spaceBefore=5, spaceAfter=2.5, keepWithNext=1)
 
 BODY = ParagraphStyle("Body", parent=ss["BodyText"], fontName="Helvetica",
-                      fontSize=10, leading=14.2, textColor=INK,
-                      alignment=TA_JUSTIFY, spaceAfter=4,
+                      fontSize=10.2, leading=15.2, textColor=INK,
+                      alignment=TA_JUSTIFY, spaceAfter=5,
                       allowOrphans=0, allowWidows=0)
 CAPTION = ParagraphStyle("Caption", parent=BODY, fontName="Helvetica-Oblique",
                          fontSize=8.5, leading=11, textColor=MUTED,
@@ -233,22 +237,63 @@ def inline(text: str) -> str:
     text = text.replace('→', '&rarr;').replace('←', '&larr;').replace('↔', '&harr;').replace('Δ', '&Delta;').replace('°', '&deg;')
 
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    text = re.sub(r"\*\*(.+?)\*\*",
-                  rf'<font color="{HIGHLIGHT_HEX}"><b>\1</b></font>', text)
+
+    # Multi-color tags
+    text = re.sub(r"==([^=]+?)==", rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text)
+    text = re.sub(r"\[red\](.*?)\[/red\]", rf'<font color="{COLOR_RED}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[green\](.*?)\[/green\]", rf'<font color="{COLOR_GREEN}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[blue\](.*?)\[/blue\]", rf'<font color="{COLOR_BLUE}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[purple\](.*?)\[/purple\]", rf'<font color="{COLOR_PURPLE}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[amber\](.*?)\[/amber\]", rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[teal\](.*?)\[/teal\]", rf'<font color="{COLOR_TEAL}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+
+    # Triple asterisks: bold + italic in rich amber
+    text = re.sub(r"\*\*\*(.+?)\*\*\*", rf'<font color="{COLOR_AMBER}"><b><i>\1</i></b></font>', text)
     text = re.sub(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])", r"<i>\1</i>", text)
     text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)
+
+    # Semantic bold coloring
+    def _bold_repl(m):
+        inner = m.group(1).strip()
+        if re.search(r"\b(prohibit|forbidden|illegal|penalty|fine|imprisonment|punish|disqualif|void|offence|breach|guilty|fail|trap|warning|danger)\b", inner, re.I):
+            return f'<font color="{COLOR_RED}"><b>{inner}</b></font>'
+        elif re.search(r"\b(section|sec\.|article|art\.|act|code|tribunal|commission|board|cbt|epfo|ilo|ministry|court|parliament|ordinance)\b", inner, re.I):
+            return f'<font color="{COLOR_BLUE}"><b>{inner}</b></font>'
+        elif re.search(r"\b(valid|eligible|approved|entitled|exempt|allowed|permitted|benefit|relief|right)\b", inner, re.I):
+            return f'<font color="{COLOR_GREEN}"><b>{inner}</b></font>'
+        elif re.search(r"(\b\d+[\d,\.]*\b|%|rs\.|rupees|days|months|years|hours|timeline|schedule|threshold|ceiling)", inner, re.I):
+            return f'<font color="{COLOR_AMBER}"><b>{inner}</b></font>'
+        else:
+            return f'<font color="#1E3A8A"><b>{inner}</b></font>'
+
+    text = re.sub(r"\*\*(.+?)\*\*", _bold_repl, text)
     text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)", lambda m: f'<u>{m.group(1)}</u>', text)
-    text = re.sub(r"`([^`]+?)`",
-                  r'<font face="Courier" size="9.5" color="#3A6EA5">\1</font>', text)
+    text = re.sub(r"`([^`]+?)`", r'<font face="Courier" size="9.5" color="#1E3A8A">\1</font>', text)
+
+    # Automatic Statutory Fact Highlighting
+    fact_re = re.compile(
+        r'(?i)(?<![#\w>])'
+        r'('
+        r'\b\d+(?:[\.,]\d+)?\s*(?:-\s*)?'
+        r'(?:days?|working\s+days?|weeks?|months?|years?|hours?|percent|%|lakhs?|crores?|rs\.?|rupees|inr)\b'
+        r'|'
+        r'(?:rs\.?|inr|₹)\s*\d+(?:[\.,]\d+)?'
+        r')'
+        r'(?![^<]*>)'
+    )
+    text = fact_re.sub(rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text)
+
     text = re.sub(r"&lt;(/?)b&gt;", r"<\1b>", text)
     text = re.sub(r"&lt;(/?)i&gt;", r"<\1i>", text)
     text = re.sub(r"&lt;(/?)u&gt;", r"<\1u>", text)
     text = re.sub(r"&lt;(/?)sup&gt;", r"<\1sup>", text)
     text = re.sub(r"&lt;(/?)sub&gt;", r"<\1sub>", text)
     text = re.sub(r"&lt;(/?)font(.*?)&gt;", r"<\1font\2>", text)
+    text = re.sub(r"&lt;br\s*/?&gt;", r"<br/>", text, flags=re.IGNORECASE)
     text = text.replace("&amp;rarr;", "&rarr;").replace("&amp;larr;", "&larr;").replace("&amp;harr;", "&harr;")
-    text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;")
+    text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;").replace("&amp;bull;", "&bull;")
     return text
+
 
 
 def safe_paragraph(text: str, style) -> Paragraph:
