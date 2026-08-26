@@ -285,15 +285,7 @@ def parse_blocks(md: str):
         line = lines[i]; stripped = line.strip()
         if not stripped:
             i += 1; continue
-        if stripped.startswith("```"):
-            lang = stripped.lstrip("`").strip()
-            buf = []
-            i += 1
-            while i < len(lines) and not lines[i].strip().startswith("```"):
-                buf.append(lines[i]); i += 1
-            if i < len(lines):
-                i += 1
-            yield ("code", (lang, "\n".join(buf))); continue
+
         if re.match(r"^---+$", stripped):
             yield ("hr", None); i += 1; continue
         m_img = IMAGE_RE.match(stripped)
@@ -352,6 +344,9 @@ def parse_blocks(md: str):
             buf = []
             i += 1
             while i < len(lines) and not lines[i].strip().startswith("```"):
+                # Break fence early if next line is a module header or major boundary to prevent swallowing
+                if re.match(r"^(# Module \d+:|<a id='module-|#\s+Module\s+\d+:)", lines[i].strip()):
+                    break
                 buf.append(lines[i])
                 i += 1
             if i < len(lines) and lines[i].strip().startswith("```"):
@@ -362,6 +357,7 @@ def parse_blocks(md: str):
             else:
                 yield ("code", (fence, code_text))
             continue
+
         buf = [stripped]; i += 1
         while i < len(lines) and lines[i].strip() and not re.match(
             r"^(#{1,6}\s|[-*+]\s|\d+\.\s|>|\||```|---+$|!\[)", lines[i].strip()

@@ -244,6 +244,18 @@ def consolidate_markdowns(
 
         if md_path_str and Path(md_path_str).is_file():
             content = Path(md_path_str).read_text(encoding="utf-8", errors="replace").strip()
+            
+            # Robust self-healing: fix unclosed code fences within module
+            fence_count = len(re.findall(r"^```", content, re.MULTILINE))
+            if fence_count % 2 != 0:
+                content = content.rstrip() + "\n```\n"
+
+            # Strip trailing incomplete table rows (e.g. '| **Minimum')
+            c_lines = content.splitlines()
+            while c_lines and c_lines[-1].strip().startswith("|") and c_lines[-1].count("|") < 2:
+                c_lines.pop()
+            content = "\n".join(c_lines)
+
             adjusted_lines = []
             for line in content.splitlines():
                 if line.lstrip().startswith("#"):
@@ -259,6 +271,7 @@ def consolidate_markdowns(
         lines.append("")
 
     return "\n".join(lines)
+
 
 
 
