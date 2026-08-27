@@ -7,6 +7,8 @@ cookies.txt
 # User data / runtime artifacts
 work/
 web_work/
+saved files/
+saved_files/
 cache/
 output/
 data/

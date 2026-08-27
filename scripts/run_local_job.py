@@ -593,6 +593,19 @@ def run_url_job(
         manifest["result"] = result
         manifest["updated_at"] = _utc_now()
         _atomic_write_json(manifest_path, manifest)
+
+        # Automatically save copy to 'saved files' folder
+        try:
+            from bot.file_saver import save_generated_artifacts
+            save_generated_artifacts(
+                pdf_path=output_pdf,
+                md_path=output_md,
+                title=title or video_id,
+                kind=kind,
+            )
+        except Exception as save_err:
+            emit(f"Warning saving to 'saved files': {save_err}")
+
         emit(f"Done: {output_pdf}")
         return result
     except Exception as exc:

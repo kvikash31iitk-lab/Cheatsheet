@@ -597,6 +597,13 @@ async def download_playlist_zip(
     if not zip_path.is_file():
         raise HTTPException(404, "Failed to create ZIP package")
 
+    # Automatically save copy of the ZIP package to 'saved files' folder
+    try:
+        from bot.file_saver import save_generated_artifacts
+        save_generated_artifacts(zip_path=zip_path, title=playlist_name, kind="playlist")
+    except Exception:
+        pass
+
     return FileResponse(
         zip_path,
         media_type="application/zip",

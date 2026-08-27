@@ -513,6 +513,18 @@ def run_playlist_job(
     manifest["summary"] = summary_result
     _atomic_write_json(manifest_path, manifest)
 
+    # Automatically save consolidated notes to 'saved files' folder
+    try:
+        from bot.file_saver import save_generated_artifacts
+        save_generated_artifacts(
+            pdf_path=master_pdf_path,
+            md_path=master_md_path,
+            title=f"Master Consolidated - {playlist_title_final}",
+            kind=kind,
+        )
+    except Exception as save_err:
+        emit(f"Warning saving master notes to 'saved files': {save_err}")
+
     emit(f"Playlist batch processing finished! Master PDF: {master_pdf_path}")
     return summary_result
 

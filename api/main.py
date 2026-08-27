@@ -1796,6 +1796,19 @@ async def _run_new_engine_job(job_id: str) -> None:
                 gen.llm_cost_paise = llm_cost
                 gen.transcription_cost_paise = transcription_cost
                 s.commit()
+
+                # Automatically save copy to 'saved files' folder
+                try:
+                    from bot.file_saver import save_generated_artifacts
+                    save_generated_artifacts(
+                        pdf_path=pdf_path,
+                        md_path=md_path,
+                        title=title,
+                        kind=gen.kind or "cheatsheet",
+                    )
+                except Exception as save_err:
+                    logger.warning("Error saving to 'saved files': %s", save_err)
+
                 user_row = s.get(User, gen.user_id)
                 notify_chat_id = user_row.telegram_chat_id if user_row else None
 
@@ -2106,6 +2119,19 @@ async def _run_job(job_id: str) -> None:
                 gen.llm_cost_paise = llm_cost
                 gen.transcription_cost_paise = transcription_cost
                 s.commit()
+
+                # Automatically save copy to 'saved files' folder
+                try:
+                    from bot.file_saver import save_generated_artifacts
+                    save_generated_artifacts(
+                        pdf_path=pdf_path,
+                        md_path=md_path,
+                        title=meta.get("title") or gen.title,
+                        kind=kind,
+                    )
+                except Exception as save_err:
+                    logger.warning("Error saving to 'saved files': %s", save_err)
+
                 user_row = s.get(User, gen.user_id)
                 notify_chat_id = (
                     user_row.telegram_chat_id if user_row else None
