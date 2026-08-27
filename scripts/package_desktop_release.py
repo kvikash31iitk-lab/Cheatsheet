@@ -20,7 +20,6 @@ PUBLIC_DOWNLOADS.mkdir(parents=True, exist_ok=True)
 
 OUT_ZIP_LATEST = PUBLIC_DOWNLOADS / 'Cheatsheet_Desktop_Latest.zip'
 OUT_ZIP_VERSIONED = PUBLIC_DOWNLOADS / f'Cheatsheet_Desktop_v{version}.zip'
-USER_DOWNLOADS_ZIP = Path.home() / 'Downloads' / 'Cheatsheet_Plug_And_Play_Home_PC.zip'
 
 EXCLUDE_DIRS = {
     '.git', '.venv', 'venv', 'node_modules', '.next', '__pycache__',
@@ -52,17 +51,12 @@ with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
             rel_path = p.relative_to(ROOT)
             zf.write(p, arcname=str(rel_path))
 
-# Copy to final destinations
+# Copy to web public downloads for website download button
 shutil.copy(temp_zip, OUT_ZIP_LATEST)
 shutil.copy(temp_zip, OUT_ZIP_VERSIONED)
-try:
-    shutil.copy(temp_zip, USER_DOWNLOADS_ZIP)
-except Exception:
-    pass
 
 temp_zip.unlink()
 
 size_mb = OUT_ZIP_LATEST.stat().st_size / (1024 * 1024)
 print(f'[SUCCESS] Created {OUT_ZIP_LATEST.name} ({size_mb:.2f} MB)')
 print(f'[SUCCESS] Created {OUT_ZIP_VERSIONED.name}')
-print(f'[SUCCESS] Synced to {USER_DOWNLOADS_ZIP}')
