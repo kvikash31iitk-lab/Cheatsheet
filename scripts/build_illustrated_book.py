@@ -1036,7 +1036,15 @@ def build(src: Path | None = None, out: Path | None = None,
     global IMAGE_BASE, TITLE, SUBTITLE, RUNNING_HEADER, RUNNING_RIGHT, COVER_FOOTER, COVER_TAGLINE, MASTHEAD_PATH, SHOW_QR, SOURCE_URL
     src = Path(src) if src else SRC
     out = Path(out) if out else OUT
-    md = src.read_text(encoding="utf-8")
+    raw = src.read_bytes()
+    for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
+        try:
+            md = raw.decode(enc)
+            break
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    else:
+        md = raw.decode("utf-8", errors="replace")
 
     if title:
         TITLE = title

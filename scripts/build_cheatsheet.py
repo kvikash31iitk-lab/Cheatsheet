@@ -239,8 +239,7 @@ def inline(text: str) -> str:
     text = text.replace('→', '&rarr;').replace('←', '&larr;').replace('↔', '&harr;').replace('Δ', '&Delta;').replace('°', '&deg;')
 
     text = _ascii_safe(text)
-    # Convert unclosed <br> to self-closing <br/> for ReportLab paraparser compatibility
-    text = re.sub(r'<br\s*>', '<br/>', text, flags=re.IGNORECASE)
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     # 6. Color spans and markdown highlights:
     # Highlight tag ==text== -> Deep Amber bold
     text = re.sub(r"==([^=]+?)==", rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text)
@@ -310,6 +309,7 @@ def inline(text: str) -> str:
     text = re.sub(r"&lt;(/?)u&gt;", r"<\1u>", text)
     text = re.sub(r"&lt;(/?)sup&gt;", r"<\1sup>", text)
     text = re.sub(r"&lt;(/?)sub&gt;", r"<\1sub>", text)
+    text = re.sub(r"&lt;br\s*/?&gt;", "<br/>", text, flags=re.IGNORECASE)
     text = re.sub(r"&lt;(/?)font(.*?)&gt;", r"<\1font\2>", text)
     text = text.replace("&amp;rarr;", "&rarr;").replace("&amp;larr;", "&larr;").replace("&amp;harr;", "&harr;")
     text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;").replace("&amp;bull;", "&bull;")
@@ -940,7 +940,15 @@ def build(src: Path | None = None, out: Path | None = None,
     SOURCE_URL = source_url
     DOC_RUNTIME_TITLE = title
 
-    md = src.read_text(encoding="utf-8")
+    raw = src.read_bytes()
+    for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
+        try:
+            md = raw.decode(enc)
+            break
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    else:
+        md = raw.decode("utf-8", errors="replace")
 
     # --- preprocess for features -------------------------------------------
     summary_md: str | None = None

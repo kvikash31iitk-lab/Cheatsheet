@@ -613,6 +613,7 @@ GROQ_FALLBACK_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compoun
 def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                  cost_sink: Optional[dict] = None) -> str:
     # Keep prompt bounded so total request + completion is strictly <= 7500 (under 8k TPM cap)
+    prompt_tokens = est_tokens(system) + est_tokens(user)
     if prompt_tokens > 3800:
         user = user[:11400]
         prompt_tokens = est_tokens(system) + est_tokens(user)
