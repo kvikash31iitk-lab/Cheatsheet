@@ -223,7 +223,8 @@ def consolidate_markdowns(
     for display_idx, item in enumerate(sorted_items, start=1):
         idx = item.get("playlist_index", display_idx)
         title = item.get("title") or f"Module {display_idx}"
-        anchor = f"module-{display_idx}-{item.get('video_id', '')}"
+        raw_anchor = f"module-{display_idx}-{item.get('video_id', '')}"
+        anchor = re.sub(r'[^a-zA-Z0-9-]', '-', raw_anchor).strip('-')
         lines.append(f"{display_idx}. [{title}](#{anchor})")
 
     lines.append("")
@@ -232,7 +233,8 @@ def consolidate_markdowns(
 
     for display_idx, item in enumerate(sorted_items, start=1):
         title = item.get("title") or f"Module {display_idx}"
-        anchor = f"module-{display_idx}-{item.get('video_id', '')}"
+        raw_anchor = f"module-{display_idx}-{item.get('video_id', '')}"
+        anchor = re.sub(r'[^a-zA-Z0-9-]', '-', raw_anchor).strip('-')
         md_path_str = item.get("markdown_path")
 
         lines.append(f"<a id='{anchor}'></a>")

@@ -240,7 +240,8 @@ def _clean_latex_math(text: str) -> str:
     # Convert subscripts and superscripts
     text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
     text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
-    text = re.sub(r'(?<=[a-zA-Z0-9])_([0-9a-zA-Z]+)', r'<sub>\1</sub>', text)
+    # Only convert single-symbol math subscripts like x_1, a_0, v_i, not words_with_underscores, URLs, or IDs
+    text = re.sub(r'(?<=[a-zA-Z])_([0-9]{1,2}|[ijkmnpt])(?![a-zA-Z0-9_-])', r'<sub>\1</sub>', text)
 
     # Clean up math dollar signs $...$
     text = re.sub(r'\$([^\$]+)\$', r'\1', text)

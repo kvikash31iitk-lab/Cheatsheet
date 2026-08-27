@@ -251,7 +251,8 @@ def _clean_latex_math(text: str) -> str:
     # 4. Superscripts and Subscripts
     text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
     text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
-    text = re.sub(r'(?<=[a-zA-Z0-9])_([0-9a-zA-Z]+)', r'<sub>\1</sub>', text)
+    # Only convert single-symbol math subscripts like x_1, a_0, v_i, not words_with_underscores, URLs, or IDs
+    text = re.sub(r'(?<=[a-zA-Z])_([0-9]{1,2}|[ijkmnpt])(?![a-zA-Z0-9_-])', r'<sub>\1</sub>', text)
 
     # 5. Clean up math dollar signs $...$
     text = re.sub(r'\$([^\$]+)\$', r'\1', text)
@@ -306,34 +307,24 @@ def inline(text: str) -> str:
     text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)
     
     # Convert bold: Intelligent semantic coloring
-    # Numbers, sections, years, monetary amounts, penalties -> Amber
-    # Statutory acts, institutions, judicial cases, Latin maxims -> Royal Blue
-    # Prohibitions/Fines/Disqualifications -> Crimson Red
-    # Approvals/Exceptions/Permitted -> Emerald Green
     def _bold_repl(m):
         inner = m.group(1).strip()
-        # Prohibitions & Warnings
         if re.search(r"\b(prohibit|forbidden|illegal|penalty|fine|imprisonment|punish|disqualif|void|offence|breach|guilty|fail|trap|warning|danger)\b", inner, re.I):
             return f'<font color="{COLOR_RED}"><b>{inner}</b></font>'
-        # Statutory sections, articles, acts, institutions
         elif re.search(r"\b(section|sec\.|article|art\.|act|code|tribunal|commission|board|cbt|epfo|ilo|ministry|court|parliament|ordinance)\b", inner, re.I):
             return f'<font color="{COLOR_BLUE}"><b>{inner}</b></font>'
-        # Positive / thresholds / approvals
         elif re.search(r"\b(valid|eligible|approved|entitled|exempt|allowed|permitted|benefit|relief|right)\b", inner, re.I):
             return f'<font color="{COLOR_GREEN}"><b>{inner}</b></font>'
-        # Numbers, percentages, money, dates, time limits
         elif re.search(r"(\b\d+[\d,\.]*\b|%|rs\.|rupees|days|months|years|hours|timeline|schedule|threshold|ceiling)", inner, re.I):
             return f'<font color="{COLOR_AMBER}"><b>{inner}</b></font>'
         else:
-            # Default strong keyword: Rich Navy / Dark Blue
             return f'<font color="#1E3A8A"><b>{inner}</b></font>'
             
     text = re.sub(r"\*\*(.+?)\*\*", _bold_repl, text)
     text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)", lambda m: f'<u>{m.group(1)}</u>', text)
     text = re.sub(r"`([^`]+?)`", r'<font face="Courier" size="8.5" color="#1E3A8A">\1</font>', text)
     
-    # 7. Automatic Statutory Fact Highlighting (Numbers with time/money/percentage units not already enclosed in font tags)
-    # Highlights: 7 days, 14 days, 2 months, 6 weeks, 120 days, 50%, Rs. 5000, etc.
+    # 7. Automatic Statutory Fact Highlighting
     fact_re = re.compile(
         r'(?i)(?<![#\w>])'
         r'('
@@ -346,11 +337,16 @@ def inline(text: str) -> str:
     )
     text = fact_re.sub(rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text)
 
-    
-    # Unescape allowed ReportLab tags
-    text = re.sub(r"&lt;a name=(.*?)&gt;", r'<a name=\1>', text)
+    # Unescape allowed ReportLab tags safely
+    def _clean_anchor(m):
+        raw_val = m.group(1).strip("'\"")
+        clean_val = re.sub(r'<[^>]*>', '', raw_val)
+        clean_val = re.sub(r'&(?:lt|gt|amp|quot);', '', clean_val)
+        clean_val = re.sub(r'[^a-zA-Z0-9_-]', '-', clean_val).strip('-')
+        return f'<a name="{clean_val}">'
+
+    text = re.sub(r"&lt;a\s+(?:name|id)=(.*?)&gt;", _clean_anchor, text)
     text = re.sub(r"&lt;/a&gt;", r'</a>', text)
-    text = re.sub(r"&lt;a id=(.*?)&gt;", r'<a name=\1>', text)
     text = re.sub(r"&lt;(/?)b&gt;", r"<\1b>", text)
     text = re.sub(r"&lt;(/?)i&gt;", r"<\1i>", text)
     text = re.sub(r"&lt;(/?)u&gt;", r"<\1u>", text)
@@ -361,6 +357,17 @@ def inline(text: str) -> str:
     text = text.replace("&amp;rarr;", "&rarr;").replace("&amp;larr;", "&larr;").replace("&amp;harr;", "&harr;")
     text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;").replace("&amp;bull;", "&bull;")
     return text
+
+
+def make_para(text: str, style: ParagraphStyle) -> Paragraph:
+    """Create a ReportLab Paragraph with automatic self-healing fallback against malformed XML."""
+    try:
+        return Paragraph(text, style)
+    except Exception as exc:
+        # Strip all tags and escape basic XML entities
+        plain = re.sub(r'<[^>]*>', '', text)
+        plain = plain.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        return Paragraph(plain, style)
 
 
 
@@ -670,22 +677,22 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
     body_paras = []
     for k2, p2 in parse_blocks(pseudo):
         if k2 == "p":
-            body_paras.append(Paragraph(inline(p2), CO_BODY))
+            body_paras.append(make_para(inline(p2), CO_BODY))
         elif k2 == "ul":
             for it in p2:
-                body_paras.append(Paragraph(
+                body_paras.append(make_para(
                     f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}',
                     ParagraphStyle("co_li", parent=CO_BODY, leftIndent=10,
                                    firstLineIndent=-10, spaceAfter=1)))
         elif k2 == "ol":
             for it in p2:
                 num, text_val = (it[0], it[1]) if (isinstance(it, tuple) and len(it) == 2) else (1, it)
-                body_paras.append(Paragraph(
+                body_paras.append(make_para(
                     f'<b>{num}.</b> {inline(text_val)}',
                     ParagraphStyle("co_oi", parent=CO_BODY, leftIndent=14,
                                    firstLineIndent=-12, spaceAfter=1)))
 
-    inner = Table([[Paragraph(inline(label), CO_LABEL)]] + [[p] for p in body_paras],
+    inner = Table([[make_para(inline(label), CO_LABEL)]] + [[p] for p in body_paras],
                   colWidths=[BODY_W])
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), spec["bar"]),
@@ -709,9 +716,9 @@ def make_table(header, rows):
                         alignment=TA_LEFT, spaceAfter=0)
     td = ParagraphStyle("td", parent=BODY, fontName="Helvetica",
                         fontSize=9.2, leading=12.2, alignment=TA_JUSTIFY, spaceAfter=0, textColor=INK)
-    data = [[Paragraph(inline(c), th) for c in header]]
+    data = [[make_para(inline(c), th) for c in header]]
     for r in rows:
-        data.append([Paragraph(inline(c), td) for c in r])
+        data.append([make_para(inline(c), td) for c in r])
     col_w = BODY_W / len(header)
     t = Table(data, colWidths=[col_w] * len(header), repeatRows=1)
     t.setStyle(TableStyle([
@@ -734,7 +741,7 @@ def make_table(header, rows):
 def make_ul(items):
     bs = ParagraphStyle("Bul", parent=BODY, leading=14.2, alignment=TA_JUSTIFY,
                         spaceAfter=3.0, leftIndent=12, firstLineIndent=-9, textColor=INK)
-    return [Paragraph(
+    return [make_para(
         f'<font color="{ACCENT_HEX}"><b>&bull;</b></font> {inline(it)}', bs)
         for it in items]
 
@@ -749,7 +756,7 @@ def make_ol(items):
             num, it = item
         else:
             num, it = 1, item
-        res.append(Paragraph(f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {inline(it)}', ns))
+        res.append(make_para(f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {inline(it)}', ns))
     return res
 
 
@@ -872,14 +879,14 @@ def _parse_ascii_table(code_text: str):
 
 def render_block(kind, payload, story):
     if kind == "h1":
-        story.append(Paragraph(inline(payload), DOC_TITLE)); return
+        story.append(make_para(inline(payload), DOC_TITLE)); return
     if kind == "h2":
-        story.append(Paragraph(inline(payload), H1))
+        story.append(make_para(inline(payload), H1))
         return
     if kind in ("h3", "h4", "h5", "h6"):
-        story.append(Paragraph(inline(payload), H2)); return
+        story.append(make_para(inline(payload), H2)); return
     if kind == "p":
-        story.append(Paragraph(inline(payload), BODY)); return
+        story.append(make_para(inline(payload), BODY)); return
     if kind == "ul":
         story.extend(make_ul(payload)); return
     if kind == "ol":
@@ -892,7 +899,7 @@ def render_block(kind, payload, story):
         q = ParagraphStyle("q", parent=BODY, fontName="Helvetica-Oblique",
                            textColor=ACCENT, leftIndent=12, rightIndent=12,
                            spaceBefore=2, spaceAfter=4, fontSize=9.5)
-        story.append(Paragraph(inline(payload), q)); return
+        story.append(make_para(inline(payload), q)); return
     if kind == "table":
         story.append(Spacer(1, 1))
         story.append(make_table(*payload))

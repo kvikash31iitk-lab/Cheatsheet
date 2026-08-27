@@ -51,6 +51,11 @@ HIGHLIGHT = colors.HexColor("#D97706")
 MUTED = colors.HexColor("#4B5563")
 RULE = colors.HexColor("#E5E7EB")
 
+COLOR_AMBER = "#B45309"
+COLOR_RED = "#B91C1C"
+COLOR_GREEN = "#15803D"
+COLOR_BLUE = "#1D4ED8"
+
 CALLOUTS = {
     "correct": {"label": "CORRECT ANSWER", "bar": CORRECT_GREEN, "tint": colors.HexColor("#FFFFFF")},
     "def":     {"label": "DEF",  "bar": colors.HexColor("#1D4ED8"), "tint": colors.HexColor("#FFFFFF")},
@@ -207,11 +212,12 @@ def _clean_latex_math(text: str) -> str:
     for k, v in symbols.items():
         text = re.sub(re.escape(k) + r'(?![a-zA-Z])', v, text)
     text = text.replace('≈', '~')
-
+    
     # Convert subscripts and superscripts: Mass_{middle} -> Mass<sub>middle</sub>
     text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
     text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
-    text = re.sub(r'(?<=[a-zA-Z0-9])_([0-9a-zA-Z]+)', r'<sub>\1</sub>', text)
+    # Only convert single-symbol math subscripts like x_1, a_0, v_i, not words_with_underscores, URLs, or IDs
+    text = re.sub(r'(?<=[a-zA-Z])_([0-9]{1,2}|[ijkmnpt])(?![a-zA-Z0-9_-])', r'<sub>\1</sub>', text)
 
     # Strip $ math delimiters
     text = re.sub(r'\$([^\$]+)\$', r'\1', text)
@@ -221,14 +227,12 @@ def _clean_latex_math(text: str) -> str:
     return text
 
 
-sanitize_math_expressions = _clean_latex_math
-
-
 def inline(text: str) -> str:
-    """Escape XML and apply formatting for ReportLab Paragraphs."""
     text = _clean_latex_math(text)
+    if not text.strip():
+        return ''
 
-    # Convert Unicode sub/superscripts & arrows to ReportLab tags
+    # Unicode sub/superscript map
     sub_map = {
         '₀': '<sub>0</sub>', '₁': '<sub>1</sub>', '₂': '<sub>2</sub>', '₃': '<sub>3</sub>', '₄': '<sub>4</sub>',
         '₅': '<sub>5</sub>', '₆': '<sub>6</sub>', '₇': '<sub>7</sub>', '₈': '<sub>8</sub>', '₉': '<sub>9</sub>',
@@ -246,32 +250,69 @@ def inline(text: str) -> str:
     text = text.replace('→', '&rarr;').replace('←', '&larr;').replace('↔', '&harr;').replace('Δ', '&Delta;').replace('°', '&deg;')
 
     text = _ascii_safe(text)
-
-    # XML escape
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    # Code tags `code`
-    text = re.sub(
-        r"`([^`]+)`",
-        r'<font name="Courier" size="8.5" color="#1E3A8A">\1</font>',
-        text,
-    )
+    # Highlights
+    text = re.sub(r"==([^=]+?)==", rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text)
+    text = re.sub(r"\[red\](.*?)\[/red\]", rf'<font color="{COLOR_RED}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[green\](.*?)\[/green\]", rf'<font color="{COLOR_GREEN}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[blue\](.*?)\[/blue\]", rf'<font color="{COLOR_BLUE}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[amber\](.*?)\[/amber\]", rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text, flags=re.IGNORECASE)
 
-    # Bold **text**
-    text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
+    # Triple asterisks
+    text = re.sub(r"\*\*\*(.+?)\*\*\*", rf'<font color="{COLOR_AMBER}"><b><i>\1</i></b></font>', text)
+    # Italics
+    text = re.sub(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])", r"<i>\1</i>", text)
+    text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)
 
-    # Italic *text*
-    text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<i>\1</i>", text)
+    # Bold: semantic coloring
+    def _bold_repl(m):
+        inner = m.group(1).strip()
+        if re.search(r"\b(incorrect|wrong|false|trap|not|never|except|cannot|violate|penalty|fine)\b", inner, re.I):
+            return f'<font color="{COLOR_RED}"><b>{inner}</b></font>'
+        elif re.search(r"\b(correct|true|right|valid|answer|key|solution|formula|law|principle)\b", inner, re.I):
+            return f'<font color="{COLOR_GREEN}"><b>{inner}</b></font>'
+        elif re.search(r"\b(article|section|act|amendment|case|statute|schedule|commission|ministry)\b", inner, re.I):
+            return f'<font color="{COLOR_BLUE}"><b>{inner}</b></font>'
+        elif re.search(r"(\b\d+[\d,\.]*\b|%|rs\.|rupees|years?|months?|days?|hours?)", inner, re.I):
+            return f'<font color="{COLOR_AMBER}"><b>{inner}</b></font>'
+        else:
+            return f'<font color="#1E3A8A"><b>{inner}</b></font>'
 
-    # Unescape allowed ReportLab tags
+    text = re.sub(r"\*\*(.+?)\*\*", _bold_repl, text)
+    text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)", lambda m: f'<u>{m.group(1)}</u>', text)
+    text = re.sub(r"`([^`]+?)`", r'<font face="Courier" size="8.5" color="#1E3A8A">\1</font>', text)
+
+    # Unescape allowed ReportLab tags safely
+    def _clean_anchor(m):
+        raw_val = m.group(1).strip("'\"")
+        clean_val = re.sub(r'<[^>]*>', '', raw_val)
+        clean_val = re.sub(r'&(?:lt|gt|amp|quot);', '', clean_val)
+        clean_val = re.sub(r'[^a-zA-Z0-9_-]', '-', clean_val).strip('-')
+        return f'<a name="{clean_val}">'
+
+    text = re.sub(r"&lt;a\s+(?:name|id)=(.*?)&gt;", _clean_anchor, text)
+    text = re.sub(r"&lt;/a&gt;", r'</a>', text)
     text = re.sub(r"&lt;(/?)b&gt;", r"<\1b>", text)
     text = re.sub(r"&lt;(/?)i&gt;", r"<\1i>", text)
+    text = re.sub(r"&lt;(/?)u&gt;", r"<\1u>", text)
     text = re.sub(r"&lt;(/?)sup&gt;", r"<\1sup>", text)
     text = re.sub(r"&lt;(/?)sub&gt;", r"<\1sub>", text)
+    text = re.sub(r"&lt;br\s*/?&gt;", "<br/>", text, flags=re.IGNORECASE)
     text = re.sub(r"&lt;(/?)font(.*?)&gt;", r"<\1font\2>", text)
     text = text.replace("&amp;rarr;", "&rarr;").replace("&amp;larr;", "&larr;").replace("&amp;harr;", "&harr;")
-    text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;")
+    text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;").replace("&amp;bull;", "&bull;")
     return text
+
+
+def make_para(text: str, style: ParagraphStyle) -> Paragraph:
+    """Create a ReportLab Paragraph with automatic self-healing fallback against malformed XML."""
+    try:
+        return Paragraph(text, style)
+    except Exception:
+        plain = re.sub(r'<[^>]*>', '', text)
+        plain = plain.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        return Paragraph(plain, style)
 
 
 def parse_blocks(md: str) -> list[tuple[str, any]]:
