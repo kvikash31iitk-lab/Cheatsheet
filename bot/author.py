@@ -65,13 +65,9 @@ OUTPUT FORMAT — must be valid markdown that follows this exact skeleton:
 ## 2. <Next concept>
 ...
 
-## N. Glossary
-- **Term** - definition
-- **Term** - definition
-
 CALLOUT TYPES (use the exact bracket syntax shown):
 - `> [!def]` — definitions
-- `> [!example]` — concrete examples & solved problems
+- `> [!example]` — concrete examples, calculations & solved step-by-step walkthroughs
 - `> [!tip]` — pro tips & mental shortcuts
 - `> [!warning]` — common exam pitfalls & traps to avoid
 - `> [!revise]` — TL;DR / "Revise in 60 Seconds" recap
@@ -90,7 +86,12 @@ RULES:
 5. Output ONLY the markdown content. No preamble. No code-fence wrappers around the whole document.
 6. Use ASCII punctuation only. Write `->`, `~`, `Rs.`, straight quotes, and ordinary `-`; never use Unicode arrows, `≈`, `₹`, smart quotes, or Unicode dashes.
 7. Keep callout titles plain text. Do not put `**bold**`, `_italic_`, or backticks inside the `[!type] Title` portion.
-8. MATH & FORMULA TYPOGRAPHY: Format all formulas and equations using clean, readable arithmetic typography (e.g. Mass_middle = (Mass_1st + Mass_3rd) / 2, v = u + a*t, E = m*c^2) rather than raw unrendered LaTeX \frac{}{} code. Avoid dollar signs ($) and raw LaTeX macros.
+8. MATH & CALCULATION TYPOGRAPHY:
+   - Format all formulas and equations using clean arithmetic typography (e.g. `Mass_middle = (Mass_1st + Mass_3rd) / 2`, `v = u + a*t`). Avoid raw LaTeX macros.
+   - For numerical examples, practical walkthroughs, and multi-step calculations: ALWAYS format as structured multi-line numbered steps (1., 2., 3.) inside `> [!example]`, or use structured markdown tables `| Step | Component | Calculation / Rule | Amount |`. NEVER cram multi-step numbers into a single unformatted sentence.
+9. SPATIAL EFFICIENCY & RIGHT-MARGIN UTILIZATION:
+   - Use horizontal space judiciously: Present comparative rules, multi-step case rules, and parameter variations in structured Markdown tables rather than narrow single-column lists that leave 60% of the page empty on the right.
+   - For Glossaries: Do NOT write massive 20-bullet vertical lists. Keep glossary to 6-8 essential technical terms or summarize key terms directly within their respective concept sections.
 
 QUALITY FLOOR:
 - Preserve concrete numbers, examples, decision rules, formulas, sequences, caveats, and reasoning.

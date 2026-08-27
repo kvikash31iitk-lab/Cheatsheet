@@ -394,7 +394,8 @@ def _clean_list_item(text: str) -> str:
     return text.strip()
 
 
-CALLOUT_RE = re.compile(r"^>\s*\[!(\w+)\](.*)$")
+CALLOUT_RE = re.compile(r"^>\s*(?:\*\*)?\[!(\w+)\](?:\*\*)?(.*)$", re.IGNORECASE)
+INLINE_CALLOUT_RE = re.compile(r"^\[(example|tip|warning|trap|revise|note|def|correct)\]\s*(.*)$", re.IGNORECASE)
 IMAGE_RE = re.compile(r"^!\[([^\]]*)\]\(([^)]+)\)\s*$")
 
 
@@ -409,29 +410,46 @@ def parse_blocks(md: str):
             yield ("hr", None); i += 1; continue
         m_img = IMAGE_RE.match(stripped)
         if m_img:
-            # Cheatsheets historically skipped images (text-only format), but
-            # the optional `mermaid` feature emits image references for the
-            # rendered diagrams. We now yield the block; render_block decides
-            # whether to actually draw it (cheap, missing files fall back to
-            # an italic placeholder line).
             yield ("image", (m_img.group(1).strip(), m_img.group(2).strip()))
             i += 1; continue
         m = re.match(r"^(#{1,6})\s+(.*)$", stripped)
         if m:
             yield (f"h{len(m.group(1))}", m.group(2).strip()); i += 1; continue
+            
         m = CALLOUT_RE.match(stripped)
         if m:
             kind = m.group(1).lower(); title = m.group(2).strip()
             buf: list[str] = []
             i += 1
             while i < len(lines) and lines[i].strip().startswith(">"):
-                buf.append(lines[i].strip().lstrip(">").strip()); i += 1
+                raw_l = lines[i].strip().lstrip(">").strip()
+                # Check for chained callouts inside blockquote like > **[!tip]**
+                m_sub = CALLOUT_RE.match(f"> {raw_l}")
+                if m_sub:
+                    break
+                buf.append(raw_l)
+                i += 1
             yield ("callout", (kind, title, buf)); continue
+
+        m_ic = INLINE_CALLOUT_RE.match(stripped)
+        if m_ic:
+            kind = m_ic.group(1).lower(); content = m_ic.group(2).strip()
+            # If content contains numbered steps, split them cleanly
+            if re.search(r'\b\d+\.\s+', content):
+                body_lines = [s.strip() for s in re.split(r'(?=\b\d+\.\s+)', content) if s.strip()]
+            else:
+                body_lines = [content]
+            yield ("callout", (kind, "", body_lines)); i += 1; continue
+
         if stripped.startswith(">"):
             buf = []
             while i < len(lines) and lines[i].strip().startswith(">"):
-                buf.append(lines[i].strip().lstrip(">").strip()); i += 1
-            yield ("quote", " ".join(b for b in buf if b)); continue
+                raw_l = lines[i].strip().lstrip(">").strip()
+                m_sub = CALLOUT_RE.match(f"> {raw_l}")
+                if m_sub:
+                    break
+                buf.append(raw_l); i += 1
+            yield ("callout", ("note", "", buf)); continue
         if "|" in stripped and i + 1 < len(lines) and re.match(r"^[\s\|:\-]+$", lines[i+1].strip()) and "|" in lines[i+1]:
             header = [c.strip() for c in stripped.strip("|").split("|")]
             i += 2; rows = []
@@ -739,17 +757,90 @@ def make_table(header, rows):
 
 
 def make_ul(items):
-    bs = ParagraphStyle("Bul", parent=BODY, leading=14.2, alignment=TA_JUSTIFY,
-                        spaceAfter=3.0, leftIndent=12, firstLineIndent=-9, textColor=INK)
+    # If list has 4+ items and mostly short definitions / key-value items (like glossary),
+    # render in an elegant 2-column balanced grid to save vertical height and utilize right margin!
+    is_glossary = (
+        len(items) >= 4 and
+        sum(1 for it in items if (" - " in it or " – " in it or " — " in it or ": " in it or "**" in it) and len(it) < 140) >= len(items) * 0.65
+    )
+    if is_glossary:
+        col_w = (BODY_W - 6) / 2
+        half = (len(items) + 1) // 2
+        col1 = items[:half]
+        col2 = items[half:]
+        
+        gloss_style = ParagraphStyle(
+            "GlossItem", parent=BODY, fontName="Helvetica",
+            fontSize=8.8, leading=11.6, textColor=INK, spaceAfter=2.0, alignment=TA_LEFT,
+            leftIndent=8, firstLineIndent=-8
+        )
+        
+        table_rows = []
+        for i in range(max(len(col1), len(col2))):
+            p1 = make_para(f'<font color="{ACCENT_HEX}"><b>&bull;</b></font> {inline(col1[i])}', gloss_style) if i < len(col1) else Paragraph("", gloss_style)
+            p2 = make_para(f'<font color="{ACCENT_HEX}"><b>&bull;</b></font> {inline(col2[i])}', gloss_style) if i < len(col2) else Paragraph("", gloss_style)
+            table_rows.append([p1, p2])
+            
+        t = Table(table_rows, colWidths=[col_w, col_w])
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 2),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+        ]))
+        return [t, Spacer(1, 2)]
+
+    bs = ParagraphStyle("Bul", parent=BODY, leading=13.5, alignment=TA_LEFT,
+                        spaceAfter=2.5, leftIndent=12, firstLineIndent=-9, textColor=INK)
     return [make_para(
         f'<font color="{ACCENT_HEX}"><b>&bull;</b></font> {inline(it)}', bs)
         for it in items]
 
 
-
 def make_ol(items):
-    ns = ParagraphStyle("Num", parent=BODY, leading=14.2, alignment=TA_JUSTIFY,
-                        spaceAfter=3.0, leftIndent=14, firstLineIndent=-12, textColor=INK)
+    # If list has 4+ short step / calculation items, render in a 2-column balanced grid to utilize right margin
+    all_short = len(items) >= 4 and all(len(it[1] if isinstance(it, tuple) else str(it)) < 65 for it in items)
+    if all_short:
+        col_w = (BODY_W - 6) / 2
+        half = (len(items) + 1) // 2
+        col1 = items[:half]
+        col2 = items[half:]
+        
+        step_style = ParagraphStyle(
+            "StepItem", parent=BODY, fontName="Helvetica",
+            fontSize=9.0, leading=12.0, textColor=INK, spaceAfter=2.0, alignment=TA_LEFT,
+            leftIndent=12, firstLineIndent=-10
+        )
+        
+        table_rows = []
+        for i in range(max(len(col1), len(col2))):
+            if i < len(col1):
+                num1, it1 = (col1[i][0], col1[i][1]) if isinstance(col1[i], tuple) else (i + 1, col1[i])
+                p1 = make_para(f'<b><font color="{ACCENT_HEX}">{num1}.</font></b> {inline(it1)}', step_style)
+            else:
+                p1 = Paragraph("", step_style)
+                
+            if i < len(col2):
+                num2, it2 = (col2[i][0], col2[i][1]) if isinstance(col2[i], tuple) else (half + i + 1, col2[i])
+                p2 = make_para(f'<b><font color="{ACCENT_HEX}">{num2}.</font></b> {inline(it2)}', step_style)
+            else:
+                p2 = Paragraph("", step_style)
+                
+            table_rows.append([p1, p2])
+            
+        t = Table(table_rows, colWidths=[col_w, col_w])
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 2),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+        ]))
+        return [t, Spacer(1, 2)]
+
+    ns = ParagraphStyle("Num", parent=BODY, leading=13.5, alignment=TA_LEFT,
+                        spaceAfter=2.5, leftIndent=14, firstLineIndent=-12, textColor=INK)
     res = []
     for item in items:
         if isinstance(item, tuple) and len(item) == 2:
