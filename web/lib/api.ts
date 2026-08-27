@@ -123,10 +123,19 @@ export function friendlyGenerationError(error: unknown): string {
   }
 
   if (
+    lower.includes('unauthenticated') ||
+    lower.includes('invalid authentication credentials') ||
+    lower.includes('api_key') ||
+    lower.includes('invalid api key')
+  ) {
+    return 'AI authoring service encountered an authentication issue. Please try again or contact support.';
+  }
+
+  if (
     lower.includes('cookies are no longer valid') ||
     lower.includes('cookies have expired') ||
     lower.includes('cookies have likely been rotated') ||
-    (lower.includes('cookie') && lower.includes('authentication'))
+    (lower.includes('youtube') && lower.includes('cookie'))
   ) {
     return 'YouTube access needs to be refreshed. Please try again later or contact support.';
   }
