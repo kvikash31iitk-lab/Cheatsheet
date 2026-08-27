@@ -1,4 +1,4 @@
-﻿"""Helper to automatically save all generated PDFs, Markdown notes, and ZIP bundles
+"""Helper to automatically save all generated PDFs, Markdown notes, and ZIP bundles
 into the root 'saved files' directory with clean, human-readable titles.
 """
 from __future__ import annotations
@@ -22,11 +22,34 @@ KIND_LABELS = {
 }
 
 
+def clean_human_title(name: str) -> str:
+    """Extract a clean, human-readable topic name from raw video titles."""
+    if not name or name.startswith("http"):
+        return "Lecture Note"
+    
+    t = name
+    # Strip emojis and non-ascii
+    t = re.sub(r'[^\x00-\x7F]+', ' ', t)
+    # Remove leading numbering like '26 '
+    t = re.sub(r'^\d+\s+', '', t)
+    # Remove common prefix boilerplates
+    t = re.sub(r'^UPSC\s+EPFO\s+(?:AO/?EO\s*(?:&|and)?\s*)?(?:APFC\s*)?\|\s*', '', t, flags=re.I)
+    t = re.sub(r'^General Accounting Principles\s*\|\s*', '', t, flags=re.I)
+    t = re.sub(r'^EPFO Complete Course\s*\|\s*', '', t, flags=re.I)
+    # Remove trailing teacher / channel tags
+    t = re.sub(r'\|\s*(?:By\s+)?(?:Anurag\s*Sir|EPFO Exam Preparation|EduTap|Civilstap|Anuj Jindal|MBA Pathshala|MBA Wallah|Vijay Sir|Smriti Shah|Raj Shamani).*$', '', t, flags=re.I)
+    t = re.sub(r'[\\/*?:"<>|\r\n\t]', '_', t)
+    t = re.sub(r'_+', '_', t).strip(' _.-|')
+    return t if t else name[:60]
+
+
 def sanitize_filename(name: str) -> str:
     """Sanitize title into a safe Windows/Linux filename."""
     if not name:
         return "Document"
-    cleaned = re.sub(r'[\\/*?:"<>|\r\n\t]', '_', name).strip()
+    # If the title is just a raw YouTube video ID (e.g. 11 characters alphanumeric/hyphen/underscore)
+    cleaned = clean_human_title(name)
+    cleaned = re.sub(r'[\\/*?:"<>|\r\n\t]', '_', cleaned).strip()
     cleaned = re.sub(r'_+', '_', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned)
     return cleaned[:110].strip(" _.")

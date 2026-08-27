@@ -1,4 +1,4 @@
-﻿# Cheatsheet AI - Engineering Rules & Architectural Invariants
+# Cheatsheet AI - Engineering Rules & Architectural Invariants
 
 This document serves as the permanent reference and checklist for all agents and developers modifying the Cheatsheet codebase. **Every change must adhere to these invariants to prevent breaking existing functionality.**
 
@@ -11,10 +11,12 @@ This document serves as the permanent reference and checklist for all agents and
    * All commands, backend routes, frontend components, and tests must execute directly against this workspace.
    * Do not copy intermediate files to arbitrary directories (e.g. `Downloads`) unless explicitly initiated by the user.
 
-2. **Saved Files Folder (`saved files/`):**
-   * All successfully compiled PDFs, Markdown notes, and playlist ZIPs are automatically saved to `C:\Users\HP\VIkash\Cheetsheet\saved files/` via `bot.file_saver.save_generated_artifacts`.
-   * Files must be saved with clean, human-readable titles (e.g., `UPSC EPFO General Science 88 MCQ Marathon - Solved MCQs.pdf`).
-   * `saved files/` is ignored by Git in `.gitignore` to keep the repo clean and lightweight.
+2. **Saved Files & ZIP Naming Invariant:**
+   * **NEVER** save files or zip contents named after raw YouTube video IDs (e.g. `002_03FeQRI7KjI.pdf`, `ZTWSHhg2-Mk.pdf`).
+   * Every single PDF, Markdown note, and ZIP entry must have its clean, human-readable video title extracted from `source.json` / `meta.json` or Markdown `# Title`.
+   * Strip repetitive channel boilerplate and instructor tags (`| By Anurag Sir`, `UPSC EPFO AO/EO & APFC |`).
+   * Inside Playlist ZIPs, modules must be numbered sequentially: `01. <Clean Title> - <Kind>.pdf`.
+   * All outputs are automatically synced to `C:\Users\HP\VIkash\Cheetsheet\saved files/` via `bot.file_saver.save_generated_artifacts`.
 
 ---
 
