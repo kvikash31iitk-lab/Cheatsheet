@@ -90,6 +90,7 @@ RULES:
 5. Output ONLY the markdown content. No preamble. No code-fence wrappers around the whole document.
 6. Use ASCII punctuation only. Write `->`, `~`, `Rs.`, straight quotes, and ordinary `-`; never use Unicode arrows, `≈`, `₹`, smart quotes, or Unicode dashes.
 7. Keep callout titles plain text. Do not put `**bold**`, `_italic_`, or backticks inside the `[!type] Title` portion.
+8. MATH & FORMULA TYPOGRAPHY: Format all formulas and equations using clean, readable arithmetic typography (e.g. Mass_middle = (Mass_1st + Mass_3rd) / 2, v = u + a*t, E = m*c^2) rather than raw unrendered LaTeX \frac{}{} code. Avoid dollar signs ($) and raw LaTeX macros.
 
 QUALITY FLOOR:
 - Preserve concrete numbers, examples, decision rules, formulas, sequences, caveats, and reasoning.
@@ -153,7 +154,7 @@ CRITICAL RULES:
 1. FULL COVERAGE GUARANTEE: You must extract and author EVERY SINGLE question present in the transcript from start to finish. If the video covers 10, 12, 20, or 30 questions, you MUST generate cards for ALL of them without dropping questions from the middle or end of the video.
 2. Complete Problem Statements: Write out full question text with numbered statements (1, 2, 3...) and all 4 options (A, B, C, D).
 3. Option Analysis: Analyze every option thoroughly so the student understands why wrong options are eliminated.
-4. MATH & FORMULA TYPOGRAPHY: Write all mathematical formulas, fractions, chemical reactions, and physical equations in clean, readable standard text (e.g. `1/10 + 1/15 + 1/6 = 20/60 = 1/3`, `Total Rate = (6 + 4 + 10)/60`, `x^2 + y^2 = r^2`, `2H2 + O2 -> 2H2O`, `~10.33`, `P = V * I`). DO NOT output raw unparsed LaTeX macros like `\\frac{}{}`, `\\approx`, `\\text{}`, or enclosing dollar signs `$`.
+4. MATH & FORMULA TYPOGRAPHY: Format all formulas and equations using clean, readable arithmetic typography (e.g. Mass_middle = (Mass_1st + Mass_3rd) / 2, v = u + a*t, E = m*c^2, 1/10 + 1/15 + 1/6 = 20/60 = 1/3, Total Rate = (6 + 4 + 10)/60, x^2 + y^2 = r^2, 2H2 + O2 -> 2H2O, ~10.33, P = V * I) rather than raw unrendered LaTeX \frac{}{} code. DO NOT output raw unparsed LaTeX macros like \frac{}{}, frac{}{}, \approx, \text{}, or enclosing dollar signs $.
 5. VISUAL DIAGRAMS FOR ARRANGEMENTS & GEOMETRY: When solving Seating Arrangements (Circular or Linear rows), Floor/Matrix Puzzles, Triangles/Geometry, or Venn Diagrams, include a visual diagram block in the explanation:
 ```arrangement:circular
 seats: 8
@@ -239,11 +240,7 @@ CRITICAL RULES:
 2. RICH STRUCTURAL BOXES: Include formal Definition cards (> [!def]), Step-by-step Worked Examples (> [!example]), Pro Tips (> [!tip]), Pitfalls & Watch Outs (> [!warning]), and Chapter Master Revision Matrices (> [!revise]).
 3. NO SCREENSHOT FRAMES: Do NOT insert random video frame screenshots or image tags. Focus 100% on rich, structured typography, analytical tables, callouts, formulas, and vector diagrams.
 4. PRESERVE TIMESTAMPS: Include timestamp ranges in chapter and sub-section headings (e.g. `## Chapter 2: Parallel Row Seating [15:30 - 32:15]`).
-5. MATHEMATICAL & CHEMICAL TYPOGRAPHY: Format all formulas, equations, fractions, and reactions in clean readable notation:
-   - Fractions: `(a + b)/c` or `(6 + 4 + 10)/60 = 20/60 = 1/3`
-   - Formulas: `x^2 + y^2 = r^2`, `P = V * I`
-   - Chemistry: `2H2 + O2 -> 2H2O`
-   - Do NOT output raw unparsed LaTeX macros like `\\frac{}{}`, `\\approx`, `\\text{}`, or enclosing `$`.
+5. MATHEMATICAL & CHEMICAL TYPOGRAPHY: Format all formulas and equations using clean, readable arithmetic typography (e.g. Mass_middle = (Mass_1st + Mass_3rd) / 2, v = u + a*t, E = m*c^2, (6 + 4 + 10)/60 = 20/60 = 1/3, 2H2 + O2 -> 2H2O, P = V * I) rather than raw unrendered LaTeX \frac{}{} code. Do NOT output raw unparsed LaTeX macros like \frac{}{}, frac{}{}, \approx, \text{}, or enclosing $.
 6. VISUAL DIAGRAMS FOR LOGICAL PUZZLES & GEOMETRY:
    - Use visual diagram blocks ONLY for quantitative/reasoning problems (DILR, Seating Puzzles, Geometry, Set Theory).
    - NEVER use seating or row diagrams for general lists, government schemes, airports, dates, or social security schemes.
@@ -1560,7 +1557,8 @@ RULES:
 1. Ground all questions and options strictly in the lecture transcript.
 2. Extract ALL questions without omitting options or explanations.
 3. Use ASCII punctuation only (`->`, `~`, `-`).
-4. Output ONLY valid markdown. No preamble.
+4. Format all formulas and equations using clean, readable arithmetic typography (e.g. Mass_middle = (Mass_1st + Mass_3rd) / 2, v = u + a*t, E = m*c^2) rather than raw unrendered LaTeX \frac{}{} code.
+5. Output ONLY valid markdown. No preamble.
 """
 
 MCQ_CHUNK_SYSTEM = """You are an expert Examination Master. Extract and solve ALL multiple-choice questions (MCQs), assertion-reasoning questions, and PYQs discussed in the supplied lecture transcript segment.
@@ -1593,7 +1591,8 @@ CRITICAL RULES:
 4. If this segment contains only theoretical background without distinct questions, output 2-3 key concept bullets under:
 ### Segment Key Concepts
 - **<Concept Name>**: <High-yield fact or rule>
-5. Use ASCII punctuation only (`->`, `~`, `-`). No introductory preamble.
+5. Format all formulas and equations using clean, readable arithmetic typography (e.g. Mass_middle = (Mass_1st + Mass_3rd) / 2, v = u + a*t, E = m*c^2) rather than raw unrendered LaTeX \frac{}{} code.
+6. Use ASCII punctuation only (`->`, `~`, `-`). No introductory preamble.
 """
 
 

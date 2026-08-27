@@ -64,15 +64,15 @@ COLOR_PURPLE = "#6D28D9"   # Definitions, authorities, sections
 COLOR_TEAL = "#0F766E"     # Case laws, landmark judgments
 
 CALLOUTS = {
-    "def":     {"label": "DEFINITION", "bar": colors.HexColor("#1D4ED8"), "tint": colors.HexColor("#EFF6FF")},
-    "example": {"label": "EXAM CASE",  "bar": colors.HexColor("#15803D"), "tint": colors.HexColor("#F0FDF4")},
-    "tip":     {"label": "KEY RULE",   "bar": colors.HexColor("#B45309"), "tint": colors.HexColor("#FEF3C7")},
-    "warning": {"label": "EXAM TRAP",  "bar": colors.HexColor("#B91C1C"), "tint": colors.HexColor("#FEF2F2")},
-    "note":    {"label": "NOTE",       "bar": colors.HexColor("#4B5563"), "tint": colors.HexColor("#F3F4F6")},
-    "revise":  {"label": "REVISION",   "bar": colors.HexColor("#0F766E"), "tint": colors.HexColor("#F0FDFA")},
-    "tldr":    {"label": "SUMMARY",    "bar": colors.HexColor("#0D7377"), "tint": colors.HexColor("#E6FFFA")},
-    "q":       {"label": "QUESTION",   "bar": colors.HexColor("#6D28D9"), "tint": colors.HexColor("#FAF5FF")},
-    "correct": {"label": "CORRECT",    "bar": colors.HexColor("#15803D"), "tint": colors.HexColor("#F0FDF4")},
+    "def":     {"label": "DEFINITION", "bar": colors.HexColor("#1D4ED8"), "tint": colors.HexColor("#FFFFFF")},
+    "example": {"label": "EXAM CASE",  "bar": colors.HexColor("#15803D"), "tint": colors.HexColor("#FFFFFF")},
+    "tip":     {"label": "KEY RULE",   "bar": colors.HexColor("#B45309"), "tint": colors.HexColor("#FFFFFF")},
+    "warning": {"label": "EXAM TRAP",  "bar": colors.HexColor("#B91C1C"), "tint": colors.HexColor("#FFFFFF")},
+    "note":    {"label": "NOTE",       "bar": colors.HexColor("#4B5563"), "tint": colors.HexColor("#FFFFFF")},
+    "revise":  {"label": "REVISION",   "bar": colors.HexColor("#0F766E"), "tint": colors.HexColor("#FFFFFF")},
+    "tldr":    {"label": "SUMMARY",    "bar": colors.HexColor("#0D7377"), "tint": colors.HexColor("#FFFFFF")},
+    "q":       {"label": "QUESTION",   "bar": colors.HexColor("#6D28D9"), "tint": colors.HexColor("#FFFFFF")},
+    "correct": {"label": "CORRECT",    "bar": colors.HexColor("#15803D"), "tint": colors.HexColor("#FFFFFF")},
 }
 
 ss = getSampleStyleSheet()
@@ -101,7 +101,7 @@ CO_LABEL = ParagraphStyle("CoLabel", parent=ss["Normal"], fontName="Helvetica-Bo
                           fontSize=8.5, leading=10.5, textColor=colors.white,
                           spaceAfter=0, alignment=TA_LEFT)
 CO_BODY = ParagraphStyle("CoBody", parent=BODY, fontSize=9.4, leading=12.8,
-                         spaceAfter=2.0, alignment=TA_JUSTIFY, textColor=INK)
+                         spaceAfter=2.0, alignment=TA_JUSTIFY, textColor=colors.HexColor("#0F172A"))
 
 
 ACCENT_HEX = "#" + ACCENT.hexval()[2:]
@@ -134,6 +134,11 @@ def _ascii_safe(text: str) -> str:
         "\u00d7": "x",
         "\u00b1": "+/-",
         "\u20b9": "Rs. ",
+        "≈": "~",
+        "≤": "<=",
+        "≥": ">=",
+        "≠": "!=",
+        "±": "+/-",
         "┌": "+",
         "┐": "+",
         "└": "+",
@@ -157,7 +162,7 @@ def _ascii_safe(text: str) -> str:
 
 
 def _clean_latex_math(text: str) -> str:
-    r"""Convert raw LaTeX math expressions (\frac{}, \approx, \sqrt{}, \text{}, etc.) into clean typography."""
+    r"""Convert raw LaTeX math expressions (\frac{}, frac{}, \approx, \sqrt{}, \text{}, etc.) into clean typography."""
     # 0. Clean set brackets, spacing, and arrows
     text = text.replace(r'\{', '{').replace(r'\}', '}')
     text = text.replace(r'\left\{', '{').replace(r'\right\}', '}')
@@ -168,20 +173,60 @@ def _clean_latex_math(text: str) -> str:
     text = text.replace(r'\,', ' ').replace(r'\;', ' ').replace(r'\:', ' ')
     text = re.sub(r'\\xrightarrow(?:\[(.*?)\])?\{(.*?)\}', r' -> [\2] -> ', text)
 
-    # 1. Un-nest \frac{a}{b} iteratively (up to 5 levels)
+    # Handle text tags inside math: \text{Mass}_{1st} -> Mass_{1st}
+    text = re.sub(r'\\(?:text|mathrm|mathbf|textbf)\{([^}]+)\}', r'\1', text)
+    text = re.sub(r'\\(?:mathit|textit)\{([^}]+)\}', r'\1', text)
+
+    # Helper to extract balanced {...} to handle nested braces like frac{Mass_{1st} + Mass_{3rd}}{2}
+    def extract_braced(s: str, start_idx: int):
+        if start_idx >= len(s) or s[start_idx] != '{':
+            return None, start_idx
+        depth = 0
+        for idx in range(start_idx, len(s)):
+            if s[idx] == '{':
+                depth += 1
+            elif s[idx] == '}':
+                depth -= 1
+                if depth == 0:
+                    return s[start_idx + 1:idx], idx + 1
+        return None, start_idx
+
+    # Un-nest fractions: matches \frac{a}{b}, frac{a}{b}, \dfrac{a}{b}, \tfrac{a}{b}
+    pattern = re.compile(r'\\?(?:frac|tfrac|dfrac)\s*\{')
+    for _ in range(10):
+        m = pattern.search(text)
+        if not m:
+            break
+        num_start = m.end() - 1
+        num, next_idx = extract_braced(text, num_start)
+        if num is None:
+            break
+        while next_idx < len(text) and text[next_idx].isspace():
+            next_idx += 1
+        den, end_idx = extract_braced(text, next_idx)
+        if den is None:
+            break
+
+        num_str = num.strip()
+        den_str = den.strip()
+        has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±', '->']) and not (s.startswith('(') and s.endswith(')'))
+        num_clean = f"({num_str})" if has_op(num_str) else num_str
+        den_clean = f"({den_str})" if has_op(den_str) else den_str
+        repl = f"{num_clean} / {den_clean}"
+        text = text[:m.start()] + repl + text[end_idx:]
+
+    # Fallback regex for standard fractions without nested braces
     for _ in range(5):
         def repl_frac(m):
             num = m.group(1).strip()
             den = m.group(2).strip()
-            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±']) and not (s.startswith('(') and s.endswith(')'))
+            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±', '->']) and not (s.startswith('(') and s.endswith(')'))
             num_clean = f"({num})" if has_op(num) else num
             den_clean = f"({den})" if has_op(den) else den
-            return f"{num_clean}/{den_clean}"
-        text = re.sub(r'\\(?:frac|tfrac|dfrac)\{([^{}]+)\}\{([^{}]+)\}', repl_frac, text)
+            return f"{num_clean} / {den_clean}"
+        text = re.sub(r'\\?(?:frac|tfrac|dfrac)\{([^{}]+)\}\{([^{}]+)\}', repl_frac, text)
 
-    # 2. Text formatting macros
-    text = re.sub(r'\\(?:text|mathrm|mathbf|textbf)\{([^}]+)\}', r'<b>\1</b>', text)
-    text = re.sub(r'\\(?:mathit|textit)\{([^}]+)\}', r'<i>\1</i>', text)
+    # 2. Square roots and symbols
     text = re.sub(r'\\sqrt\{([^}]+)\}', r'√(\1)', text)
     text = re.sub(r'\\sqrt([0-9a-zA-Z])', r'√\1', text)
 
@@ -201,10 +246,12 @@ def _clean_latex_math(text: str) -> str:
     }
     for k, v in symbols.items():
         text = re.sub(re.escape(k) + r'(?![a-zA-Z])', v, text)
+    text = text.replace('≈', '~')
 
-    # 4. Superscripts and Subscripts (only explicit LaTeX or standalone math symbols)
+    # 4. Superscripts and Subscripts
     text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
     text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
+    text = re.sub(r'(?<=[a-zA-Z0-9])_([0-9a-zA-Z]+)', r'<sub>\1</sub>', text)
 
     # 5. Clean up math dollar signs $...$
     text = re.sub(r'\$([^\$]+)\$', r'\1', text)
@@ -639,28 +686,21 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
                                    firstLineIndent=-12, spaceAfter=1)))
 
     inner = Table([[Paragraph(inline(label), CO_LABEL)]] + [[p] for p in body_paras],
-                  colWidths=[BODY_W - 0.3 * cm])
+                  colWidths=[BODY_W])
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), spec["bar"]),
-        ("BACKGROUND", (0, 1), (-1, -1), spec["tint"]),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#FFFFFF")),
         ("LEFTPADDING", (0, 0), (-1, -1), 8),
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
         ("TOPPADDING", (0, 0), (-1, 0), 3.5),
         ("BOTTOMPADDING", (0, 0), (-1, 0), 3.5),
-        ("TOPPADDING", (0, 1), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
+        ("TOPPADDING", (0, 1), (-1, -1), 4.5),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 4.5),
         ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.white),
-        ("BOX", (0, 0), (-1, -1), 0.4, spec["bar"]),
+        ("LINEBEFORE", (0, 0), (0, -1), 3.5, spec["bar"]),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
     ]))
-    outer = Table([[inner]], colWidths=[BODY_W])
-    outer.setStyle(TableStyle([
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
-        ("LINEBEFORE", (0, 0), (0, 0), 3.0, spec["bar"]),
-    ]))
-    return [Spacer(1, 2), KeepTogether(outer), Spacer(1, 3)]
+    return [Spacer(1, 2), KeepTogether(inner), Spacer(1, 3.5)]
 
 
 def make_table(header, rows):
