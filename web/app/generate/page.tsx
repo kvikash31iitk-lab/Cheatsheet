@@ -37,8 +37,8 @@ const FEATURE_TILES: ReadonlyArray<{
   { flag: 'chapters',title: 'Index + QR',       sub: 'Chapter index page and a QR back to the video.' },
 ];
 
-const YT_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/(?:shorts|live)\/)[\w-]{11}/;
-const PLAYLIST_RE = /^https?:\/\/(www\.)?youtube\.com\/(playlist\?list=|watch\?.*[?&]list=)[\w-]+/i;
+const YT_RE = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?.*v=|shorts\/|live\/)|youtu\.be\/)[\w-]{11}/i;
+const PLAYLIST_RE = /^https?:\/\/(?:www\.|m\.)?youtube\.com\/(?:playlist\?.*list=|watch\?.*[?&]list=)[\w-]+/i;
 
 
 
@@ -95,11 +95,23 @@ function GenerateForm() {
     getMe().then(setMe).catch(() => {});
   }, []);
 
-  const valid = YT_RE.test(url);
+  const isPlaylistUrl = PLAYLIST_RE.test(url.trim());
+  const isSingleVideoUrl = YT_RE.test(url.trim());
+  const valid = isSingleVideoUrl || isPlaylistUrl;
+
+  const handleUrlChange = (newUrl: string) => {
+    setUrl(newUrl);
+    const trimmed = newUrl.trim();
+    if (PLAYLIST_RE.test(trimmed)) {
+      setMode('playlist');
+    } else if (YT_RE.test(trimmed)) {
+      setMode('single');
+    }
+  };
 
   // Debounced preview fetch when URL becomes valid (single video mode only)
   useEffect(() => {
-    if (!valid || mode === 'playlist') {
+    if (!isSingleVideoUrl || isPlaylistUrl || mode === 'playlist') {
       setPreview(null);
       setPreviewError(null);
       return;
@@ -107,7 +119,7 @@ function GenerateForm() {
     setPreviewLoading(true);
     setPreviewError(null);
     const t = setTimeout(() => {
-      getPreview(url)
+      getPreview(url.trim())
         .then((p) => {
           setPreview(p);
           setPreviewLoading(false);
@@ -118,14 +130,13 @@ function GenerateForm() {
         });
     }, 400);
     return () => clearTimeout(t);
-  }, [url, valid, mode]);
+  }, [url, isSingleVideoUrl, isPlaylistUrl, mode]);
 
-  // Restore active playlist job from localStorage on mount
+  // Restore active playlist job from localStorage on mount (keeps banner visible without trapping mode)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedJobId = localStorage.getItem('active_playlist_job_id');
       if (savedJobId) {
-        setMode('playlist');
         setPlaylistJobId(savedJobId);
       }
     }
@@ -167,22 +178,29 @@ function GenerateForm() {
 
 
   async function submit() {
-    const isPlaylistMode = mode === 'playlist';
-    const isUrlValid = isPlaylistMode ? PLAYLIST_RE.test(url.trim()) : valid;
-    if (!isUrlValid || submitting) return;
+    const trimmed = url.trim();
+    if (!trimmed || submitting) return;
+
+    const isPl = PLAYLIST_RE.test(trimmed);
+    const isYt = YT_RE.test(trimmed);
+    if (!isPl && !isYt) return;
+
+    const effectiveMode = isPl ? 'playlist' : isYt ? 'single' : mode;
+
     setSubmitting(true);
     setError(null);
     try {
-      if (isPlaylistMode) {
-        const { id } = await createPlaylistJob(url.trim(), kind, delaySeconds, maxVideos, concurrency);
+      if (effectiveMode === 'playlist') {
+        const { id } = await createPlaylistJob(trimmed, kind, delaySeconds, maxVideos, concurrency);
         if (typeof window !== 'undefined') {
           localStorage.setItem('active_playlist_job_id', id);
         }
         setPlaylistJobId(id);
+        setMode('playlist');
         setSubmitting(false);
         setPlaylistStatus({ status: 'running', progress: 'Extracting playlist info...' });
       } else {
-        const { id } = await createJob(url, kind, Array.from(features));
+        const { id } = await createJob(trimmed, kind, Array.from(features));
         router.push(`/generate/${id}`);
       }
     } catch (e: any) {
@@ -229,7 +247,7 @@ function GenerateForm() {
         <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
           <button
             type="button"
-            onClick={() => { setMode('single'); setUrl(''); }}
+            onClick={() => setMode('single')}
             style={{
               flex: 1,
               padding: '10px 16px',
@@ -246,7 +264,7 @@ function GenerateForm() {
           </button>
           <button
             type="button"
-            onClick={() => { setMode('playlist'); setUrl(''); }}
+            onClick={() => setMode('playlist')}
             style={{
               flex: 1,
               padding: '10px 16px',
@@ -291,9 +309,34 @@ function GenerateForm() {
                 <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--c-ink)' }}>
                   📑 Playlist Processing Progress
                 </div>
-                <Tag tone={playlistStatus.status === 'complete' ? 'mint' : playlistStatus.status === 'error' ? 'error' : 'accent'}>
-                  {playlistStatus.status?.toUpperCase()}
-                </Tag>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Tag tone={playlistStatus.status === 'complete' ? 'mint' : playlistStatus.status === 'error' ? 'error' : 'accent'}>
+                    {playlistStatus.status?.toUpperCase()}
+                  </Tag>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPlaylistJobId(null);
+                      setPlaylistStatus(null);
+                      if (typeof window !== 'undefined') {
+                        localStorage.removeItem('active_playlist_job_id');
+                      }
+                    }}
+                    title="Dismiss this playlist banner"
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid var(--c-line)',
+                      color: 'var(--c-ink-3)',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      padding: '3px 8px',
+                      borderRadius: 4,
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    ✕ Dismiss
+                  </button>
+                </div>
               </div>
 
               {/* Progress Bar */}
@@ -620,7 +663,9 @@ function GenerateForm() {
             display: 'block',
           }}
         >
-          {mode === 'single' ? 'YouTube Video URL' : 'YouTube Playlist URL'}
+          {isPlaylistUrl || (mode === 'playlist' && !isSingleVideoUrl)
+            ? 'YouTube Playlist URL'
+            : 'YouTube Video URL'}
         </label>
 
         <div
@@ -642,11 +687,11 @@ function GenerateForm() {
           <input
             type="text"
             value={url}
-            onChange={(e) => setUrl(e.target.value)}
+            onChange={(e) => handleUrlChange(e.target.value)}
             placeholder={
-              mode === 'single'
-                ? 'https://www.youtube.com/watch?v=...'
-                : 'https://www.youtube.com/playlist?list=...'
+              mode === 'playlist'
+                ? 'https://www.youtube.com/playlist?list=...'
+                : 'https://www.youtube.com/watch?v=...'
             }
             style={{
               flex: 1,
@@ -659,9 +704,9 @@ function GenerateForm() {
             }}
             autoFocus
           />
-          {(mode === 'single' ? valid : PLAYLIST_RE.test(url.trim())) && (
+          {valid && (
             <Tag tone="mint">
-              <Ic.check size={10} /> Valid
+              <Ic.check size={10} /> Valid {isPlaylistUrl ? 'Playlist' : 'Video'}
             </Tag>
           )}
         </div>
@@ -958,23 +1003,32 @@ function GenerateForm() {
             icon={<Ic.sparkle size={14} />}
             disabled={(() => {
               if (submitting) return true;
-              if (mode === 'playlist') {
-                return !PLAYLIST_RE.test(url.trim());
+              const trimmed = url.trim();
+              if (!trimmed) return true;
+              const isPl = PLAYLIST_RE.test(trimmed);
+              const isYt = YT_RE.test(trimmed);
+              if (!isPl && !isYt) return true;
+
+              if (!isPl && isYt && preview) {
+                const freeLeft =
+                  kind === 'book'
+                    ? (me?.free_books_left ?? 0)
+                    : (me?.free_cheatsheets_left ?? 0);
+                const cost = preview.cost_paise?.[kind as 'cheatsheet' | 'book'] ?? preview.cost_paise?.cheatsheet ?? 0;
+                const walletPaise = me?.wallet_balance_paise ?? 0;
+                if (freeLeft === 0 && walletPaise < cost) {
+                  return true;
+                }
               }
-              if (!valid || previewLoading || !!previewError || !preview) {
-                return true;
-              }
-              const freeLeft =
-                kind === 'book'
-                  ? (me?.free_books_left ?? 0)
-                  : (me?.free_cheatsheets_left ?? 0);
-              const cost = preview.cost_paise?.[kind as 'cheatsheet' | 'book'] ?? preview.cost_paise?.cheatsheet ?? 0;
-              const walletPaise = me?.wallet_balance_paise ?? 0;
-              return freeLeft === 0 && walletPaise < cost;
+              return false;
             })()}
             onClick={submit}
           >
-            {submitting ? 'Starting…' : mode === 'playlist' ? 'Extract Playlist' : 'Generate now'}
+            {submitting
+              ? 'Starting…'
+              : isPlaylistUrl || (mode === 'playlist' && !isSingleVideoUrl)
+              ? 'Extract Playlist'
+              : 'Generate now'}
           </Btn>
 
         </div>
