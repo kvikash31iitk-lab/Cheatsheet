@@ -387,7 +387,7 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
                     ParagraphStyle("co_oi", parent=CO_BODY, leftIndent=12, firstLineIndent=-10, spaceAfter=1.5)))
 
     inner = Table([[Paragraph(inline(label), CO_LABEL)]] + [[p] for p in body_paras],
-                  colWidths=[BODY_W - 0.3 * cm])
+                  colWidths=[BODY_W])
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), spec["bar"]),
         ("BACKGROUND", (0, 1), (-1, -1), spec["tint"]),
@@ -398,16 +398,9 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
         ("TOPPADDING", (0, 1), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
         ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.white),
+        ("LINEBEFORE", (0, 0), (0, -1), 3, spec["bar"]),
     ]))
-    outer = Table([[inner]], colWidths=[BODY_W])
-    outer.setStyle(TableStyle([
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LINEBEFORE", (0, 0), (0, 0), 3, spec["bar"]),
-    ]))
-    return [Spacer(1, 2), KeepTogether(outer), Spacer(1, 4)]
+    return [Spacer(1, 2), inner, Spacer(1, 4)]
 
 
 def make_table(header: list[str], rows: list[list[str]]) -> Table:
@@ -556,7 +549,11 @@ def build(src_path: Path, out_path: Path, title: str | None = None) -> int:
                     kind, co_title, body_lines = p2
                     q_flowables.extend(make_callout(kind, co_title, body_lines))
                 i += 1
-            story.append(KeepTogether(q_flowables))
+            if len(q_flowables) <= 8:
+                story.append(KeepTogether(q_flowables))
+            else:
+                story.extend(q_flowables)
+            story.append(Spacer(1, 4))
         elif k == "h2":
             story.append(Paragraph(inline(payload), H1))
             i += 1
