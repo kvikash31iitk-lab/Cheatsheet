@@ -418,18 +418,25 @@ def parse_blocks(md: str):
             
         m = CALLOUT_RE.match(stripped)
         if m:
-            kind = m.group(1).lower(); title = m.group(2).strip()
-            buf: list[str] = []
+            kind = m.group(1).lower()
+            first_t = m.group(2).strip()
+            buf = [first_t] if first_t else []
             i += 1
             while i < len(lines) and lines[i].strip().startswith(">"):
                 raw_l = lines[i].strip().lstrip(">").strip()
-                # Check for chained callouts inside blockquote like > **[!tip]**
                 m_sub = CALLOUT_RE.match(f"> {raw_l}")
                 if m_sub:
-                    break
+                    if m_sub.group(1).lower() == kind:
+                        sub_t = m_sub.group(2).strip()
+                        if sub_t:
+                            buf.append(sub_t)
+                        i += 1
+                        continue
+                    else:
+                        break
                 buf.append(raw_l)
                 i += 1
-            yield ("callout", (kind, title, buf)); continue
+            yield ("callout", (kind, "", buf)); continue
 
         m_ic = INLINE_CALLOUT_RE.match(stripped)
         if m_ic:
@@ -685,30 +692,45 @@ def make_summary_card_compact(summary_md: str) -> list:
 def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
     spec = CALLOUTS.get(kind, CALLOUTS["note"])
     label = spec["label"]
+    
+    actual_title = ""
+    actual_body = [b.strip() for b in body_lines if b.strip()]
+    
     if title:
-        # Callout headings are labels, not rich-text bodies. Models sometimes
-        # wrap them in Markdown emphasis, which would otherwise print as raw
-        # asterisks because this label previously bypassed ``inline``.
-        clean_title = re.sub(r"[*_`]", "", title)
-        label = f"{label} - {clean_title}"
-    pseudo = "\n".join(body_lines)
+        t_clean = re.sub(r"[*_`]", "", title).strip()
+        if len(t_clean) <= 32 and not any(p in t_clean for p in [".", ";", "—", "–", "=", ">", ":"]):
+            actual_title = t_clean
+        else:
+            actual_body.insert(0, title)
+            
+    if actual_title:
+        label = f"{label} - {actual_title}"
+        
+    pseudo = "\n".join(actual_body)
     body_paras = []
-    for k2, p2 in parse_blocks(pseudo):
-        if k2 == "p":
-            body_paras.append(make_para(inline(p2), CO_BODY))
-        elif k2 == "ul":
-            for it in p2:
-                body_paras.append(make_para(
-                    f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}',
-                    ParagraphStyle("co_li", parent=CO_BODY, leftIndent=10,
-                                   firstLineIndent=-10, spaceAfter=1)))
-        elif k2 == "ol":
-            for it in p2:
-                num, text_val = (it[0], it[1]) if (isinstance(it, tuple) and len(it) == 2) else (1, it)
-                body_paras.append(make_para(
-                    f'<b>{num}.</b> {inline(text_val)}',
-                    ParagraphStyle("co_oi", parent=CO_BODY, leftIndent=14,
-                                   firstLineIndent=-12, spaceAfter=1)))
+    
+    # Check if lines inside callout have bullet markers like • or -
+    for b_item in actual_body:
+        b_s = b_item.strip()
+        if not b_s:
+            continue
+        if b_s.startswith("• ") or b_s.startswith("- "):
+            clean_b = re.sub(r"^[•\-]\s*", "", b_s)
+            body_paras.append(make_para(
+                f'<font color="{ACCENT_HEX}"><b>&bull;</b></font> {inline(clean_b)}',
+                ParagraphStyle("co_li", parent=CO_BODY, leftIndent=10, firstLineIndent=-10, spaceAfter=1.5)))
+        elif re.match(r"^\d+\.\s+", b_s):
+            m_num = re.match(r"^(\d+)\.\s+(.*)$", b_s)
+            num_str = m_num.group(1) if m_num else "1"
+            it_str = m_num.group(2) if m_num else b_s
+            body_paras.append(make_para(
+                f'<b><font color="{ACCENT_HEX}">{num_str}.</font></b> {inline(it_str)}',
+                ParagraphStyle("co_oi", parent=CO_BODY, leftIndent=14, firstLineIndent=-12, spaceAfter=1.5)))
+        else:
+            body_paras.append(make_para(inline(b_s), CO_BODY))
+
+    if not body_paras:
+        body_paras.append(make_para(inline(title or ""), CO_BODY))
 
     inner = Table([[make_para(inline(label), CO_LABEL)]] + [[p] for p in body_paras],
                   colWidths=[BODY_W])
