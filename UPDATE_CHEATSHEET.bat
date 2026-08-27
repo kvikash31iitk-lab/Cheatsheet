@@ -17,29 +17,21 @@ if %ERRORLEVEL% EQU 0 (
     )
 )
 
-:: 2. If not a git repo, check if main project workspace exists
-set "MAIN_WS=C:\Users\Vikash PC\OneDrive\Desktop\claude projects\cheetsheet"
-if exist "%MAIN_WS%\scripts\build_cheatsheet.py" (
-    echo [*] Syncing latest engine files from workspace...
-    xcopy /Y /E /I "%MAIN_WS%\scripts\*.py" "%~dp0scripts\" >nul
-    xcopy /Y /E /I "%MAIN_WS%\api\*.py" "%~dp0api\" >nul
-    xcopy /Y /E /I "%MAIN_WS%\bot\*.py" "%~dp0bot\" >nul
-    copy /Y "%MAIN_WS%\version.json" "%~dp0version.json" >nul
-    copy /Y "%MAIN_WS%\requirements.txt" "%~dp0requirements.txt" >nul
-    echo [OK] Engine files updated to latest version!
-    goto :UPDATE_DEPENDENCIES
-)
+:: 2. Standalone Plug-and-Play Home PC Update (via Cloud Release)
+echo [*] Standalone desktop installation detected.
+echo [*] Downloading latest verified engine from cheetsheet.tech...
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -Uri 'https://cheetsheet.tech/downloads/Cheatsheet_Desktop_Latest.zip' -OutFile '%TEMP%\cheatsheet_latest.zip' -UseBasicParsing; Expand-Archive -Path '%TEMP%\cheatsheet_latest.zip' -DestinationPath '%TEMP%\cheatsheet_extracted' -Force; Copy-Item -Path '%TEMP%\cheatsheet_extracted\Cheatsheet_Desktop_*\scripts\*' -Destination '%~dp0scripts\' -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item -Path '%TEMP%\cheatsheet_extracted\Cheatsheet_Desktop_*\bot\*' -Destination '%~dp0bot\' -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item -Path '%TEMP%\cheatsheet_extracted\Cheatsheet_Desktop_*\api\*' -Destination '%~dp0api\' -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item -Path '%TEMP%\cheatsheet_extracted\Cheatsheet_Desktop_*\web\*' -Destination '%~dp0web\' -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item -Path '%TEMP%\cheatsheet_extracted\Cheatsheet_Desktop_*\version.json' -Destination '%~dp0version.json' -Force -ErrorAction SilentlyContinue; Remove-Item -Path '%TEMP%\cheatsheet_extracted', '%TEMP%\cheatsheet_latest.zip' -Recurse -Force -ErrorAction SilentlyContinue; Write-Host '[OK] Successfully updated engine to latest release!' -ForegroundColor Green } catch { Write-Host '[!] Cloud update error: ' $_.Exception.Message -ForegroundColor Red }"
 
 :UPDATE_DEPENDENCIES
 :: 3. Update python dependencies if .venv exists
 if exist "%~dp0.venv\Scripts\pip.exe" (
-    echo [*] Checking and updating Python dependencies...
+    echo [*] Checking Python dependencies...
     "%~dp0.venv\Scripts\pip.exe" install -q -r "%~dp0requirements.txt"
 )
 
 echo.
 echo ================================================================
-echo  [SUCCESS] Cheatsheet Desktop has been updated to the latest version!
+echo  [SUCCESS] Cheatsheet Desktop is up to date!
 echo  Double-click START_CHEATSHEET.bat to launch.
 echo ================================================================
 echo.
