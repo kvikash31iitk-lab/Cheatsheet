@@ -612,13 +612,16 @@ GROQ_FALLBACK_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compoun
 
 def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                  cost_sink: Optional[dict] = None) -> str:
-    # Keep prompt bounded so total request + completion is strictly <= 7500 (under 8k TPM cap)
-    prompt_tokens = est_tokens(system) + est_tokens(user)
-    if prompt_tokens > 3800:
-        user = user[:11400]
-        prompt_tokens = est_tokens(system) + est_tokens(user)
+    # Keep prompt bounded so total request (prompt + completion) is strictly <= 7400 (under 8k TPM cap)
+    sys_tokens = est_tokens(system)
+    max_user_tokens = max(500, 3800 - sys_tokens)
+    if est_tokens(user) > max_user_tokens:
+        user = user[:int(max_user_tokens * 3.5)]
 
-    request_max_tokens = min(max_tokens, max(2800, 7500 - prompt_tokens))
+    prompt_tokens = sys_tokens + est_tokens(user)
+    request_max_tokens = min(max_tokens, max(1200, 7400 - prompt_tokens))
+    if prompt_tokens + request_max_tokens > 7500:
+        request_max_tokens = max(500, 7500 - prompt_tokens)
 
     from bot.config import GROQ_API_KEY, GROQ_API_KEYS
     keys_pool = list(dict.fromkeys(GROQ_API_KEYS or [GROQ_API_KEY]))
@@ -1574,9 +1577,9 @@ def author_mcq(transcript_path: Path, *,
     sys_prompt = system_override or MCQ_SYSTEM
 
     # Scale max tokens generously based on duration
-    output_tokens = 8192
+    output_tokens = 4000
     if duration_seconds and duration_seconds > 1800:
-        output_tokens = 16384
+        output_tokens = 5000
 
     raw = _author(
         sys_prompt,

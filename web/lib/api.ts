@@ -165,18 +165,34 @@ export function friendlyGenerationError(error: unknown): string {
     lower.includes('authoring_provider') ||
     lower.includes('notimplementederror') ||
     lower.includes('authoring failed') ||
-    lower.includes('cli login or quota')
+    lower.includes('cli login or quota') ||
+    lower.includes('rate_limit') ||
+    lower.includes('tokens per minute') ||
+    lower.includes('tpm') ||
+    lower.includes('all groq fallback') ||
+    lower.includes('request too large') ||
+    lower.includes('groq')
   ) {
-    return 'The writing service is temporarily unavailable. Please retry shortly.';
+    return 'AI generation service is currently experiencing high load or limits. Please try again shortly.';
   }
 
-  // Keep short application messages (billing, maintenance, limits, etc.),
-  // but never fill the UI with downloader diagnostics or stack traces.
+  // Explicit YouTube download failures
   if (
-    message.length > 260 ||
-    /(?:yt-dlp|youtube-dl|traceback|runtimeerror|metadata failed|player responses|\bwarning:|\berror:)/i.test(message)
+    lower.includes('yt-dlp') ||
+    lower.includes('youtube-dl') ||
+    lower.includes('player responses') ||
+    lower.includes('metadata failed') ||
+    lower.includes('could not extract video')
   ) {
     return 'YouTube could not be reached right now. Please try again shortly.';
+  }
+
+  // Keep short application messages, sanitize unhandled tracebacks
+  if (
+    message.length > 260 ||
+    /(?:traceback|runtimeerror|\bwarning:|\berror:)/i.test(message)
+  ) {
+    return 'Generation encountered a processing error. Please try again.';
   }
 
   return message;
