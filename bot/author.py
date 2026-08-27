@@ -28,7 +28,12 @@ ProgressFn = Optional[Callable[[str], None]]
 
 # Token estimation — char-count heuristic, conservative for English+code.
 def est_tokens(text: str) -> int:
-    return max(1, len(text) // 3)  # 3 chars/token is a safe upper bound
+    """Multilingual token estimator for BPE tokenizers (English, Hindi, Devanagari, etc.)."""
+    if not text:
+        return 1
+    utf8_bytes = len(text.encode("utf-8", errors="replace"))
+    char_len = len(text)
+    return max(1, int(utf8_bytes / 2.5), char_len // 3)
 
 
 # --- prompts ---------------------------------------------------------------
@@ -607,21 +612,30 @@ def _strip_reasoning(md: str) -> str:
 
 
 TPM_LIMIT_TOKENS = 8000
-GROQ_FALLBACK_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-20b")
+GROQ_FALLBACK_MODELS = (
+    "openai/gpt-oss-120b",
+    "qwen/qwen3.6-27b",
+    "qwen/qwen3.8-27b",
+    "groq/compound",
+    "groq/compound-mini",
+    "openai/gpt-oss-20b",
+)
 
 
 def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                  cost_sink: Optional[dict] = None) -> str:
-    # Keep prompt bounded so total request (prompt + completion) is strictly <= 7400 (under 8k TPM cap)
+    # Keep prompt bounded so total request (prompt + completion) is strictly <= 7200 (under 8k TPM cap)
     sys_tokens = est_tokens(system)
-    max_user_tokens = max(500, 3800 - sys_tokens)
-    if est_tokens(user) > max_user_tokens:
-        user = user[:int(max_user_tokens * 3.5)]
+    max_user_tokens = max(500, 3600 - sys_tokens)
+    while est_tokens(user) > max_user_tokens and len(user) > 100:
+        ratio = max_user_tokens / est_tokens(user)
+        user = user[:max(50, int(len(user) * ratio * 0.95))]
 
     prompt_tokens = sys_tokens + est_tokens(user)
-    request_max_tokens = min(max_tokens, max(1200, 7400 - prompt_tokens))
-    if prompt_tokens + request_max_tokens > 7500:
-        request_max_tokens = max(500, 7500 - prompt_tokens)
+    safe_completion = max(800, 7200 - prompt_tokens)
+    request_max_tokens = min(max_tokens, safe_completion)
+    if prompt_tokens + request_max_tokens > 7300:
+        request_max_tokens = max(500, 7300 - prompt_tokens)
 
     from bot.config import GROQ_API_KEY, GROQ_API_KEYS
     keys_pool = list(dict.fromkeys(GROQ_API_KEYS or [GROQ_API_KEY]))
@@ -632,53 +646,56 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
     models = [primary] + [m for m in fallbacks if m != primary]
     
     last_err = None
-    for api_k in keys_pool:
-        client = Groq(api_key=api_k)
-        for model in models:
-            model_user = user
-            model_options = {}
-            if "qwen" in model.lower():
-                model_options = {
-                    "reasoning_effort": "none",
-                    "reasoning_format": "hidden",
-                }
-                request_max_tokens = min(request_max_tokens, 4000)
-            for attempt in range(1, 3):
-                try:
-                    resp = client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": model_user},
-                        ],
-                        temperature=0.3,
-                        max_tokens=request_max_tokens,
-                        **model_options,
-                    )
+    for outer_try in range(1, 4):
+        for api_k in keys_pool:
+            client = Groq(api_key=api_k)
+            for model in models:
+                model_user = user
+                model_options = {}
+                if "qwen" in model.lower():
+                    model_options = {
+                        "reasoning_effort": "none",
+                        "reasoning_format": "hidden",
+                    }
+                    request_max_tokens = min(request_max_tokens, 4000)
+                for attempt in range(1, 3):
+                    try:
+                        resp = client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "system", "content": system},
+                                {"role": "user", "content": model_user},
+                            ],
+                            temperature=0.3,
+                            max_tokens=request_max_tokens,
+                            **model_options,
+                        )
 
-                    text = _strip_reasoning(resp.choices[0].message.content or "")
-                    if not text:
-                        raise RuntimeError("Groq returned an empty authoring response")
-                    if cost_sink is not None:
-                        cost_sink["authoring_model"] = model
-                        if getattr(resp, "usage", None):
-                            cost_sink["tokens_in"] = (
-                                cost_sink.get("tokens_in", 0)
-                                + int(resp.usage.prompt_tokens or 0)
-                            )
-                            cost_sink["tokens_out"] = (
-                                cost_sink.get("tokens_out", 0)
-                                + int(resp.usage.completion_tokens or 0)
-                            )
-                    return text
-                except Exception as exc:
-                    last_err = exc
-                    error_text = str(exc).casefold()
-                    if any(tok in error_text for tok in ("rate limit", "429", "quota", "too large", "not_found", "does not exist", "unrecognized")):
-                        print(f"[author] groq model {model!r} rate limited or unavailable; rotating", flush=True)
-                        break
-                    wait = 3 * attempt
-                    time.sleep(wait)
+                        text = _strip_reasoning(resp.choices[0].message.content or "")
+                        if not text:
+                            raise RuntimeError("Groq returned an empty authoring response")
+                        if cost_sink is not None:
+                            cost_sink["authoring_model"] = model
+                            if getattr(resp, "usage", None):
+                                cost_sink["tokens_in"] = (
+                                    cost_sink.get("tokens_in", 0)
+                                    + int(resp.usage.prompt_tokens or 0)
+                                )
+                                cost_sink["tokens_out"] = (
+                                    cost_sink.get("tokens_out", 0)
+                                    + int(resp.usage.completion_tokens or 0)
+                                )
+                        return text
+                    except Exception as exc:
+                        last_err = exc
+                        error_text = str(exc).casefold()
+                        if any(tok in error_text for tok in ("rate limit", "429", "quota", "too large", "not_found", "does not exist", "unrecognized")):
+                            print(f"[author] groq model {model!r} rate limited or unavailable; rotating", flush=True)
+                            break
+                        wait = 3 * attempt
+                        time.sleep(wait)
+        if outer_try < 3:
+            time.sleep(8.0)
     raise RuntimeError(f"All Groq fallback models and keys failed. Last error: {last_err}")
 
 
@@ -1525,12 +1542,12 @@ OUTPUT FORMAT (Valid Markdown):
 - **(C)** <Option C>
 - **(D)** <Option D>
 
-> [!correct] (B) <Option Text>
-> **Direct Explanation**: <Why B is strictly correct with formulas or rules>
+> [!correct] (<Letter>) <Option Text>
+> **Direct Explanation**: <Why this option is strictly correct with formulas or rules>
 > **Option Elimination**:
-> - **(A)** <Why A is incorrect>
-> - **(C)** <Why C is incorrect>
-> - **(D)** <Why D is incorrect>
+> - **(<Wrong 1>)** <Why incorrect>
+> - **(<Wrong 2>)** <Why incorrect>
+> - **(<Wrong 3>)** <Why incorrect>
 
 > [!tip] Shortcut / Elimination Rule
 > <Mental trick for solving in under 30 seconds>
@@ -1541,9 +1558,70 @@ OUTPUT FORMAT (Valid Markdown):
 
 RULES:
 1. Ground all questions and options strictly in the lecture transcript.
-2. Use ASCII punctuation only (`->`, `~`, `-`).
-3. Output ONLY valid markdown. No preamble.
+2. Extract ALL questions without omitting options or explanations.
+3. Use ASCII punctuation only (`->`, `~`, `-`).
+4. Output ONLY valid markdown. No preamble.
 """
+
+MCQ_CHUNK_SYSTEM = """You are an expert Examination Master. Extract and solve ALL multiple-choice questions (MCQs), assertion-reasoning questions, and PYQs discussed in the supplied lecture transcript segment.
+
+CRITICAL RULES:
+1. Extract EVERY question discussed in this segment. Do NOT skip, summarize, or omit any question.
+2. Formulate the questions in clear, grammatical English (or Hinglish if terminology is bilingual).
+3. For EACH question output strictly:
+## Question: <Topic Title>
+> Target Exam: Competitive Exam | Difficulty: Medium
+
+**Q.** <Complete question statement>
+
+- **(A)** <Option A>
+- **(B)** <Option B>
+- **(C)** <Option C>
+- **(D)** <Option D>
+
+> [!correct] (<Letter>) <Option Text>
+> **Direct Explanation**: <Concise explanation with core rules/facts>
+> **Option Elimination**:
+> - **(<Wrong 1>)** <Why incorrect>
+> - **(<Wrong 2>)** <Why incorrect>
+> - **(<Wrong 3>)** <Why incorrect>
+
+> [!tip] Shortcut / Elimination Rule
+> <Quick exam tip or mnemonic>
+
+---
+4. If this segment contains only theoretical background without distinct questions, output 2-3 key concept bullets under:
+### Segment Key Concepts
+- **<Concept Name>**: <High-yield fact or rule>
+5. Use ASCII punctuation only (`->`, `~`, `-`). No introductory preamble.
+"""
+
+
+def _renumber_mcq_questions(markdown_sections: list[str]) -> tuple[str, int]:
+    """Combine MCQ sections and renumber all ## Question headers consecutively."""
+    combined_body = "\n\n---\n\n".join(s.strip() for s in markdown_sections if s.strip())
+    q_counter = 0
+
+    def replace_q(match: re.Match) -> str:
+        nonlocal q_counter
+        q_counter += 1
+        title_part = (match.group(1) or "").strip()
+        clean_title = re.sub(
+            r"^(?:\d+[:.\s-]*|Question\s*\d+[:.\s-]*|Q\d+[:.\s-]*)",
+            "",
+            title_part,
+            flags=re.I,
+        ).strip()
+        if clean_title:
+            return f"## Question {q_counter}: {clean_title}"
+        return f"## Question {q_counter}"
+
+    renumbered = re.sub(
+        r"(?m)^##\s+(?:Question|Q)(?:\s*\d+)?(?::?\s*(.*))?$",
+        replace_q,
+        combined_body,
+    )
+    return renumbered, q_counter
 
 
 def author_mcq(transcript_path: Path, *,
@@ -1553,43 +1631,79 @@ def author_mcq(transcript_path: Path, *,
                system_override: Optional[str] = None,
                cost_sink: Optional[dict] = None,
                features: Optional[list[str]] = None) -> str:
-    """Return solved MCQ handbook markdown text."""
+    """Return solved MCQ handbook markdown text with ALL questions extracted."""
     transcript = Path(transcript_path).read_text(encoding="utf-8")
-    if _needs_condensation() or est_tokens(transcript) > 200000:
-        body = condense(transcript, on_progress=on_progress)
-        body_label = "CONDENSED TRANSCRIPT (section summaries with all questions preserved):"
+    main_title = (title_hint or "Competitive Examination Solved MCQ Handbook").replace('\n', ' ').strip()
+
+    # Parse chunks
+    raw_chunks = split_transcript(transcript, 7000)
+    total_chunks = len(raw_chunks)
+
+    # 1. Single chunk / short video -> Single pass
+    if total_chunks <= 1 and not (duration_seconds and duration_seconds > 900):
+        if on_progress:
+            on_progress("Extracting MCQs and compiling solved handbook...")
+        sys_prompt = system_override or MCQ_SYSTEM
+        user_msg = f"TITLE HINT: {main_title}\n\nTRANSCRIPT:\n{transcript}"
+        raw = _author(sys_prompt, user_msg, max_tokens=4000, cost_sink=cost_sink)
+        cleaned = strip_wrappers(raw)
+        if not any(line.lstrip().startswith("#") for line in cleaned.splitlines()):
+            cleaned = f"# {main_title} - Solved MCQs & PYQ Bank\n\n{cleaned}"
+        return cleaned
+
+    # 2. Multi-chunk / Marathon lecture -> Segment-by-Segment Exhaustive Extraction
+    batches: list[str] = [c for c in raw_chunks if c.strip()]
+    total_batches = len(batches)
+    extracted_sections: list[str] = []
+
+    for idx, batch_content in enumerate(batches, 1):
+        if on_progress:
+            on_progress(f"Extracting MCQs from lecture segment {idx}/{total_batches}...")
+
+        user_prompt = (
+            f"EXAM/COURSE: {main_title}\n"
+            f"LECTURE SEGMENT {idx} of {total_batches}:\n\n"
+            f"{batch_content}"
+        )
+
+        try:
+            sec_md = _author(
+                system_override or MCQ_CHUNK_SYSTEM,
+                user_prompt,
+                max_tokens=2500,
+                cost_sink=cost_sink,
+            )
+            sec_clean = strip_wrappers(sec_md)
+            if sec_clean:
+                extracted_sections.append(sec_clean)
+            if idx < total_batches and AUTHORING_PROVIDER == "groq":
+                time.sleep(1.0)
+        except Exception as err:
+            print(f"[mcq_segment_{idx}_error] {err}", flush=True)
+
+    # Renumber questions across all segments
+    renumbered_body, total_q = _renumber_mcq_questions(extracted_sections)
+
+    # 3. Create Executive Summary
+    exec_summary = ""
+    try:
+        summary_prompt = (
+            "Based on the following extracted questions, generate 5-8 bullet points of high-yield "
+            "core formulas, definitions, and rules for the top summary card.\n\n"
+            f"{renumbered_body[:6000]}"
+        )
+        summary_sys = "You are an exam master. Output ONLY a section titled '## Executive Concept & Formula Summary' followed by concise, high-yield bullet points."
+        exec_raw = _author(summary_sys, summary_prompt, max_tokens=1200, cost_sink=cost_sink)
+        exec_summary = strip_wrappers(exec_raw).strip()
+    except Exception:
+        pass
+
+    # 4. Assemble Final Markdown Document
+    header = f"# {main_title} - Solved MCQs & PYQ Bank\n\n"
+    if exec_summary:
+        full_md = f"{header}{exec_summary}\n\n---\n\n{renumbered_body}"
     else:
-        body = transcript
-        body_label = "TRANSCRIPT (raw with timestamps):"
+        full_md = f"{header}{renumbered_body}"
 
-    user_msg = "\n".join(p for p in [
-        f"TITLE HINT: {title_hint}" if title_hint else "",
-        (f"SOURCE LENGTH: {duration_seconds/60:.0f} minutes"
-         if duration_seconds else ""),
-        "",
-        body_label,
-        body,
-    ] if p)
-
-    if on_progress:
-        on_progress("Extracting MCQs and compiling solved handbook...")
-
-    sys_prompt = system_override or MCQ_SYSTEM
-
-    # Scale max tokens generously based on duration
-    output_tokens = 4000
-    if duration_seconds and duration_seconds > 1800:
-        output_tokens = 5000
-
-    raw = _author(
-        sys_prompt,
-        user_msg,
-        max_tokens=output_tokens,
-        cost_sink=cost_sink,
-    )
-    cleaned = strip_wrappers(raw)
-    if not any(line.lstrip().startswith("#") for line in cleaned.splitlines()):
-        title = (title_hint or "Solved MCQ Handbook").replace('\n', ' ').strip()
-        cleaned = f"# {title}\n\n### Solved MCQ Handbook & Concept Master Guide\n\n{cleaned}"
-    return cleaned
+    return full_md
 
