@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { AppBar } from '@/components/app-bar';
 import { Btn, Tag } from '@/components/ui';
 import { Ic } from '@/components/icons';
-import { friendlyGenerationError, getJob, type Job } from '@/lib/api';
+import { friendlyGenerationError, getJob, rebuildPdf, type Job } from '@/lib/api';
 
 export default function JobPage() {
   const params = useParams<{ jobId: string }>();
@@ -40,113 +40,77 @@ export default function JobPage() {
     };
   }, [jobId]);
 
+  if (error) return <ErrorView message={error} />;
+  if (!job) return <LoadingSkeleton />;
+
   return (
-    <main style={{ minHeight: '100vh' }}>
+    <main style={{ minHeight: '100vh', paddingBottom: 80 }}>
       <AppBar />
-      <div style={{ padding: 32, maxWidth: 760, margin: '0 auto' }}>
-        {error && !job && <ErrorView message={error} />}
-        {job && job.status.state === 'queued' && <ProcessingView job={job} />}
-        {job && job.status.state === 'running' && <ProcessingView job={job} />}
-        {job && job.status.state === 'done' && <DoneView job={job} />}
-        {job && job.status.state === 'error' && <ErrorView message={job.status.message} />}
-        {!job && !error && <ProcessingShell />}
+      <div style={{ maxWidth: 860, margin: '40px auto', padding: '0 24px' }}>
+        {job.status.state === 'done' && <DoneView job={job} />}
+        {job.status.state === 'error' && <ErrorView message={job.status.message} />}
+        {(job.status.state === 'queued' || job.status.state === 'running') && (
+          <ProgressView job={job} />
+        )}
       </div>
     </main>
   );
 }
 
-function ProcessingShell() {
+function LoadingSkeleton() {
   return (
-    <div
-      style={{
-        background: 'var(--c-ink)',
-        color: 'var(--c-bg)',
-        borderRadius: 16,
-        padding: 32,
-        textAlign: 'center',
-      }}
-    >
-      <div
-        style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          color: '#e8a583',
-          letterSpacing: '.1em',
-        }}
-      >
-        ● CONNECTING
+    <main style={{ minHeight: '100vh' }}>
+      <AppBar />
+      <div style={{ maxWidth: 760, margin: '40px auto', padding: 32 }}>
+        <div style={{ fontSize: 14, color: 'var(--c-ink-3)' }}>Loading generation…</div>
       </div>
-    </div>
+    </main>
   );
 }
 
-function ProcessingView({ job }: { job: Job }) {
+function ProgressView({ job }: { job: Job }) {
   const status = job.status;
-  const step = status.state === 'running' ? status.step : 'queued';
-  const progress = status.state === 'running' ? status.progress : 0;
+  const progress = status.state === 'running' ? status.progress : 0.05;
+  const step = status.state === 'running' ? status.step : 'Queued in pipeline';
   const meta = job.meta;
 
   return (
     <>
       <div
         style={{
-          background: 'var(--c-ink)',
-          color: 'var(--c-bg)',
-          borderRadius: 16,
-          padding: 32,
+          background: 'var(--c-surface)',
+          border: '1px solid var(--c-line)',
+          borderRadius: 14,
+          padding: '40px 48px',
           marginBottom: 16,
-          position: 'relative',
         }}
       >
-        <div
+        <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+          <Tag tone="accent">Processing</Tag>
+          <Tag>{job.kind === 'cheatsheet' ? 'Cheatsheet' : job.kind === 'mcq' ? 'MCQ Handbook' : 'Book Notes'}</Tag>
+        </div>
+        <h2
           style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start',
-            marginBottom: 18,
+            fontFamily: 'var(--font-serif)',
+            fontSize: 32,
+            fontWeight: 400,
+            letterSpacing: '-0.02em',
+            margin: '0 0 8px',
           }}
         >
-          <div>
-            <div
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 11,
-                color: '#e8a583',
-                letterSpacing: '.1em',
-                marginBottom: 8,
-              }}
-            >
-              ● PROCESSING
-            </div>
-            <div
-              style={{
-                fontFamily: 'var(--font-serif)',
-                fontSize: 28,
-                lineHeight: 1.1,
-                marginBottom: 6,
-                letterSpacing: '-0.015em',
-              }}
-            >
-              {meta?.title ?? 'Fetching video metadata…'}
-            </div>
-            <div style={{ fontSize: 13, color: '#b8b0a6' }}>
-              {meta?.channel ? `${meta.channel} · ` : ''}
-              {meta?.duration_seconds ? formatDuration(meta.duration_seconds) : '—'}
-            </div>
-          </div>
-          <Tag tone="accent" style={{ background: 'rgba(232,165,131,.2)', color: '#e8a583' }}>
-            {job.kind === 'cheatsheet' ? 'Cheatsheet' : 'Book Notes'}
-          </Tag>
-        </div>
+          Generating your notes…
+        </h2>
+        <p style={{ fontSize: 14, color: 'var(--c-ink-2)', margin: '0 0 32px' }}>
+          Parsing transcript, organizing chapters, and rendering print-ready PDF.
+        </p>
 
-        <div style={{ marginBottom: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div
             style={{
               display: 'flex',
               justifyContent: 'space-between',
-              fontSize: 11.5,
-              color: '#b8b0a6',
-              marginBottom: 8,
+              fontSize: 12,
+              color: 'var(--c-ink-3)',
               fontFamily: 'var(--font-mono)',
             }}
           >
@@ -173,9 +137,6 @@ function ProcessingView({ job }: { job: Job }) {
           </div>
         </div>
       </div>
-      <p style={{ fontSize: 12.5, color: 'var(--c-ink-3)', textAlign: 'center' }}>
-        You can leave this tab open or refresh — progress is saved.
-      </p>
     </>
   );
 }
@@ -183,6 +144,24 @@ function ProcessingView({ job }: { job: Job }) {
 function DoneView({ job }: { job: Job }) {
   if (job.status.state !== 'done') return null;
   const { pdf_url, markdown, meta } = job.status;
+  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuildMsg, setRebuildMsg] = useState<string | null>(null);
+
+  const handleRebuild = async () => {
+    if (rebuilding) return;
+    setRebuilding(true);
+    setRebuildMsg(null);
+    try {
+      await rebuildPdf(job.id);
+      setRebuildMsg('PDF re-compiled instantly!');
+      setTimeout(() => {
+        window.location.reload();
+      }, 800);
+    } catch (err: any) {
+      setRebuildMsg(err.message || 'Failed to re-compile PDF');
+      setRebuilding(false);
+    }
+  };
 
   return (
     <article
@@ -205,14 +184,12 @@ function DoneView({ job }: { job: Job }) {
           <Tag tone="mint">
             <Ic.check size={10} /> Generated
           </Tag>
-          <Tag tone="accent">{job.kind === 'cheatsheet' ? 'Cheatsheet' : 'Book Notes'}</Tag>
+          <Tag tone="accent">{job.kind === 'cheatsheet' ? 'Cheatsheet' : job.kind === 'mcq' ? 'MCQ Handbook' : 'Book Notes'}</Tag>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Link href="/generate" style={{ textDecoration: 'none' }}>
-            <Btn variant="ghost" size="md">
-              Generate another
-            </Btn>
-          </Link>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <Btn variant="secondary" size="md" onClick={handleRebuild} disabled={rebuilding}>
+            {rebuilding ? 'Re-compiling...' : '⚡ Re-compile PDF'}
+          </Btn>
           <a href={pdf_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
             <Btn variant="primary" size="md" icon={<Ic.download size={13} />}>
               Download PDF
@@ -220,6 +197,11 @@ function DoneView({ job }: { job: Job }) {
           </a>
         </div>
       </div>
+      {rebuildMsg && (
+        <div style={{ fontSize: 12, color: 'var(--c-accent)', marginBottom: 12, textAlign: 'right' }}>
+          {rebuildMsg}
+        </div>
+      )}
 
       <div
         style={{

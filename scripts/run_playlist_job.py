@@ -212,7 +212,7 @@ def consolidate_markdowns(
 
 
     lines = [
-        f"# {playlist_title}",
+        f"# {playlist_title.strip()}",
         "",
         "> **Consolidated Course & Playlist Summary**",
         "",
@@ -222,23 +222,25 @@ def consolidate_markdowns(
 
     for display_idx, item in enumerate(sorted_items, start=1):
         idx = item.get("playlist_index", display_idx)
-        title = item.get("title") or f"Module {display_idx}"
-        raw_anchor = f"module-{display_idx}-{item.get('video_id', '')}"
-        anchor = re.sub(r'[^a-zA-Z0-9-]', '-', raw_anchor).strip('-')
-        lines.append(f"{display_idx}. [{title}](#{anchor})")
+        raw_title = str(item.get("title") or f"Module {display_idx}").strip()
+        # Clean title for markdown link text
+        clean_title = re.sub(r'[\[\]]', '', raw_title)
+        v_id = item.get('video_id', '') or f"vid_{display_idx}"
+        anchor = f"module-{display_idx}-{v_id}"
+        lines.append(f"{display_idx}. [{clean_title}](#{anchor})")
 
     lines.append("")
     lines.append("---")
     lines.append("")
 
     for display_idx, item in enumerate(sorted_items, start=1):
-        title = item.get("title") or f"Module {display_idx}"
-        raw_anchor = f"module-{display_idx}-{item.get('video_id', '')}"
-        anchor = re.sub(r'[^a-zA-Z0-9-]', '-', raw_anchor).strip('-')
+        raw_title = str(item.get("title") or f"Module {display_idx}").strip()
+        v_id = item.get('video_id', '') or f"vid_{display_idx}"
+        anchor = f"module-{display_idx}-{v_id}"
         md_path_str = item.get("markdown_path")
 
-        lines.append(f"<a id='{anchor}'></a>")
-        lines.append(f"# Module {display_idx}: {title}")
+        lines.append(f'<a name="{anchor}"></a>')
+        lines.append(f"# Module {display_idx}: {raw_title}")
         lines.append("")
         if item.get("url"):
             lines.append(f"**Source Video**: [{item['url']}]({item['url']})")
@@ -305,7 +307,25 @@ def run_playlist_job(
     manifest = load_playlist_manifest(manifest_path, playlist_url)
 
     emit(f"Extracting playlist info from: {playlist_url}")
-    playlist_items, found_title = extract_playlist_info(playlist_url)
+    try:
+        playlist_items, found_title = extract_playlist_info(playlist_url)
+    except Exception as extract_err:
+        # If we already have items saved in the existing manifest, fallback to resuming them
+        if manifest.get("items"):
+            emit(f"Playlist extraction warning: {extract_err}. Resuming from existing manifest items on disk.")
+            playlist_items = [
+                {
+                    "playlist_index": int(k.split("_")[0]),
+                    "video_id": k.split("_")[1] if "_" in k else k,
+                    "url": v.get("result", {}).get("url") or f"https://www.youtube.com/watch?v={k.split('_')[1] if '_' in k else k}",
+                    "title": v.get("result", {}).get("title") or v.get("title") or k,
+                }
+                for k, v in manifest.get("items", {}).items()
+            ]
+            found_title = manifest.get("playlist_title")
+        else:
+            raise
+
     if not playlist_items:
         raise RuntimeError(f"No videos found in playlist or playlist is private/invalid: {playlist_url}")
 
@@ -514,18 +534,6 @@ def run_playlist_job(
     manifest["updated_at"] = _utc_now()
     manifest["summary"] = summary_result
     _atomic_write_json(manifest_path, manifest)
-
-    # Automatically save consolidated notes to 'saved files' folder
-    try:
-        from bot.file_saver import save_generated_artifacts
-        save_generated_artifacts(
-            pdf_path=master_pdf_path,
-            md_path=master_md_path,
-            title=f"Master Consolidated - {playlist_title_final}",
-            kind=kind,
-        )
-    except Exception as save_err:
-        emit(f"Warning saving master notes to 'saved files': {save_err}")
 
     emit(f"Playlist batch processing finished! Master PDF: {master_pdf_path}")
     return summary_result

@@ -10,6 +10,7 @@ parser, same palette, but:
 """
 from __future__ import annotations
 
+import html
 import io
 import re
 import shutil
@@ -63,16 +64,18 @@ COLOR_RED = "#B91C1C"      # Prohibitions, disqualifications, violations
 COLOR_PURPLE = "#6D28D9"   # Definitions, authorities, sections
 COLOR_TEAL = "#0F766E"     # Case laws, landmark judgments
 
+WHITE_BG = colors.HexColor("#FFFFFF")
+
 CALLOUTS = {
-    "def":     {"label": "DEFINITION", "bar": colors.HexColor("#1D4ED8"), "tint": colors.HexColor("#FFFFFF")},
-    "example": {"label": "EXAM CASE",  "bar": colors.HexColor("#15803D"), "tint": colors.HexColor("#FFFFFF")},
-    "tip":     {"label": "KEY RULE",   "bar": colors.HexColor("#B45309"), "tint": colors.HexColor("#FFFFFF")},
-    "warning": {"label": "EXAM TRAP",  "bar": colors.HexColor("#B91C1C"), "tint": colors.HexColor("#FFFFFF")},
-    "note":    {"label": "NOTE",       "bar": colors.HexColor("#4B5563"), "tint": colors.HexColor("#FFFFFF")},
-    "revise":  {"label": "REVISION",   "bar": colors.HexColor("#0F766E"), "tint": colors.HexColor("#FFFFFF")},
-    "tldr":    {"label": "SUMMARY",    "bar": colors.HexColor("#0D7377"), "tint": colors.HexColor("#FFFFFF")},
-    "q":       {"label": "QUESTION",   "bar": colors.HexColor("#6D28D9"), "tint": colors.HexColor("#FFFFFF")},
-    "correct": {"label": "CORRECT",    "bar": colors.HexColor("#15803D"), "tint": colors.HexColor("#FFFFFF")},
+    "def":     {"label": "DEFINITION", "bar": colors.HexColor("#1D4ED8"), "tint": WHITE_BG},
+    "example": {"label": "EXAM CASE",  "bar": colors.HexColor("#15803D"), "tint": WHITE_BG},
+    "tip":     {"label": "KEY RULE",   "bar": colors.HexColor("#B45309"), "tint": WHITE_BG},
+    "warning": {"label": "EXAM TRAP",  "bar": colors.HexColor("#B91C1C"), "tint": WHITE_BG},
+    "note":    {"label": "NOTE",       "bar": colors.HexColor("#4B5563"), "tint": WHITE_BG},
+    "revise":  {"label": "REVISION",   "bar": colors.HexColor("#0F766E"), "tint": WHITE_BG},
+    "tldr":    {"label": "SUMMARY",    "bar": colors.HexColor("#0D7377"), "tint": WHITE_BG},
+    "q":       {"label": "QUESTION",   "bar": colors.HexColor("#6D28D9"), "tint": WHITE_BG},
+    "correct": {"label": "CORRECT",    "bar": colors.HexColor("#15803D"), "tint": WHITE_BG},
 }
 
 ss = getSampleStyleSheet()
@@ -101,7 +104,7 @@ CO_LABEL = ParagraphStyle("CoLabel", parent=ss["Normal"], fontName="Helvetica-Bo
                           fontSize=8.5, leading=10.5, textColor=colors.white,
                           spaceAfter=0, alignment=TA_LEFT)
 CO_BODY = ParagraphStyle("CoBody", parent=BODY, fontSize=9.4, leading=12.8,
-                         spaceAfter=2.0, alignment=TA_JUSTIFY, textColor=colors.HexColor("#0F172A"))
+                         spaceAfter=2.0, alignment=TA_JUSTIFY, textColor=INK)
 
 
 ACCENT_HEX = "#" + ACCENT.hexval()[2:]
@@ -129,16 +132,12 @@ def _ascii_safe(text: str) -> str:
         "\u2192": "->",
         "\u2194": "<->",
         "\u2248": "~",
+        "≈": "~",
         "\u2264": "<=",
         "\u2265": ">=",
         "\u00d7": "x",
         "\u00b1": "+/-",
         "\u20b9": "Rs. ",
-        "≈": "~",
-        "≤": "<=",
-        "≥": ">=",
-        "≠": "!=",
-        "±": "+/-",
         "┌": "+",
         "┐": "+",
         "└": "+",
@@ -162,7 +161,7 @@ def _ascii_safe(text: str) -> str:
 
 
 def _clean_latex_math(text: str) -> str:
-    r"""Convert raw LaTeX math expressions (\frac{}, frac{}, \approx, \sqrt{}, \text{}, etc.) into clean typography."""
+    r"""Convert raw LaTeX math expressions (\frac{}, \approx, \sqrt{}, \text{}, etc.) into clean typography."""
     # 0. Clean set brackets, spacing, and arrows
     text = text.replace(r'\{', '{').replace(r'\}', '}')
     text = text.replace(r'\left\{', '{').replace(r'\right\}', '}')
@@ -173,66 +172,27 @@ def _clean_latex_math(text: str) -> str:
     text = text.replace(r'\,', ' ').replace(r'\;', ' ').replace(r'\:', ' ')
     text = re.sub(r'\\xrightarrow(?:\[(.*?)\])?\{(.*?)\}', r' -> [\2] -> ', text)
 
-    # Handle text tags inside math: \text{Mass}_{1st} -> Mass_{1st}
-    text = re.sub(r'\\(?:text|mathrm|mathbf|textbf)\{([^}]+)\}', r'\1', text)
-    text = re.sub(r'\\(?:mathit|textit)\{([^}]+)\}', r'\1', text)
-
-    # Helper to extract balanced {...} to handle nested braces like frac{Mass_{1st} + Mass_{3rd}}{2}
-    def extract_braced(s: str, start_idx: int):
-        if start_idx >= len(s) or s[start_idx] != '{':
-            return None, start_idx
-        depth = 0
-        for idx in range(start_idx, len(s)):
-            if s[idx] == '{':
-                depth += 1
-            elif s[idx] == '}':
-                depth -= 1
-                if depth == 0:
-                    return s[start_idx + 1:idx], idx + 1
-        return None, start_idx
-
-    # Un-nest fractions: matches \frac{a}{b}, frac{a}{b}, \dfrac{a}{b}, \tfrac{a}{b}
-    pattern = re.compile(r'\\?(?:frac|tfrac|dfrac)\s*\{')
-    for _ in range(10):
-        m = pattern.search(text)
-        if not m:
-            break
-        num_start = m.end() - 1
-        num, next_idx = extract_braced(text, num_start)
-        if num is None:
-            break
-        while next_idx < len(text) and text[next_idx].isspace():
-            next_idx += 1
-        den, end_idx = extract_braced(text, next_idx)
-        if den is None:
-            break
-
-        num_str = num.strip()
-        den_str = den.strip()
-        has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±', '->']) and not (s.startswith('(') and s.endswith(')'))
-        num_clean = f"({num_str})" if has_op(num_str) else num_str
-        den_clean = f"({den_str})" if has_op(den_str) else den_str
-        repl = f"{num_clean} / {den_clean}"
-        text = text[:m.start()] + repl + text[end_idx:]
-
-    # Fallback regex for standard fractions without nested braces
+    # 1. Un-nest \frac{a}{b} iteratively (up to 5 levels)
     for _ in range(5):
         def repl_frac(m):
             num = m.group(1).strip()
             den = m.group(2).strip()
-            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±', '->']) and not (s.startswith('(') and s.endswith(')'))
+            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±']) and not (s.startswith('(') and s.endswith(')'))
             num_clean = f"({num})" if has_op(num) else num
             den_clean = f"({den})" if has_op(den) else den
-            return f"{num_clean} / {den_clean}"
+            return f"{num_clean} / {den_clean}" if not (num_clean.startswith('(') and num_clean.endswith(')')) and not (den_clean.startswith('(') and den_clean.endswith(')')) and ' ' not in num_clean and ' ' not in den_clean else f"{num_clean} / {den_clean}"
         text = re.sub(r'\\?(?:frac|tfrac|dfrac)\{([^{}]+)\}\{([^{}]+)\}', repl_frac, text)
 
-    # 2. Square roots and symbols
+    # 2. Text formatting macros
+    text = re.sub(r'\\(?:mathrm|textbf|mathbf)\{([^}]+)\}', r'<b>\1</b>', text)
+    text = re.sub(r'\\text\{([^}]+)\}', r'\1', text)
+    text = re.sub(r'\\(?:mathit|textit)\{([^}]+)\}', r'<i>\1</i>', text)
     text = re.sub(r'\\sqrt\{([^}]+)\}', r'√(\1)', text)
     text = re.sub(r'\\sqrt([0-9a-zA-Z])', r'√\1', text)
 
     # 3. Greek & math symbols
     symbols = {
-        r'\approx': '~', r'\sim': '~', r'\neq': '!=', r'\ne': '!=',
+        r'\approx': '~', '≈': '~', r'\sim': '~', r'\neq': '!=', r'\ne': '!=',
         r'\leq': '<=', r'\le': '<=', r'\geq': '>=', r'\ge': '>=',
         r'\times': 'x', r'\div': '/', r'\pm': '+/-', r'\mp': '-/+',
         r'\cdot': '*', r'\circ': ' deg', r'\degree': ' deg', r'\infty': 'inf',
@@ -246,13 +206,21 @@ def _clean_latex_math(text: str) -> str:
     }
     for k, v in symbols.items():
         text = re.sub(re.escape(k) + r'(?![a-zA-Z])', v, text)
-    text = text.replace('≈', '~')
 
     # 4. Superscripts and Subscripts
     text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
     text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
-    # Only convert single-symbol math subscripts like x_1, a_0, v_i, not words_with_underscores, URLs, or IDs
-    text = re.sub(r'(?<=[a-zA-Z])_([0-9]{1,2}|[ijkmnpt])(?![a-zA-Z0-9_-])', r'<sub>\1</sub>', text)
+
+    # 1. Un-nest \frac{a}{b} iteratively (up to 5 levels)
+    for _ in range(5):
+        def repl_frac(m):
+            num = m.group(1).strip()
+            den = m.group(2).strip()
+            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±']) and not (s.startswith('(') and s.endswith(')'))
+            num_clean = f"({num})" if has_op(num) else num
+            den_clean = f"({den})" if has_op(den) else den
+            return f"{num_clean} / {den_clean}"
+        text = re.sub(r'\\?(?:frac|tfrac|dfrac)\{([^{}]+)\}\{([^{}]+)\}', repl_frac, text)
 
     # 5. Clean up math dollar signs $...$
     text = re.sub(r'\$([^\$]+)\$', r'\1', text)
@@ -280,14 +248,21 @@ def inline(text: str) -> str:
         '⁵': '<sup>5</sup>', '⁶': '<sup>6</sup>', '⁷': '<sup>7</sup>', '⁸': '<sup>8</sup>', '⁹': '<sup>9</sup>',
         '⁺': '<sup>+</sup>', '⁻': '<sup>-</sup>',
     }
+    # Convert arrows and entities before _ascii_safe
+    text = text.replace('→', '&rarr;').replace('←', '&larr;').replace('↔', '&harr;').replace('Δ', '&Delta;').replace('°', '&deg;').replace('≈', '~')
+
+    text = _ascii_safe(text)
+
     for k, v in sub_map.items():
         text = text.replace(k, v)
     for k, v in sup_map.items():
         text = text.replace(k, v)
-    text = text.replace('→', '&rarr;').replace('←', '&larr;').replace('↔', '&harr;').replace('Δ', '&Delta;').replace('°', '&deg;')
 
-    text = _ascii_safe(text)
+    # XML escape before adding HTML tags
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    # Convert unclosed <br> to self-closing <br/> for ReportLab paraparser compatibility
+    text = re.sub(r'&lt;br\s*&gt;', '<br/>', text, flags=re.IGNORECASE)
     # 6. Color spans and markdown highlights:
     # Highlight tag ==text== -> Deep Amber bold
     text = re.sub(r"==([^=]+?)==", rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text)
@@ -307,24 +282,34 @@ def inline(text: str) -> str:
     text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)
     
     # Convert bold: Intelligent semantic coloring
+    # Numbers, sections, years, monetary amounts, penalties -> Amber
+    # Statutory acts, institutions, judicial cases, Latin maxims -> Royal Blue
+    # Prohibitions/Fines/Disqualifications -> Crimson Red
+    # Approvals/Exceptions/Permitted -> Emerald Green
     def _bold_repl(m):
         inner = m.group(1).strip()
+        # Prohibitions & Warnings
         if re.search(r"\b(prohibit|forbidden|illegal|penalty|fine|imprisonment|punish|disqualif|void|offence|breach|guilty|fail|trap|warning|danger)\b", inner, re.I):
             return f'<font color="{COLOR_RED}"><b>{inner}</b></font>'
+        # Statutory sections, articles, acts, institutions
         elif re.search(r"\b(section|sec\.|article|art\.|act|code|tribunal|commission|board|cbt|epfo|ilo|ministry|court|parliament|ordinance)\b", inner, re.I):
             return f'<font color="{COLOR_BLUE}"><b>{inner}</b></font>'
+        # Positive / thresholds / approvals
         elif re.search(r"\b(valid|eligible|approved|entitled|exempt|allowed|permitted|benefit|relief|right)\b", inner, re.I):
             return f'<font color="{COLOR_GREEN}"><b>{inner}</b></font>'
+        # Numbers, percentages, money, dates, time limits
         elif re.search(r"(\b\d+[\d,\.]*\b|%|rs\.|rupees|days|months|years|hours|timeline|schedule|threshold|ceiling)", inner, re.I):
             return f'<font color="{COLOR_AMBER}"><b>{inner}</b></font>'
         else:
+            # Default strong keyword: Rich Navy / Dark Blue
             return f'<font color="#1E3A8A"><b>{inner}</b></font>'
             
     text = re.sub(r"\*\*(.+?)\*\*", _bold_repl, text)
     text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)", lambda m: f'<u>{m.group(1)}</u>', text)
     text = re.sub(r"`([^`]+?)`", r'<font face="Courier" size="8.5" color="#1E3A8A">\1</font>', text)
     
-    # 7. Automatic Statutory Fact Highlighting
+    # 7. Automatic Statutory Fact Highlighting (Numbers with time/money/percentage units not already enclosed in font tags)
+    # Highlights: 7 days, 14 days, 2 months, 6 weeks, 120 days, 50%, Rs. 5000, etc.
     fact_re = re.compile(
         r'(?i)(?<![#\w>])'
         r'('
@@ -337,37 +322,43 @@ def inline(text: str) -> str:
     )
     text = fact_re.sub(rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text)
 
-    # Unescape allowed ReportLab tags safely
-    def _clean_anchor(m):
-        raw_val = m.group(1).strip("'\"")
-        clean_val = re.sub(r'<[^>]*>', '', raw_val)
-        clean_val = re.sub(r'&(?:lt|gt|amp|quot);', '', clean_val)
-        clean_val = re.sub(r'[^a-zA-Z0-9_-]', '-', clean_val).strip('-')
-        return f'<a name="{clean_val}">'
-
-    text = re.sub(r"&lt;a\s+(?:name|id)=(.*?)&gt;", _clean_anchor, text)
-    text = re.sub(r"&lt;/a&gt;", r'</a>', text)
+    
+    # Unescape allowed ReportLab tags and normalize anchors (ReportLab paraparser requires <a name="..."> instead of <a id="...">)
+    text = re.sub(r"&lt;a\s+name=['\"]?(.*?)['\"]?\s*&gt;", r'<a name="\1">', text, flags=re.IGNORECASE)
+    text = re.sub(r"<a\s+name=['\"]?(.*?)['\"]?\s*>", r'<a name="\1">', text, flags=re.IGNORECASE)
+    text = re.sub(r"&lt;a\s+id=['\"]?(.*?)['\"]?\s*&gt;", r'<a name="\1">', text, flags=re.IGNORECASE)
+    text = re.sub(r"<a\s+id=['\"]?(.*?)['\"]?\s*>", r'<a name="\1">', text, flags=re.IGNORECASE)
+    text = re.sub(r"&lt;/a&gt;", r'</a>', text, flags=re.IGNORECASE)
     text = re.sub(r"&lt;(/?)b&gt;", r"<\1b>", text)
     text = re.sub(r"&lt;(/?)i&gt;", r"<\1i>", text)
     text = re.sub(r"&lt;(/?)u&gt;", r"<\1u>", text)
     text = re.sub(r"&lt;(/?)sup&gt;", r"<\1sup>", text)
     text = re.sub(r"&lt;(/?)sub&gt;", r"<\1sub>", text)
-    text = re.sub(r"&lt;br\s*/?&gt;", "<br/>", text, flags=re.IGNORECASE)
     text = re.sub(r"&lt;(/?)font(.*?)&gt;", r"<\1font\2>", text)
     text = text.replace("&amp;rarr;", "&rarr;").replace("&amp;larr;", "&larr;").replace("&amp;harr;", "&harr;")
     text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;").replace("&amp;bull;", "&bull;")
     return text
 
 
-def make_para(text: str, style: ParagraphStyle) -> Paragraph:
-    """Create a ReportLab Paragraph with automatic self-healing fallback against malformed XML."""
+def make_para(text: str, style, bulletText=None) -> Paragraph:
+    """Create a ReportLab Paragraph safely with self-healing fallback if XML parsing fails."""
+    if text is None:
+        return Paragraph("", style, bulletText=bulletText)
+    raw_str = str(text)
+    if not raw_str.strip():
+        return Paragraph("", style, bulletText=bulletText)
     try:
-        return Paragraph(text, style)
-    except Exception as exc:
-        # Strip all tags and escape basic XML entities
-        plain = re.sub(r'<[^>]*>', '', text)
-        plain = plain.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        return Paragraph(plain, style)
+        formatted = inline(raw_str)
+        return Paragraph(formatted, style, bulletText=bulletText)
+    except Exception:
+        # Fallback: Strip broken XML tags and escape raw entities so ReportLab never crashes
+        clean = re.sub(r"<[^>]+>", "", raw_str)
+        clean = html.escape(clean)
+        try:
+            return Paragraph(clean, style, bulletText=bulletText)
+        except Exception:
+            safe_ascii = "".join(c for c in clean if ord(c) < 128)
+            return Paragraph(safe_ascii, style, bulletText=bulletText)
 
 
 
@@ -394,8 +385,7 @@ def _clean_list_item(text: str) -> str:
     return text.strip()
 
 
-CALLOUT_RE = re.compile(r"^>\s*(?:\*\*)?\[!(\w+)\](?:\*\*)?(.*)$", re.IGNORECASE)
-INLINE_CALLOUT_RE = re.compile(r"^\[(example|tip|warning|trap|revise|note|def|correct)\]\s*(.*)$", re.IGNORECASE)
+CALLOUT_RE = re.compile(r"^>\s*\[!(\w+)\](.*)$")
 IMAGE_RE = re.compile(r"^!\[([^\]]*)\]\(([^)]+)\)\s*$")
 
 
@@ -410,53 +400,29 @@ def parse_blocks(md: str):
             yield ("hr", None); i += 1; continue
         m_img = IMAGE_RE.match(stripped)
         if m_img:
+            # Cheatsheets historically skipped images (text-only format), but
+            # the optional `mermaid` feature emits image references for the
+            # rendered diagrams. We now yield the block; render_block decides
+            # whether to actually draw it (cheap, missing files fall back to
+            # an italic placeholder line).
             yield ("image", (m_img.group(1).strip(), m_img.group(2).strip()))
             i += 1; continue
         m = re.match(r"^(#{1,6})\s+(.*)$", stripped)
         if m:
             yield (f"h{len(m.group(1))}", m.group(2).strip()); i += 1; continue
-            
         m = CALLOUT_RE.match(stripped)
         if m:
-            kind = m.group(1).lower()
-            first_t = m.group(2).strip()
-            buf = [first_t] if first_t else []
+            kind = m.group(1).lower(); title = m.group(2).strip()
+            buf: list[str] = []
             i += 1
             while i < len(lines) and lines[i].strip().startswith(">"):
-                raw_l = lines[i].strip().lstrip(">").strip()
-                m_sub = CALLOUT_RE.match(f"> {raw_l}")
-                if m_sub:
-                    if m_sub.group(1).lower() == kind:
-                        sub_t = m_sub.group(2).strip()
-                        if sub_t:
-                            buf.append(sub_t)
-                        i += 1
-                        continue
-                    else:
-                        break
-                buf.append(raw_l)
-                i += 1
-            yield ("callout", (kind, "", buf)); continue
-
-        m_ic = INLINE_CALLOUT_RE.match(stripped)
-        if m_ic:
-            kind = m_ic.group(1).lower(); content = m_ic.group(2).strip()
-            # If content contains numbered steps, split them cleanly
-            if re.search(r'\b\d+\.\s+', content):
-                body_lines = [s.strip() for s in re.split(r'(?=\b\d+\.\s+)', content) if s.strip()]
-            else:
-                body_lines = [content]
-            yield ("callout", (kind, "", body_lines)); i += 1; continue
-
+                buf.append(lines[i].strip().lstrip(">").strip()); i += 1
+            yield ("callout", (kind, title, buf)); continue
         if stripped.startswith(">"):
             buf = []
             while i < len(lines) and lines[i].strip().startswith(">"):
-                raw_l = lines[i].strip().lstrip(">").strip()
-                m_sub = CALLOUT_RE.match(f"> {raw_l}")
-                if m_sub:
-                    break
-                buf.append(raw_l); i += 1
-            yield ("callout", ("note", "", buf)); continue
+                buf.append(lines[i].strip().lstrip(">").strip()); i += 1
+            yield ("quote", " ".join(b for b in buf if b)); continue
         if "|" in stripped and i + 1 < len(lines) and re.match(r"^[\s\|:\-]+$", lines[i+1].strip()) and "|" in lines[i+1]:
             header = [c.strip() for c in stripped.strip("|").split("|")]
             i += 2; rows = []
@@ -617,18 +583,18 @@ def _make_qr_image_reader(url: str, *, box: int = 6, border: int = 2):
 
 
 def make_image_flowable(alt: str, path: str) -> list:
-    """Compact image rendering for the cheatsheet â€” caps at half body height
+    """Compact image rendering for the cheatsheet — caps at half body height
     so a single mermaid diagram never eats a whole page. Missing files fall
     back to an italic placeholder line so a broken ref never blocks the PDF.
     """
     p = Path(path)
     if not p.is_absolute() or not p.exists():
-        return [Paragraph(f"<i>[missing image: {path}]</i>", BODY)]
+        return [make_para(f"<i>[missing image: {path}]</i>", BODY)]
     try:
         with PILImage.open(p) as im:
             iw, ih = im.size
     except Exception as exc:
-        return [Paragraph(f"<i>[image error: {exc}]</i>", BODY)]
+        return [make_para(f"<i>[image error: {exc}]</i>", BODY)]
     max_w = BODY_W
     max_h = (PAGE_H - MARGIN_T - MARGIN_B) * 0.40  # cheatsheets stay tight
     scale = min(max_w / iw, max_h / ih, 1.0)
@@ -639,7 +605,7 @@ def make_image_flowable(alt: str, path: str) -> list:
         cap = ParagraphStyle("ImgCap", parent=BODY, fontSize=8.5,
                              leading=10, alignment=TA_CENTER,
                              textColor=MUTED, spaceBefore=2, spaceAfter=4)
-        out.append(Paragraph(inline(alt), cap))
+        out.append(make_para(alt, cap))
     return [KeepTogether(out)]
 
 
@@ -654,7 +620,7 @@ def make_summary_card_compact(summary_md: str) -> list:
         "SumBullC", parent=body_style, leftIndent=10,
         firstLineIndent=-9, spaceAfter=1.5,
     )
-    label = Paragraph(
+    label = make_para(
         "AT A GLANCE",
         ParagraphStyle("SumLabelC", parent=CO_LABEL,
                        textColor=colors.white, fontSize=7.5, leading=9.5),
@@ -662,17 +628,17 @@ def make_summary_card_compact(summary_md: str) -> list:
     body_flowables: list = []
     for k, p in parse_blocks(summary_md):
         if k == "p":
-            body_flowables.append(Paragraph(inline(p), body_style))
+            body_flowables.append(make_para(p, body_style))
         elif k == "ul":
             for it in p:
-                body_flowables.append(Paragraph(
+                body_flowables.append(make_para(
                     f'<font color="{ACCENT_HEX}"><b>-</b></font> '
-                    f'{inline(it)}', bullet_style))
+                    f'{it}', bullet_style))
         elif k == "ol":
             for i, it in enumerate(p, 1):
-                body_flowables.append(Paragraph(
+                body_flowables.append(make_para(
                     f'<b><font color="{ACCENT_HEX}">{i}.</font></b>'
-                    f' {inline(it)}', bullet_style))
+                    f' {it}', bullet_style))
     rows = [[label]] + [[fl] for fl in body_flowables]
     card = Table(rows, colWidths=[BODY_W - 0.2 * cm])
     card.setStyle(TableStyle([
@@ -692,62 +658,51 @@ def make_summary_card_compact(summary_md: str) -> list:
 def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
     spec = CALLOUTS.get(kind, CALLOUTS["note"])
     label = spec["label"]
-    
-    actual_title = ""
-    actual_body = [b.strip() for b in body_lines if b.strip()]
-    
     if title:
-        t_clean = re.sub(r"[*_`]", "", title).strip()
-        if len(t_clean) <= 32 and not any(p in t_clean for p in [".", ";", "—", "–", "=", ">", ":"]):
-            actual_title = t_clean
-        else:
-            actual_body.insert(0, title)
-            
-    if actual_title:
-        label = f"{label} - {actual_title}"
-        
-    pseudo = "\n".join(actual_body)
+        clean_title = re.sub(r"[*_`]", "", title)
+        label = f"{label} - {clean_title}"
+    pseudo = "\n".join(body_lines)
     body_paras = []
-    
-    # Check if lines inside callout have bullet markers like • or -
-    for b_item in actual_body:
-        b_s = b_item.strip()
-        if not b_s:
-            continue
-        if b_s.startswith("• ") or b_s.startswith("- "):
-            clean_b = re.sub(r"^[•\-]\s*", "", b_s)
-            body_paras.append(make_para(
-                f'<font color="{ACCENT_HEX}"><b>&bull;</b></font> {inline(clean_b)}',
-                ParagraphStyle("co_li", parent=CO_BODY, leftIndent=10, firstLineIndent=-10, spaceAfter=1.5)))
-        elif re.match(r"^\d+\.\s+", b_s):
-            m_num = re.match(r"^(\d+)\.\s+(.*)$", b_s)
-            num_str = m_num.group(1) if m_num else "1"
-            it_str = m_num.group(2) if m_num else b_s
-            body_paras.append(make_para(
-                f'<b><font color="{ACCENT_HEX}">{num_str}.</font></b> {inline(it_str)}',
-                ParagraphStyle("co_oi", parent=CO_BODY, leftIndent=14, firstLineIndent=-12, spaceAfter=1.5)))
-        else:
-            body_paras.append(make_para(inline(b_s), CO_BODY))
+    for k2, p2 in parse_blocks(pseudo):
+        if k2 == "p":
+            body_paras.append(make_para(p2, CO_BODY))
+        elif k2 == "ul":
+            for it in p2:
+                body_paras.append(make_para(
+                    f'<font color="{ACCENT_HEX}"><b>-</b></font> {it}',
+                    ParagraphStyle("co_li", parent=CO_BODY, leftIndent=10,
+                                   firstLineIndent=-10, spaceAfter=1)))
+        elif k2 == "ol":
+            for it in p2:
+                num, text_val = (it[0], it[1]) if (isinstance(it, tuple) and len(it) == 2) else (1, it)
+                body_paras.append(make_para(
+                    f'<b>{num}.</b> {text_val}',
+                    ParagraphStyle("co_oi", parent=CO_BODY, leftIndent=14,
+                                   firstLineIndent=-12, spaceAfter=1)))
 
-    if not body_paras:
-        body_paras.append(make_para(inline(title or ""), CO_BODY))
-
-    inner = Table([[make_para(inline(label), CO_LABEL)]] + [[p] for p in body_paras],
-                  colWidths=[BODY_W])
+    inner = Table([[make_para(label, CO_LABEL)]] + [[p] for p in body_paras],
+                  colWidths=[BODY_W - 0.3 * cm])
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), spec["bar"]),
-        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#FFFFFF")),
+        ("BACKGROUND", (0, 1), (-1, -1), spec["tint"]),
         ("LEFTPADDING", (0, 0), (-1, -1), 8),
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
         ("TOPPADDING", (0, 0), (-1, 0), 3.5),
         ("BOTTOMPADDING", (0, 0), (-1, 0), 3.5),
-        ("TOPPADDING", (0, 1), (-1, -1), 4.5),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 4.5),
+        ("TOPPADDING", (0, 1), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
         ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.white),
-        ("LINEBEFORE", (0, 0), (0, -1), 3.5, spec["bar"]),
-        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+        ("BOX", (0, 0), (-1, -1), 0.4, spec["bar"]),
     ]))
-    return [Spacer(1, 2), KeepTogether(inner), Spacer(1, 3.5)]
+    outer = Table([[inner]], colWidths=[BODY_W])
+    outer.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ("LINEBEFORE", (0, 0), (0, 0), 3.0, spec["bar"]),
+    ]))
+    return [Spacer(1, 2), KeepTogether(outer), Spacer(1, 3)]
 
 
 def make_table(header, rows):
@@ -756,9 +711,9 @@ def make_table(header, rows):
                         alignment=TA_LEFT, spaceAfter=0)
     td = ParagraphStyle("td", parent=BODY, fontName="Helvetica",
                         fontSize=9.2, leading=12.2, alignment=TA_JUSTIFY, spaceAfter=0, textColor=INK)
-    data = [[make_para(inline(c), th) for c in header]]
+    data = [[make_para(c, th) for c in header]]
     for r in rows:
-        data.append([make_para(inline(c), td) for c in r])
+        data.append([make_para(c, td) for c in r])
     col_w = BODY_W / len(header)
     t = Table(data, colWidths=[col_w] * len(header), repeatRows=1)
     t.setStyle(TableStyle([
@@ -779,97 +734,24 @@ def make_table(header, rows):
 
 
 def make_ul(items):
-    # If list has 4+ items and mostly short definitions / key-value items (like glossary),
-    # render in an elegant 2-column balanced grid to save vertical height and utilize right margin!
-    is_glossary = (
-        len(items) >= 4 and
-        sum(1 for it in items if (" - " in it or " – " in it or " — " in it or ": " in it or "**" in it) and len(it) < 140) >= len(items) * 0.65
-    )
-    if is_glossary:
-        col_w = (BODY_W - 6) / 2
-        half = (len(items) + 1) // 2
-        col1 = items[:half]
-        col2 = items[half:]
-        
-        gloss_style = ParagraphStyle(
-            "GlossItem", parent=BODY, fontName="Helvetica",
-            fontSize=8.8, leading=11.6, textColor=INK, spaceAfter=2.0, alignment=TA_LEFT,
-            leftIndent=8, firstLineIndent=-8
-        )
-        
-        table_rows = []
-        for i in range(max(len(col1), len(col2))):
-            p1 = make_para(f'<font color="{ACCENT_HEX}"><b>&bull;</b></font> {inline(col1[i])}', gloss_style) if i < len(col1) else Paragraph("", gloss_style)
-            p2 = make_para(f'<font color="{ACCENT_HEX}"><b>&bull;</b></font> {inline(col2[i])}', gloss_style) if i < len(col2) else Paragraph("", gloss_style)
-            table_rows.append([p1, p2])
-            
-        t = Table(table_rows, colWidths=[col_w, col_w])
-        t.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 2),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            ("TOPPADDING", (0, 0), (-1, -1), 1.5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
-        ]))
-        return [t, Spacer(1, 2)]
-
-    bs = ParagraphStyle("Bul", parent=BODY, leading=13.5, alignment=TA_LEFT,
-                        spaceAfter=2.5, leftIndent=12, firstLineIndent=-9, textColor=INK)
+    bs = ParagraphStyle("Bul", parent=BODY, leading=14.2, alignment=TA_JUSTIFY,
+                        spaceAfter=3.0, leftIndent=12, firstLineIndent=-9, textColor=INK)
     return [make_para(
-        f'<font color="{ACCENT_HEX}"><b>&bull;</b></font> {inline(it)}', bs)
+        f'<font color="{ACCENT_HEX}"><b>&bull;</b></font> {it}', bs)
         for it in items]
 
 
-def make_ol(items):
-    # If list has 4+ short step / calculation items, render in a 2-column balanced grid to utilize right margin
-    all_short = len(items) >= 4 and all(len(it[1] if isinstance(it, tuple) else str(it)) < 65 for it in items)
-    if all_short:
-        col_w = (BODY_W - 6) / 2
-        half = (len(items) + 1) // 2
-        col1 = items[:half]
-        col2 = items[half:]
-        
-        step_style = ParagraphStyle(
-            "StepItem", parent=BODY, fontName="Helvetica",
-            fontSize=9.0, leading=12.0, textColor=INK, spaceAfter=2.0, alignment=TA_LEFT,
-            leftIndent=12, firstLineIndent=-10
-        )
-        
-        table_rows = []
-        for i in range(max(len(col1), len(col2))):
-            if i < len(col1):
-                num1, it1 = (col1[i][0], col1[i][1]) if isinstance(col1[i], tuple) else (i + 1, col1[i])
-                p1 = make_para(f'<b><font color="{ACCENT_HEX}">{num1}.</font></b> {inline(it1)}', step_style)
-            else:
-                p1 = Paragraph("", step_style)
-                
-            if i < len(col2):
-                num2, it2 = (col2[i][0], col2[i][1]) if isinstance(col2[i], tuple) else (half + i + 1, col2[i])
-                p2 = make_para(f'<b><font color="{ACCENT_HEX}">{num2}.</font></b> {inline(it2)}', step_style)
-            else:
-                p2 = Paragraph("", step_style)
-                
-            table_rows.append([p1, p2])
-            
-        t = Table(table_rows, colWidths=[col_w, col_w])
-        t.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 2),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            ("TOPPADDING", (0, 0), (-1, -1), 1.5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
-        ]))
-        return [t, Spacer(1, 2)]
 
-    ns = ParagraphStyle("Num", parent=BODY, leading=13.5, alignment=TA_LEFT,
-                        spaceAfter=2.5, leftIndent=14, firstLineIndent=-12, textColor=INK)
+def make_ol(items):
+    ns = ParagraphStyle("Num", parent=BODY, leading=14.2, alignment=TA_JUSTIFY,
+                        spaceAfter=3.0, leftIndent=14, firstLineIndent=-12, textColor=INK)
     res = []
     for item in items:
         if isinstance(item, tuple) and len(item) == 2:
             num, it = item
         else:
             num, it = 1, item
-        res.append(make_para(f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {inline(it)}', ns))
+        res.append(make_para(f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {it}', ns))
     return res
 
 
@@ -992,14 +874,14 @@ def _parse_ascii_table(code_text: str):
 
 def render_block(kind, payload, story):
     if kind == "h1":
-        story.append(make_para(inline(payload), DOC_TITLE)); return
+        story.append(make_para(payload, DOC_TITLE)); return
     if kind == "h2":
-        story.append(make_para(inline(payload), H1))
+        story.append(make_para(payload, H1))
         return
     if kind in ("h3", "h4", "h5", "h6"):
-        story.append(make_para(inline(payload), H2)); return
+        story.append(make_para(payload, H2)); return
     if kind == "p":
-        story.append(make_para(inline(payload), BODY)); return
+        story.append(make_para(payload, BODY)); return
     if kind == "ul":
         story.extend(make_ul(payload)); return
     if kind == "ol":
@@ -1012,7 +894,7 @@ def render_block(kind, payload, story):
         q = ParagraphStyle("q", parent=BODY, fontName="Helvetica-Oblique",
                            textColor=ACCENT, leftIndent=12, rightIndent=12,
                            spaceBefore=2, spaceAfter=4, fontSize=9.5)
-        story.append(make_para(inline(payload), q)); return
+        story.append(make_para(payload, q)); return
     if kind == "table":
         story.append(Spacer(1, 1))
         story.append(make_table(*payload))
@@ -1100,15 +982,7 @@ def build(src: Path | None = None, out: Path | None = None,
     SOURCE_URL = source_url
     DOC_RUNTIME_TITLE = title
 
-    raw = src.read_bytes()
-    for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
-        try:
-            md = raw.decode(enc)
-            break
-        except (UnicodeDecodeError, UnicodeError):
-            continue
-    else:
-        md = raw.decode("utf-8", errors="replace")
+    md = src.read_text(encoding="utf-8")
 
     # --- preprocess for features -------------------------------------------
     summary_md: str | None = None

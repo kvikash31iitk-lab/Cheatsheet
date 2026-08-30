@@ -3,6 +3,10 @@
 *.env
 !.env.example
 cookies.txt
+.ssh/
+setup_instructions.txt
+*.zip
+*.log
 
 # User data / runtime artifacts
 work/

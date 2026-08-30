@@ -19,9 +19,11 @@ from __future__ import annotations
 import json
 import html
 import math
+import random
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -779,11 +781,160 @@ def split_audio(audio: Path, work: Path, on_progress: ProgressFn = None
     return chunks
 
 
-def _make_whisper_runner():
-    """Returns ``(transcribe_fn, is_local)`` for the configured backend.
+class AudioTranscriptionThrottle:
+    """Thread-safe request queue and rate limiter for audio transcription API calls."""
+    def __init__(self, min_interval_seconds: float = 2.5):
+        self.lock = threading.Lock()
+        self.last_call_time = 0.0
+        self.min_interval = min_interval_seconds
 
-    ``WHISPER_BACKEND=local`` selects the on-VPS faster-whisper runner;
-    anything else (or unset) keeps the original Groq Whisper path.
+    def wait_slot(self, on_progress: ProgressFn = None) -> None:
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_call_time
+            # Jittered stagger: 2.5s base with +/- 0.5s random jitter (2.0s to 3.0s)
+            jitter = random.uniform(-0.5, 0.5)
+            stagger = max(1.0, self.min_interval + jitter)
+            if elapsed < stagger:
+                sleep_duration = stagger - elapsed
+                if on_progress:
+                    _emit(on_progress, f"Staggering audio upload ({sleep_duration:.2f}s jittered delay)...")
+                time.sleep(sleep_duration)
+            self.last_call_time = time.time()
+
+
+_AUDIO_THROTTLE = AudioTranscriptionThrottle(min_interval_seconds=2.5)
+
+
+def _parse_gemini_audio_response(raw_text: str, default_duration: float = float(CHUNK_SECONDS)) -> list[dict]:
+    """Parse timestamped transcript text from Gemini into structured segment dictionaries."""
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    ts_pattern = re.compile(r'^(?:\[|\()?(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\]|\))?\s*[-:]?\s*(.*)$')
+    
+    current_segments: list[tuple[float, str]] = []
+    for line in lines:
+        m = ts_pattern.match(line)
+        if m:
+            h = int(m.group(1)) if m.group(1) else 0
+            minutes = int(m.group(2))
+            sec = int(m.group(3))
+            start_s = float(h * 3600 + minutes * 60 + sec)
+            seg_text = m.group(4).strip()
+            if seg_text:
+                current_segments.append((start_s, seg_text))
+        else:
+            if current_segments:
+                prev_s, prev_t = current_segments[-1]
+                current_segments[-1] = (prev_s, f"{prev_t} {line}".strip())
+            else:
+                current_segments.append((0.0, line))
+                
+    segments: list[dict] = []
+    if current_segments:
+        for idx, (s_time, s_txt) in enumerate(current_segments):
+            if idx + 1 < len(current_segments):
+                e_time = current_segments[idx + 1][0]
+            else:
+                e_time = max(s_time + 5.0, default_duration)
+            segments.append({
+                "start": round(s_time, 2),
+                "end": round(e_time, 2),
+                "text": s_txt,
+            })
+    else:
+        segments.append({
+            "start": 0.0,
+            "end": default_duration,
+            "text": raw_text.strip(),
+        })
+    return segments
+
+
+def _transcribe_gemini_audio(path: Path, on_progress: ProgressFn = None) -> dict:
+    """Tier 2 Fallback: Gemini REST API with inlineData audio payload when Groq hits 429/quota."""
+    import base64
+    import requests
+    from bot.config import GEMINI_API_KEY, GEMINI_API_KEYS
+    
+    keys_to_try = [k.strip() for k in (GEMINI_API_KEYS or [GEMINI_API_KEY]) if k and k.strip()]
+    if not keys_to_try:
+        raise RuntimeError("No Gemini API keys configured for Tier 2 audio fallback")
+
+    models_to_try = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"]
+    
+    audio_bytes = path.read_bytes()
+    b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+    
+    last_err = None
+    for api_key in keys_to_try:
+        for model in models_to_try:
+            _AUDIO_THROTTLE.wait_slot(on_progress)
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            payload = {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"text": "Transcribe this audio file verbatim with timestamps [MM:SS] on each line."},
+                            {
+                                "inlineData": {
+                                    "mimeType": "audio/mp3",
+                                    "data": b64_audio,
+                                }
+                            },
+                        ],
+                    }
+                ]
+            }
+            try:
+                resp = requests.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=60,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates") or []
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts") or []
+                        text = "".join(p.get("text", "") for p in parts).strip()
+                        if text:
+                            segments = _parse_gemini_audio_response(text, default_duration=float(CHUNK_SECONDS))
+                            return {
+                                "text": text,
+                                "segments": segments,
+                                "provider": f"gemini_{model}",
+                            }
+                elif resp.status_code in (403, 404, 429, 503):
+                    last_err = f"HTTP {resp.status_code} ({model}): {resp.text[:150]}"
+                    # Immediate break on blocked/rate-limited keys to escalate quickly
+                    continue
+                else:
+                    last_err = f"HTTP {resp.status_code} ({model}): {resp.text[:150]}"
+            except Exception as exc:
+                last_err = f"{type(exc).__name__} ({model}): {exc}"
+    raise RuntimeError(f"Gemini native audio fallback failed across keys/models. Last error: {last_err}")
+
+
+def _transcribe_local_fallback(path: Path, on_progress: ProgressFn = None) -> dict:
+    """Tier 3 Fallback: Local faster-whisper (tiny/base) so jobs never fail or stall."""
+    _emit(on_progress, f"Cloud APIs unavailable for {path.name}; invoking Tier 3 Local faster-whisper...")
+    try:
+        from scripts.whisper_local import transcribe_chunk as _local_transcribe
+        result = _local_transcribe(path)
+        result["provider"] = "faster_whisper_local"
+        return result
+    except Exception as exc:
+        raise RuntimeError(f"Tier 3 Local faster-whisper failed: {exc}") from exc
+
+
+def _make_whisper_runner(on_progress: ProgressFn = None):
+    """Returns ``(transcribe_fn, is_local)`` for the configured backend with 3-tier cascade.
+
+    Tier 1 (Primary): Groq Whisper API (whisper-large-v3) with multi-key pool rotation.
+    Tier 2 (Instant Fallback): Gemini Native Audio Transcription (inlineData audio/mp3).
+    Tier 3 (Local Fallback): Local faster-whisper (tiny/base).
     """
     import os as _os
 
@@ -792,69 +943,101 @@ def _make_whisper_runner():
     if backend == "local":
         from scripts.whisper_local import transcribe_chunk as _local_transcribe
 
-        def _do(path):
+        def _do_local(path):
             return _local_transcribe(path)
 
-        return _do, True
+        return _do_local, True
 
     from bot.config import GROQ_API_KEY, GROQ_API_KEYS
-    keys_pool = list(dict.fromkeys(GROQ_API_KEYS or [GROQ_API_KEY]))
+    keys_pool = [k.strip() for k in (GROQ_API_KEYS or [GROQ_API_KEY]) if k and k.strip()]
     if not keys_pool:
-        backend_, api_key = load_api_key()
-        keys_pool = [api_key]
+        try:
+            backend_, api_key = load_api_key()
+            if api_key:
+                keys_pool = [api_key]
+        except Exception:
+            pass
 
-    from groq import Groq
-    clients = [Groq(api_key=k) for k in keys_pool]
+    clients = []
+    try:
+        from groq import Groq
+        clients = [Groq(api_key=k) for k in keys_pool]
+    except Exception as exc:
+        print(f"[transcribe] Groq SDK unavailable ({exc}); defaulting to Tier 2 Gemini Audio cascade", flush=True)
 
     def _do(path):
         source = Path(path)
-        last_exc = None
-        for client in clients:
-            try:
-                with source.open("rb") as audio_file:
-                    result = client.audio.transcriptions.create(
-                        file=(source.name, audio_file.read()),
-                        model=GROQ_MODEL,
-                        response_format="verbose_json",
-                        timestamp_granularities=["segment"],
-                        temperature=0.0,
-                    )
+        groq_err = None
 
-                segments = []
-                for segment in getattr(result, "segments", None) or []:
-                    if isinstance(segment, dict):
-                        start = segment.get("start", 0.0)
-                        end = segment.get("end", 0.0)
-                        text = segment.get("text", "")
-                    else:
-                        start = getattr(segment, "start", 0.0)
-                        end = getattr(segment, "end", 0.0)
-                        text = getattr(segment, "text", "")
-                    segments.append(
-                        {
-                            "start": float(start or 0.0),
-                            "end": float(end or 0.0),
-                            "text": str(text or ""),
-                        }
-                    )
-                return {
-                    "text": str(getattr(result, "text", "") or ""),
-                    "segments": segments,
-                }
-            except Exception as exc:
-                last_exc = exc
-                err_s = str(exc).lower()
-                if "429" in err_s or "quota" in err_s or "rate limit" in err_s:
+        # --- Tier 1: Groq Whisper Multi-Key Rotation ---
+        if clients:
+            for c_idx, client in enumerate(clients, 1):
+                try:
+                    _AUDIO_THROTTLE.wait_slot(on_progress)
+                    with source.open("rb") as audio_file:
+                        result = client.audio.transcriptions.create(
+                            file=(source.name, audio_file.read()),
+                            model=GROQ_MODEL,
+                            response_format="verbose_json",
+                            timestamp_granularities=["segment"],
+                            temperature=0.0,
+                        )
+
+                    segments = []
+                    for segment in getattr(result, "segments", None) or []:
+                        if isinstance(segment, dict):
+                            start = segment.get("start", 0.0)
+                            end = segment.get("end", 0.0)
+                            text = segment.get("text", "")
+                        else:
+                            start = getattr(segment, "start", 0.0)
+                            end = getattr(segment, "end", 0.0)
+                            text = getattr(segment, "text", "")
+                        segments.append(
+                            {
+                                "start": float(start or 0.0),
+                                "end": float(end or 0.0),
+                                "text": str(text or ""),
+                            }
+                        )
+                    return {
+                        "text": str(getattr(result, "text", "") or ""),
+                        "segments": segments,
+                        "provider": "groq_whisper",
+                    }
+                except Exception as exc:
+                    groq_err = exc
+                    err_s = str(exc).lower()
+                    if "429" in err_s or "quota" in err_s or "rate limit" in err_s:
+                        continue
+                    # On other non-rate-limit groq errors, try next key or proceed to fallback
                     continue
-                raise exc
-        raise RuntimeError(f"All Groq Whisper API keys failed. Last error: {last_exc}")
+
+        # --- Tier 2: Instant Gemini Native Audio Fallback ---
+        _emit(on_progress, f"Groq Whisper unavailable on {source.name} ({groq_err}); instantly triggering Tier 2 Gemini Audio...")
+        try:
+            gem_res = _transcribe_gemini_audio(source, on_progress=on_progress)
+            _emit(on_progress, f"Chunk {source.name} successfully transcribed via Tier 2 Gemini Audio!")
+            return gem_res
+        except Exception as gem_err:
+            _emit(on_progress, f"Tier 2 Gemini Audio failed ({gem_err}); escalating to Tier 3 Local Whisper...")
+
+        # --- Tier 3: Local faster-whisper Fallback ---
+        try:
+            local_res = _transcribe_local_fallback(source, on_progress=on_progress)
+            _emit(on_progress, f"Chunk {source.name} successfully transcribed via Tier 3 Local Whisper!")
+            return local_res
+        except Exception as local_err:
+            raise RuntimeError(
+                f"All 3 audio transcription tiers failed for {source.name}. "
+                f"Groq: {groq_err} | Gemini: {gem_err} | Local: {local_err}"
+            )
 
     return _do, False
 
 
-
 def transcribe_chunks(chunks, on_progress: ProgressFn = None):
-    transcribe_one, is_local = _make_whisper_runner()
+    transcribe_one, is_local = _make_whisper_runner(on_progress=on_progress)
     all_segments = []
     total = len(chunks)
     for i, (path, start_offset, _end) in enumerate(chunks, 1):
@@ -872,19 +1055,16 @@ def transcribe_chunks(chunks, on_progress: ProgressFn = None):
                 except KeyboardInterrupt:
                     raise
                 except BaseException as exc:
-                    # Local whisper failures are usually fatal (OOM, bad audio)
-                    # so don't waste 4 minutes per retry.
+                    err_s = str(exc).lower()
                     if is_local or attempt >= CHUNK_RETRY_ATTEMPTS:
                         raise RuntimeError(
-                            f"chunk {i} failed after "
-                            f"{attempt} attempts: {exc}"
+                            f"chunk {i} failed after {attempt} attempts: {exc}"
                         )
                     _emit(
                         on_progress,
-                        f"Groq rate-limited; waiting {CHUNK_RETRY_WAIT:.0f}s "
-                        f"before retry {attempt+1}/{CHUNK_RETRY_ATTEMPTS}...",
+                        f"Chunk {i} retry {attempt+1}/{CHUNK_RETRY_ATTEMPTS} after error: {exc}",
                     )
-                    time.sleep(CHUNK_RETRY_WAIT)
+                    time.sleep(3.0)
             cache.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             used_net = not is_local
         for seg in data.get("segments") or []:
@@ -897,10 +1077,8 @@ def transcribe_chunks(chunks, on_progress: ProgressFn = None):
                 "chunk": i,
                 "text": text,
             })
-        # Only throttle between chunks for the rate-limited Groq path —
-        # local whisper has no throttle reason to wait.
         if i < len(chunks) and used_net:
-            time.sleep(INTER_CALL_DELAY)
+            time.sleep(0.5)
     return all_segments
 
 

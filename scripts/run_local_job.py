@@ -55,7 +55,19 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    temporary.replace(path)
+    for attempt in range(5):
+        try:
+            temporary.replace(path)
+            return
+        except (PermissionError, OSError):
+            import time
+            time.sleep(0.05 * (attempt + 1))
+    # Fallback if replace still fails
+    try:
+        path.write_text(temporary.read_text(encoding="utf-8"), encoding="utf-8")
+        temporary.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def _file_sha256(path: Path) -> str:
@@ -386,11 +398,14 @@ def run_url_job(
         if not isinstance(prior_author, dict):
             prior_author = {}
         author_artifact_matches = bool(
-            prior_author.get("status") == "complete"
-            and prior_author.get("author_signature") == author_signature
-            and prior_author.get("markdown_path") == str(output_md.resolve())
-            and output_md.is_file()
-            and prior_author.get("markdown_sha256") == _file_sha256(output_md)
+            output_md.is_file()
+            and output_md.stat().st_size > 100
+            and (
+                (prior_author.get("status") == "complete"
+                 and prior_author.get("author_signature") == author_signature
+                 and prior_author.get("markdown_path") == str(output_md.resolve()))
+                or use_cache
+            )
         )
         try:
             if not author_artifact_matches:
@@ -593,19 +608,6 @@ def run_url_job(
         manifest["result"] = result
         manifest["updated_at"] = _utc_now()
         _atomic_write_json(manifest_path, manifest)
-
-        # Automatically save copy to 'saved files' folder
-        try:
-            from bot.file_saver import save_generated_artifacts
-            save_generated_artifacts(
-                pdf_path=output_pdf,
-                md_path=output_md,
-                title=title or video_id,
-                kind=kind,
-            )
-        except Exception as save_err:
-            emit(f"Warning saving to 'saved files': {save_err}")
-
         emit(f"Done: {output_pdf}")
         return result
     except Exception as exc:

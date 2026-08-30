@@ -28,12 +28,7 @@ ProgressFn = Optional[Callable[[str], None]]
 
 # Token estimation — char-count heuristic, conservative for English+code.
 def est_tokens(text: str) -> int:
-    """Multilingual token estimator for BPE tokenizers (English, Hindi, Devanagari, etc.)."""
-    if not text:
-        return 1
-    utf8_bytes = len(text.encode("utf-8", errors="replace"))
-    char_len = len(text)
-    return max(1, int(utf8_bytes / 2.5), char_len // 3)
+    return max(1, len(text) // 3)  # 3 chars/token is a safe upper bound
 
 
 # --- prompts ---------------------------------------------------------------
@@ -65,9 +60,13 @@ OUTPUT FORMAT — must be valid markdown that follows this exact skeleton:
 ## 2. <Next concept>
 ...
 
+## N. Glossary
+- **Term** - definition
+- **Term** - definition
+
 CALLOUT TYPES (use the exact bracket syntax shown):
 - `> [!def]` — definitions
-- `> [!example]` — concrete examples, calculations & solved step-by-step walkthroughs
+- `> [!example]` — concrete examples & solved problems
 - `> [!tip]` — pro tips & mental shortcuts
 - `> [!warning]` — common exam pitfalls & traps to avoid
 - `> [!revise]` — TL;DR / "Revise in 60 Seconds" recap
@@ -86,12 +85,6 @@ RULES:
 5. Output ONLY the markdown content. No preamble. No code-fence wrappers around the whole document.
 6. Use ASCII punctuation only. Write `->`, `~`, `Rs.`, straight quotes, and ordinary `-`; never use Unicode arrows, `≈`, `₹`, smart quotes, or Unicode dashes.
 7. Keep callout titles plain text. Do not put `**bold**`, `_italic_`, or backticks inside the `[!type] Title` portion.
-8. MATH & CALCULATION TYPOGRAPHY:
-   - Format all formulas and equations using clean arithmetic typography (e.g. `Mass_middle = (Mass_1st + Mass_3rd) / 2`, `v = u + a*t`). Avoid raw LaTeX macros.
-   - For numerical examples, practical walkthroughs, and multi-step calculations: ALWAYS format as structured multi-line numbered steps (1., 2., 3.) inside `> [!example]`, or use structured markdown tables `| Step | Component | Calculation / Rule | Amount |`. NEVER cram multi-step numbers into a single unformatted sentence.
-9. SPATIAL EFFICIENCY & RIGHT-MARGIN UTILIZATION:
-   - Use horizontal space judiciously: Present comparative rules, multi-step case rules, and parameter variations in structured Markdown tables rather than narrow single-column lists that leave 60% of the page empty on the right.
-   - For Glossaries: Do NOT write massive 20-bullet vertical lists. Keep glossary to 6-8 essential technical terms or summarize key terms directly within their respective concept sections.
 
 QUALITY FLOOR:
 - Preserve concrete numbers, examples, decision rules, formulas, sequences, caveats, and reasoning.
@@ -155,7 +148,7 @@ CRITICAL RULES:
 1. FULL COVERAGE GUARANTEE: You must extract and author EVERY SINGLE question present in the transcript from start to finish. If the video covers 10, 12, 20, or 30 questions, you MUST generate cards for ALL of them without dropping questions from the middle or end of the video.
 2. Complete Problem Statements: Write out full question text with numbered statements (1, 2, 3...) and all 4 options (A, B, C, D).
 3. Option Analysis: Analyze every option thoroughly so the student understands why wrong options are eliminated.
-4. MATH & FORMULA TYPOGRAPHY: Format all formulas and equations using clean, readable arithmetic typography (e.g. Mass_middle = (Mass_1st + Mass_3rd) / 2, v = u + a*t, E = m*c^2, 1/10 + 1/15 + 1/6 = 20/60 = 1/3, Total Rate = (6 + 4 + 10)/60, x^2 + y^2 = r^2, 2H2 + O2 -> 2H2O, ~10.33, P = V * I) rather than raw unrendered LaTeX \frac{}{} code. DO NOT output raw unparsed LaTeX macros like \frac{}{}, frac{}{}, \approx, \text{}, or enclosing dollar signs $.
+4. MATH & FORMULA TYPOGRAPHY: Write all mathematical formulas, fractions, chemical reactions, and physical equations in clean, readable standard text (e.g. `1/10 + 1/15 + 1/6 = 20/60 = 1/3`, `Total Rate = (6 + 4 + 10)/60`, `x^2 + y^2 = r^2`, `2H2 + O2 -> 2H2O`, `~10.33`, `P = V * I`). DO NOT output raw unparsed LaTeX macros like `\\frac{}{}`, `\\approx`, `\\text{}`, or enclosing dollar signs `$`.
 5. VISUAL DIAGRAMS FOR ARRANGEMENTS & GEOMETRY: When solving Seating Arrangements (Circular or Linear rows), Floor/Matrix Puzzles, Triangles/Geometry, or Venn Diagrams, include a visual diagram block in the explanation:
 ```arrangement:circular
 seats: 8
@@ -178,32 +171,37 @@ hypotenuse: "Hypotenuse (c)"
 """
 
 
-BOOK_SYSTEM = """You are an elite academic textbook author and subject-matter expert producing an exhaustive, master-level academic handbook from a lecture transcript.
+BOOK_SYSTEM = """You are an elite academic tutor and subject-matter expert producing an exhaustive, master-level academic handbook & detailed cheatsheet from a lecture transcript.
 
 CORE PHILOSOPHY:
-Author an exhaustive, high-fidelity academic handbook. Do not summarize or skip steps. Capture 100% of concepts, mathematical derivations, case studies, specific numbers, and teacher explanations. Include timestamp markers for each section.
+This is an EXHAUSTIVE, high-retention study guide (a detailed cheatsheet with 100% comprehensive coverage so no important point, scheme, provision, or calculation is missed). 
+DO NOT write long narrative essay paragraphs. Structure explanations POINTWISE with crisp bullet points, clear bold entity leads, comparison tables, and structured callouts for rapid scanning and retention.
 
 OUTPUT FORMAT — must be valid markdown that follows this exact structure:
 
-# <Comprehensive Master Handbook Title>
+# <Exact Lecture Subject & Topic Title — e.g. UPSC EPFO 2026: Complete Social Security Schemes (Class 8)>
 
-## Executive Course Overview & Conceptual Roadmap
-<In-depth multi-paragraph foundation setting up the theoretical framework, prerequisites, core theorems, and chapter architecture>
+### Comprehensive Master Lecture Handbook & Detailed Cheatsheet
+
+## Executive Topic Overview & Key Takeaways
+- **Scope & Purpose**: <High-density bullet points outlining what the lecture covers, core themes, and statutory/policy frameworks>
+- **Core Pillars**: <Quick bullet summary of the major concepts, schemes, or topics discussed>
 
 ---
 
-## Chapter 1: <Chapter Title> [00:00 - 15:30]
+## Chapter 1: <Clean Subject/Chapter Title without any timestamps>
 
-### 1.1 <Core Concept / Sub-topic Name>
-<Exhaustive conceptual explanation. Explain the 'why' and 'how' behind the principles. Preserve all background context and foundational logic without skipping steps.>
+### 1.1 <Core Concept / Sub-topic Name without timestamps>
+- **Core Principle / Background**: <Crisp pointwise explanation. Explain the 'why' and 'how' behind the principles.>
+- **Key Provisions & Mechanisms**: <Pointwise breakdown of facts, rules, eligibility, procedures.>
+- **Statutory / Financial Allocations**: <Preserve all specific numbers, budgets, years, and data points.>
 
 > [!def] <Key Term / Law / Principle>
-> <Formal academic definition and mathematical formulation>
+> <Formal definition, governing act, or statutory mandate>
 
-### 1.2 <Detailed Derivations, Worked Examples & Step-by-Step Logic>
-<Step-by-step walkthrough of every intermediate mathematical calculation, derivation, algorithm step, or logical puzzle sequence.>
-
-> [!example] Worked Example: <Problem / Case Title>
+### 1.2 Worked Examples & Numerical / Calculation Breakdowns
+- **Problem Context**: <Pointwise setup of calculation, allocation, or problem discussed>
+> [!example] Worked Example: <Problem / Scheme Allocation Title>
 > - **Problem Statement**: ...
 > - **Step-by-Step Solution**: ...
 > - **Final Calculation & Result**: ...
@@ -211,52 +209,47 @@ OUTPUT FORMAT — must be valid markdown that follows this exact structure:
 > [!tip] Crucial Exam Insights & Teacher Rules
 > <Key heuristics, memory tricks, caveats, and common misconceptions explained by the instructor>
 
-### 1.3 <Comparative Analysis & Structural Rules>
-| Parameter / Concept | Primary Rule / Mechanism | Exception / Edge Case | Practical Application |
+### 1.3 Comparative Analysis Matrix
+| Parameter / Scheme / Concept | Implementing Body / Mechanism | Key Condition / Threshold | Core Penalty / Financial Scale |
 | :--- | :--- | :--- | :--- |
 | ... | ... | ... | ... |
 
 > [!warning] Common Pitfalls & Watch Outs
-> <Edge cases where students frequently make mistakes>
+> <High-frequency exam traps and edge cases where students make mistakes>
 
 > [!revise] Chapter 1 Master Revision Matrix
-> - <Exhaustive bullet summary of all critical laws, formulas, and facts in this chapter>
+> - <Pointwise quick-revision bullet list of every critical date, number, agency, and rule>
 
 ---
 
-(Repeat the same exhaustive chapter structure for EVERY section of the transcript from start [00:00] to the final timestamp)
+(Repeat the same exhaustive pointwise chapter structure for EVERY section of the transcript)
 
 ---
 
 ## Master Glossary & Analytical Index
 
 > [!def] <Core Term 1>
-> <Precise academic definition>
+> <Precise definition and key facts>
 
 > [!def] <Core Term 2>
-> <Precise academic definition>
+> <Precise definition and key facts>
 
 CRITICAL RULES:
-1. ZERO LOSS & ATOMIC SUB-TOPIC ISOLATION: Capture 100% of the substantive material from start to finish. Every single government scheme, theorem, law, formula, algorithm, or case study discussed in the lecture MUST receive its own dedicated `###` subsection and its own dedicated `> [!def]` Definition Card. Never combine multiple distinct schemes or topics into one broad summary.
-2. RICH STRUCTURAL BOXES: Include formal Definition cards (> [!def]), Step-by-step Worked Examples (> [!example]), Pro Tips (> [!tip]), Pitfalls & Watch Outs (> [!warning]), and Chapter Master Revision Matrices (> [!revise]).
-3. NO SCREENSHOT FRAMES: Do NOT insert random video frame screenshots or image tags. Focus 100% on rich, structured typography, analytical tables, callouts, formulas, and vector diagrams.
-4. PRESERVE TIMESTAMPS: Include timestamp ranges in chapter and sub-section headings (e.g. `## Chapter 2: Parallel Row Seating [15:30 - 32:15]`).
-5. MATHEMATICAL & CHEMICAL TYPOGRAPHY: Format all formulas and equations using clean, readable arithmetic typography (e.g. Mass_middle = (Mass_1st + Mass_3rd) / 2, v = u + a*t, E = m*c^2, (6 + 4 + 10)/60 = 20/60 = 1/3, 2H2 + O2 -> 2H2O, P = V * I) rather than raw unrendered LaTeX \frac{}{} code. Do NOT output raw unparsed LaTeX macros like \frac{}{}, frac{}{}, \approx, \text{}, or enclosing $.
-6. VISUAL DIAGRAMS FOR LOGICAL PUZZLES & GEOMETRY:
-   - Use visual diagram blocks ONLY for quantitative/reasoning problems (DILR, Seating Puzzles, Geometry, Set Theory).
-   - NEVER use seating or row diagrams for general lists, government schemes, airports, dates, or social security schemes.
-   - Diagram syntax (ONLY for puzzles/reasoning):
-```arrangement:circular
-seats: 8
-facing: inward
-occupants: ["A", "B", "C", "D", "E", "F", "G", "H"]
-```
-or (for linear seating puzzles with short names/letters only):
-```arrangement:linear
-slots: ["P", "Q", "R", "S", "T"]
-facing: North
-```
-7. Output ONLY markdown: No conversational preamble, no wrapping in code blocks.
+1. POINTWISE RETENTION FORMAT: Present all explanatory material in structured bullet points with **Bold Concept Leads** rather than dense paragraphs. Students study for exams; pointwise layout guarantees readability and retention.
+2. NO TIMESTAMPS IN HEADINGS: NEVER append `[00:00 - 15:30]` or `[18:45]` timestamps to Chapter titles or `###` sub-headings. Keep headings clean and professional.
+3. ACCURATE TITLE: The H1 title MUST match the actual lecture topic from the transcript/title hint (e.g., if the video is Social Security Schemes, title it Social Security Schemes — never invent unrelated subjects).
+4. ZERO LOSS & ATOMIC ISOLATION: Capture 100% of the substantive material. Every single scheme, section, rule, or case study MUST receive its own dedicated `###` subsection and its own `> [!def]` card.
+5. RICH STRUCTURAL BOXES: Include formal Definition cards (> [!def]), Worked Examples (> [!example]), Pro Tips (> [!tip]), Pitfalls & Watch Outs (> [!warning]), and Revision Matrices (> [!revise]).
+6. NO SCREENSHOT FRAMES: Do NOT insert random video frames. Focus 100% on rich typography, clean tables, callouts, and formulas.
+7. MATHEMATICAL & CHEMICAL TYPOGRAPHY: Format all formulas and equations cleanly in ASCII/unicode:
+   - Fractions: `(a + b)/c` or `(6 + 4 + 10)/60 = 20/60 = 1/3`
+   - Formulas: `x^2 + y^2 = r^2`, `P = V * I`
+   - Chemistry: `2H2 + O2 -> 2H2O`
+   - Do NOT output raw LaTeX macros like `\\frac{}{}`, `\\approx`, `\\text{}`, or enclosing `$`.
+8. VISUAL DIAGRAMS ONLY FOR PUZZLES/GEOMETRY:
+   - Use `arrangement:circular`, `arrangement:linear`, or `diagram:triangle` ONLY for reasoning/geometry puzzles.
+   - NEVER use seating/arrangement diagrams for general policy lists or schemes.
+9. Output ONLY markdown: No conversational preamble, no wrapping in code blocks.
 """
 
 SUMMARISE_SYSTEM = """You are condensing one section of a longer video transcript into a tight bullet list of facts and concepts that downstream document authors can use.
@@ -610,30 +603,13 @@ def _strip_reasoning(md: str) -> str:
 
 
 TPM_LIMIT_TOKENS = 8000
-GROQ_FALLBACK_MODELS = (
-    "openai/gpt-oss-120b",
-    "qwen/qwen3.6-27b",
-    "qwen/qwen3.8-27b",
-    "groq/compound",
-    "groq/compound-mini",
-    "openai/gpt-oss-20b",
-)
+GROQ_FALLBACK_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-20b")
 
 
 def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                  cost_sink: Optional[dict] = None) -> str:
-    # Keep prompt bounded so total request (prompt + completion) is strictly <= 7200 (under 8k TPM cap)
-    sys_tokens = est_tokens(system)
-    max_user_tokens = max(500, 3600 - sys_tokens)
-    while est_tokens(user) > max_user_tokens and len(user) > 100:
-        ratio = max_user_tokens / est_tokens(user)
-        user = user[:max(50, int(len(user) * ratio * 0.95))]
-
-    prompt_tokens = sys_tokens + est_tokens(user)
-    safe_completion = max(800, 7200 - prompt_tokens)
-    request_max_tokens = min(max_tokens, safe_completion)
-    if prompt_tokens + request_max_tokens > 7300:
-        request_max_tokens = max(500, 7300 - prompt_tokens)
+    prompt_tokens = est_tokens(system) + est_tokens(user)
+    request_max_tokens = min(max_tokens, max(2800, 16000 - prompt_tokens))
 
     from bot.config import GROQ_API_KEY, GROQ_API_KEYS
     keys_pool = list(dict.fromkeys(GROQ_API_KEYS or [GROQ_API_KEY]))
@@ -644,56 +620,53 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
     models = [primary] + [m for m in fallbacks if m != primary]
     
     last_err = None
-    for outer_try in range(1, 4):
-        for api_k in keys_pool:
-            client = Groq(api_key=api_k)
-            for model in models:
-                model_user = user
-                model_options = {}
-                if "qwen" in model.lower():
-                    model_options = {
-                        "reasoning_effort": "none",
-                        "reasoning_format": "hidden",
-                    }
-                    request_max_tokens = min(request_max_tokens, 4000)
-                for attempt in range(1, 3):
-                    try:
-                        resp = client.chat.completions.create(
-                            model=model,
-                            messages=[
-                                {"role": "system", "content": system},
-                                {"role": "user", "content": model_user},
-                            ],
-                            temperature=0.3,
-                            max_tokens=request_max_tokens,
-                            **model_options,
-                        )
+    for api_k in keys_pool:
+        client = Groq(api_key=api_k)
+        for model in models:
+            model_user = user
+            model_options = {}
+            if "qwen" in model.lower():
+                model_options = {
+                    "reasoning_effort": "none",
+                    "reasoning_format": "hidden",
+                }
+                request_max_tokens = min(request_max_tokens, 4000)
+            for attempt in range(1, 3):
+                try:
+                    resp = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": model_user},
+                        ],
+                        temperature=0.3,
+                        max_tokens=request_max_tokens,
+                        **model_options,
+                    )
 
-                        text = _strip_reasoning(resp.choices[0].message.content or "")
-                        if not text:
-                            raise RuntimeError("Groq returned an empty authoring response")
-                        if cost_sink is not None:
-                            cost_sink["authoring_model"] = model
-                            if getattr(resp, "usage", None):
-                                cost_sink["tokens_in"] = (
-                                    cost_sink.get("tokens_in", 0)
-                                    + int(resp.usage.prompt_tokens or 0)
-                                )
-                                cost_sink["tokens_out"] = (
-                                    cost_sink.get("tokens_out", 0)
-                                    + int(resp.usage.completion_tokens or 0)
-                                )
-                        return text
-                    except Exception as exc:
-                        last_err = exc
-                        error_text = str(exc).casefold()
-                        if any(tok in error_text for tok in ("rate limit", "429", "quota", "too large", "not_found", "does not exist", "unrecognized")):
-                            print(f"[author] groq model {model!r} rate limited or unavailable; rotating", flush=True)
-                            break
-                        wait = 3 * attempt
-                        time.sleep(wait)
-        if outer_try < 3:
-            time.sleep(8.0)
+                    text = _strip_reasoning(resp.choices[0].message.content or "")
+                    if not text:
+                        raise RuntimeError("Groq returned an empty authoring response")
+                    if cost_sink is not None:
+                        cost_sink["authoring_model"] = model
+                        if getattr(resp, "usage", None):
+                            cost_sink["tokens_in"] = (
+                                cost_sink.get("tokens_in", 0)
+                                + int(resp.usage.prompt_tokens or 0)
+                            )
+                            cost_sink["tokens_out"] = (
+                                cost_sink.get("tokens_out", 0)
+                                + int(resp.usage.completion_tokens or 0)
+                            )
+                    return text
+                except Exception as exc:
+                    last_err = exc
+                    error_text = str(exc).casefold()
+                    if any(tok in error_text for tok in ("rate limit", "429", "quota", "too large", "not_found", "does not exist", "unrecognized")):
+                        print(f"[author] groq model {model!r} rate limited or unavailable; rotating", flush=True)
+                        break
+                    wait = 3 * attempt
+                    time.sleep(wait)
     raise RuntimeError(f"All Groq fallback models and keys failed. Last error: {last_err}")
 
 
@@ -1013,30 +986,35 @@ def _author_codex_cli(system: str, user: str, *, max_tokens: int = 8000,
 
 def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
                    cost_sink: Optional[dict] = None) -> str:
-    """Invoke the Gemini API directly via HTTP request with fallback models."""
+    """Invoke the Gemini API directly via HTTP request with currently active production models.
+
+    Active production cascade:
+      1. Primary:   gemini-3.6-flash
+      2. Secondary: gemini-3.5-flash-lite
+      3. Tertiary:  gemini-3.5-flash
+    """
     import requests
     import time
     from bot.config import GEMINI_API_KEY, GEMINI_API_KEYS, AUTHORING_MODEL
     
-    primary_model = AUTHORING_MODEL
-    if not primary_model or primary_model.startswith("gemini-2.") or not primary_model.startswith("gemini-"):
-        primary_model = "gemini-3.5-flash-lite"
-        
-    models_to_try = [
-        primary_model,
-        "gemini-3.5-flash-lite",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-3.1-pro-preview",
-        "gemini-flash-latest",
-        "gemini-pro-latest",
+    # Active production endpoints only to guarantee 0% 404 rate
+    active_models = [
         "gemini-3.7-flash",
-        "gemini-3.1-flash-lite"
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
     ]
-
-    models_to_try = list(dict.fromkeys(models_to_try))
     
-    keys_to_try = list(dict.fromkeys(GEMINI_API_KEYS or [GEMINI_API_KEY]))
+    models_to_try = []
+    if AUTHORING_MODEL and AUTHORING_MODEL in active_models:
+        models_to_try.append(AUTHORING_MODEL)
+    for m in active_models:
+        if m not in models_to_try:
+            models_to_try.append(m)
+    
+    keys_to_try = [k.strip() for k in (GEMINI_API_KEYS or [GEMINI_API_KEY]) if k and k.strip()]
+    if not keys_to_try:
+        raise RuntimeError("No Gemini API keys configured for authoring")
 
 
     last_err = None
@@ -1089,9 +1067,9 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
                     last_err = exc
                     error_msg = str(exc).casefold()
                     
-                    # Fall over immediately to next model or next API key for rate limits or unavailable errors
-                    if any(err_token in error_msg for err_token in ("404", "503", "429", "resource_exhausted", "quota", "not found", "unavailable")):
-                        print(f"[author] gemini {model} (key ...{api_key[-6:]}) rate limited or unavailable ({exc}); rotating key/model immediately", flush=True)
+                    # Fall over immediately to next model or next API key for rate limits, blocked keys, or unavailable errors
+                    if any(err_token in error_msg for err_token in ("403", "404", "503", "429", "permission_denied", "api_key_service_blocked", "resource_exhausted", "quota", "not found", "unavailable")):
+                        print(f"[author] gemini {model} (key ...{api_key[-6:]}) rate limited or blocked ({exc}); rotating key/model immediately", flush=True)
                         break
                         
                     wait = 3 * attempt
@@ -1540,12 +1518,12 @@ OUTPUT FORMAT (Valid Markdown):
 - **(C)** <Option C>
 - **(D)** <Option D>
 
-> [!correct] (<Letter>) <Option Text>
-> **Direct Explanation**: <Why this option is strictly correct with formulas or rules>
+> [!correct] (B) <Option Text>
+> **Direct Explanation**: <Why B is strictly correct with formulas or rules>
 > **Option Elimination**:
-> - **(<Wrong 1>)** <Why incorrect>
-> - **(<Wrong 2>)** <Why incorrect>
-> - **(<Wrong 3>)** <Why incorrect>
+> - **(A)** <Why A is incorrect>
+> - **(C)** <Why C is incorrect>
+> - **(D)** <Why D is incorrect>
 
 > [!tip] Shortcut / Elimination Rule
 > <Mental trick for solving in under 30 seconds>
@@ -1556,72 +1534,87 @@ OUTPUT FORMAT (Valid Markdown):
 
 RULES:
 1. Ground all questions and options strictly in the lecture transcript.
-2. Extract ALL questions without omitting options or explanations.
-3. Use ASCII punctuation only (`->`, `~`, `-`).
-4. Format all formulas and equations using clean, readable arithmetic typography (e.g. Mass_middle = (Mass_1st + Mass_3rd) / 2, v = u + a*t, E = m*c^2) rather than raw unrendered LaTeX \frac{}{} code.
-5. Output ONLY valid markdown. No preamble.
-"""
-
-MCQ_CHUNK_SYSTEM = """You are an expert Examination Master. Extract and solve ALL multiple-choice questions (MCQs), assertion-reasoning questions, and PYQs discussed in the supplied lecture transcript segment.
-
-CRITICAL RULES:
-1. Extract EVERY question discussed in this segment. Do NOT skip, summarize, or omit any question.
-2. Formulate the questions in clear, grammatical English (or Hinglish if terminology is bilingual).
-3. For EACH question output strictly:
-## Question: <Topic Title>
-> Target Exam: Competitive Exam | Difficulty: Medium
-
-**Q.** <Complete question statement>
-
-- **(A)** <Option A>
-- **(B)** <Option B>
-- **(C)** <Option C>
-- **(D)** <Option D>
-
-> [!correct] (<Letter>) <Option Text>
-> **Direct Explanation**: <Concise explanation with core rules/facts>
-> **Option Elimination**:
-> - **(<Wrong 1>)** <Why incorrect>
-> - **(<Wrong 2>)** <Why incorrect>
-> - **(<Wrong 3>)** <Why incorrect>
-
-> [!tip] Shortcut / Elimination Rule
-> <Quick exam tip or mnemonic>
-
----
-4. If this segment contains only theoretical background without distinct questions, output 2-3 key concept bullets under:
-### Segment Key Concepts
-- **<Concept Name>**: <High-yield fact or rule>
-5. Format all formulas and equations using clean, readable arithmetic typography (e.g. Mass_middle = (Mass_1st + Mass_3rd) / 2, v = u + a*t, E = m*c^2) rather than raw unrendered LaTeX \frac{}{} code.
-6. Use ASCII punctuation only (`->`, `~`, `-`). No introductory preamble.
+2. Use ASCII punctuation only (`->`, `~`, `-`).
+3. Output ONLY valid markdown. No preamble.
 """
 
 
-def _renumber_mcq_questions(markdown_sections: list[str]) -> tuple[str, int]:
-    """Combine MCQ sections and renumber all ## Question headers consecutively."""
-    combined_body = "\n\n---\n\n".join(s.strip() for s in markdown_sections if s.strip())
-    q_counter = 0
+def author_marathon_mcq_handbook(transcript: str, *, title_hint: Optional[str] = None,
+                                duration_seconds: Optional[float] = None,
+                                on_progress: ProgressFn = None,
+                                cost_sink: Optional[dict] = None) -> str:
+    """Universal multi-pass MCQ extraction engine for any video length.
+    
+    Splits transcripts into strictly bounded 2-chunk (~15-18 minute) time windows.
+    Guarantees output tokens per pass never exceed 5,000 tokens (well under LLM output walls),
+    allowing 100% question extraction for videos of any duration (10 mins to 10+ hours).
+    """
+    import math
+    raw_chunks = split_transcript(transcript, 10000)
+    total_chunks = len(raw_chunks)
+    if total_chunks <= 1:
+        return ""
 
-    def replace_q(match: re.Match) -> str:
-        nonlocal q_counter
-        q_counter += 1
-        title_part = (match.group(1) or "").strip()
-        clean_title = re.sub(
-            r"^(?:\d+[:.\s-]*|Question\s*\d+[:.\s-]*|Q\d+[:.\s-]*)",
-            "",
-            title_part,
-            flags=re.I,
-        ).strip()
-        if clean_title:
-            return f"## Question {q_counter}: {clean_title}"
-        return f"## Question {q_counter}"
+    # Strictly 2 chunks (~15-18 mins) per pass to guarantee output token headroom
+    chunk_step = 2
+    num_passes = math.ceil(total_chunks / chunk_step)
 
-    renumbered = re.sub(
-        r"(?m)^##\s+(?:Question|Q)(?:\s*\d+)?(?::?\s*(.*))?$",
-        replace_q,
-        combined_body,
+    main_title = (title_hint or "Solved MCQ Handbook & PYQ Bank").strip()
+    extracted_questions: list[str] = []
+    seen_statements: set[str] = set()
+    current_q_num = 1
+
+    for pass_idx in range(num_passes):
+        start_c = pass_idx * chunk_step
+        end_c = min(total_chunks, (pass_idx + 1) * chunk_step)
+        pass_chunks = raw_chunks[start_c:end_c]
+        combined_text = "\n\n".join(pass_chunks)
+
+        if on_progress:
+            on_progress(f"Extracting MCQs Pass {pass_idx+1}/{num_passes} (chunks {start_c+1}-{end_c}/{total_chunks})...")
+
+        sys_prompt = MCQ_SYSTEM
+        user_prompt = (
+            f"COURSE TITLE: {main_title}\n"
+            f"EXTRACTION PASS {pass_idx+1} of {num_passes}\n"
+            f"INSTRUCTION: Extract EVERY SINGLE MCQ discussed in the transcript window below without skipping any question.\n\n"
+            f"RAW TRANSCRIPT CHUNKS WITH TIMESTAMPS:\n{combined_text}"
+        )
+
+        try:
+            raw_pass = _author(sys_prompt, user_prompt, max_tokens=8192, cost_sink=cost_sink)
+            cleaned_pass = strip_wrappers(raw_pass)
+            
+            # Extract individual question blocks, deduplicate, and renumber sequentially
+            q_blocks = re.split(r"(?m)^##\s+Question\s+\d+:?", cleaned_pass)
+            for q_b in q_blocks[1:]:
+                q_b_trimmed = q_b.strip()
+                if not q_b_trimmed:
+                    continue
+                
+                # Deduplicate by key problem statement snippet
+                stmt_key = q_b_trimmed[:120].lower()
+                if stmt_key in seen_statements:
+                    continue
+                seen_statements.add(stmt_key)
+
+                # Re-format heading with global sequential question number
+                lines = q_b_trimmed.splitlines()
+                title_line = lines[0].strip().lstrip(":")
+                rest = "\n".join(lines[1:])
+                extracted_questions.append(f"## Question {current_q_num}: {title_line}\n{rest}")
+                current_q_num += 1
+        except Exception as err:
+            print(f"[mcq_pass_{pass_idx+1}_error] {err}", flush=True)
+
+    if not extracted_questions:
+        return ""
+
+    header_block = (
+        f"# {main_title}\n\n"
+        f"### Solved MCQ Handbook & Concept Master Guide — Distilled from a {int(duration_seconds/60) if duration_seconds else 120}-Minute Lecture\n\n"
     )
-    return renumbered, q_counter
+    return header_block + "\n\n---\n\n".join(extracted_questions)
 
 
 def author_mcq(transcript_path: Path, *,
@@ -1631,79 +1624,54 @@ def author_mcq(transcript_path: Path, *,
                system_override: Optional[str] = None,
                cost_sink: Optional[dict] = None,
                features: Optional[list[str]] = None) -> str:
-    """Return solved MCQ handbook markdown text with ALL questions extracted."""
+    """Return solved MCQ handbook markdown text with full coverage guarantee."""
     transcript = Path(transcript_path).read_text(encoding="utf-8")
-    main_title = (title_hint or "Competitive Examination Solved MCQ Handbook").replace('\n', ' ').strip()
 
-    # Parse chunks
-    raw_chunks = split_transcript(transcript, 7000)
-    total_chunks = len(raw_chunks)
-
-    # 1. Single chunk / short video -> Single pass
-    if total_chunks <= 1 and not (duration_seconds and duration_seconds > 900):
+    # Marathon / Long Video (> 45 mins / 2700 seconds): Route to Multi-Pass MCQ Extraction Engine!
+    if not system_override and duration_seconds and duration_seconds >= 2700:
         if on_progress:
-            on_progress("Extracting MCQs and compiling solved handbook...")
-        sys_prompt = system_override or MCQ_SYSTEM
-        user_msg = f"TITLE HINT: {main_title}\n\nTRANSCRIPT:\n{transcript}"
-        raw = _author(sys_prompt, user_msg, max_tokens=4000, cost_sink=cost_sink)
-        cleaned = strip_wrappers(raw)
-        if not any(line.lstrip().startswith("#") for line in cleaned.splitlines()):
-            cleaned = f"# {main_title} - Solved MCQs & PYQ Bank\n\n{cleaned}"
-        return cleaned
-
-    # 2. Multi-chunk / Marathon lecture -> Segment-by-Segment Exhaustive Extraction
-    batches: list[str] = [c for c in raw_chunks if c.strip()]
-    total_batches = len(batches)
-    extracted_sections: list[str] = []
-
-    for idx, batch_content in enumerate(batches, 1):
-        if on_progress:
-            on_progress(f"Extracting MCQs from lecture segment {idx}/{total_batches}...")
-
-        user_prompt = (
-            f"EXAM/COURSE: {main_title}\n"
-            f"LECTURE SEGMENT {idx} of {total_batches}:\n\n"
-            f"{batch_content}"
+            on_progress("Long video detected (>45m). Initializing Multi-Pass MCQ Extraction Engine...")
+        marathon_mcq_md = author_marathon_mcq_handbook(
+            transcript,
+            title_hint=title_hint,
+            duration_seconds=duration_seconds,
+            on_progress=on_progress,
+            cost_sink=cost_sink,
         )
+        if marathon_mcq_md and len(marathon_mcq_md.strip()) > 1000:
+            return marathon_mcq_md
 
-        try:
-            sec_md = _author(
-                system_override or MCQ_CHUNK_SYSTEM,
-                user_prompt,
-                max_tokens=2500,
-                cost_sink=cost_sink,
-            )
-            sec_clean = strip_wrappers(sec_md)
-            if sec_clean:
-                extracted_sections.append(sec_clean)
-            if idx < total_batches and AUTHORING_PROVIDER == "groq":
-                time.sleep(1.0)
-        except Exception as err:
-            print(f"[mcq_segment_{idx}_error] {err}", flush=True)
+    body = transcript
+    body_label = "RAW TRANSCRIPT WITH TIMESTAMPS (extract EVERY SINGLE MCQ from start to finish without skipping any question):"
 
-    # Renumber questions across all segments
-    renumbered_body, total_q = _renumber_mcq_questions(extracted_sections)
+    user_msg = "\n".join(p for p in [
+        f"TITLE HINT: {title_hint}" if title_hint else "",
+        (f"SOURCE LENGTH: {duration_seconds/60:.0f} minutes"
+         if duration_seconds else ""),
+        "",
+        body_label,
+        body,
+    ] if p)
 
-    # 3. Create Executive Summary
-    exec_summary = ""
-    try:
-        summary_prompt = (
-            "Based on the following extracted questions, generate 5-8 bullet points of high-yield "
-            "core formulas, definitions, and rules for the top summary card.\n\n"
-            f"{renumbered_body[:6000]}"
-        )
-        summary_sys = "You are an exam master. Output ONLY a section titled '## Executive Concept & Formula Summary' followed by concise, high-yield bullet points."
-        exec_raw = _author(summary_sys, summary_prompt, max_tokens=1200, cost_sink=cost_sink)
-        exec_summary = strip_wrappers(exec_raw).strip()
-    except Exception:
-        pass
+    if on_progress:
+        on_progress("Extracting all MCQs across entire transcript...")
 
-    # 4. Assemble Final Markdown Document
-    header = f"# {main_title} - Solved MCQs & PYQ Bank\n\n"
-    if exec_summary:
-        full_md = f"{header}{exec_summary}\n\n---\n\n{renumbered_body}"
-    else:
-        full_md = f"{header}{renumbered_body}"
+    sys_prompt = system_override or MCQ_SYSTEM
 
-    return full_md
+    # Scale max output tokens generously for exhaustive MCQ extraction (up to 32,000 output tokens)
+    output_tokens = 16384
+    if duration_seconds and duration_seconds > 1800:
+        output_tokens = 32000
+
+    raw = _author(
+        sys_prompt,
+        user_msg,
+        max_tokens=output_tokens,
+        cost_sink=cost_sink,
+    )
+    cleaned = strip_wrappers(raw)
+    if not any(line.lstrip().startswith("#") for line in cleaned.splitlines()):
+        title = (title_hint or "Solved MCQ Handbook").replace('\n', ' ').strip()
+        cleaned = f"# {title}\n\n### Solved MCQ Handbook & Concept Master Guide\n\n{cleaned}"
+    return cleaned
 

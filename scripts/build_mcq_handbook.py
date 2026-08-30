@@ -51,38 +51,35 @@ HIGHLIGHT = colors.HexColor("#D97706")
 MUTED = colors.HexColor("#4B5563")
 RULE = colors.HexColor("#E5E7EB")
 
-COLOR_AMBER = "#B45309"
-COLOR_RED = "#B91C1C"
-COLOR_GREEN = "#15803D"
-COLOR_BLUE = "#1D4ED8"
+WHITE_BG = colors.HexColor("#FFFFFF")
 
 CALLOUTS = {
-    "correct": {"label": "CORRECT ANSWER", "bar": CORRECT_GREEN, "tint": colors.HexColor("#FFFFFF")},
-    "def":     {"label": "DEF",  "bar": colors.HexColor("#1D4ED8"), "tint": colors.HexColor("#FFFFFF")},
-    "example": {"label": "EX",   "bar": colors.HexColor("#0D9488"), "tint": colors.HexColor("#FFFFFF")},
-    "tip":     {"label": "EXAM TIP / MNEMONIC", "bar": colors.HexColor("#B45309"), "tint": colors.HexColor("#FFFFFF")},
-    "warning": {"label": "EXAM TRAP / PITFALL", "bar": colors.HexColor("#B91C1C"), "tint": colors.HexColor("#FFFFFF")},
-    "note":    {"label": "NOTE", "bar": colors.HexColor("#4B5563"), "tint": colors.HexColor("#FFFFFF")},
-    "revise":  {"label": "QUICK REVISION", "bar": colors.HexColor("#1E3A8A"), "tint": colors.HexColor("#FFFFFF")},
+    "correct": {"label": "CORRECT ANSWER", "bar": CORRECT_GREEN, "tint": WHITE_BG},
+    "def":     {"label": "DEF",  "bar": colors.HexColor("#2563EB"), "tint": WHITE_BG},
+    "example": {"label": "EX",   "bar": colors.HexColor("#0D9488"), "tint": WHITE_BG},
+    "tip":     {"label": "EXAM TIP / MNEMONIC", "bar": colors.HexColor("#D97706"), "tint": WHITE_BG},
+    "warning": {"label": "EXAM TRAP / PITFALL", "bar": colors.HexColor("#DC2626"), "tint": WHITE_BG},
+    "note":    {"label": "NOTE", "bar": colors.HexColor("#4B5563"), "tint": WHITE_BG},
+    "revise":  {"label": "QUICK REVISION", "bar": colors.HexColor("#1E3A8A"), "tint": WHITE_BG},
 }
 
 ss = getSampleStyleSheet()
 
 DOC_TITLE = ParagraphStyle("DocTitle", parent=ss["Title"], fontName="Helvetica-Bold",
                            fontSize=16.5, leading=20, alignment=TA_LEFT,
-                           textColor=ACCENT, spaceAfter=3, keepWithNext=True)
+                           textColor=ACCENT, spaceAfter=3, keepWithNext=1)
 DOC_SUB = ParagraphStyle("DocSub", parent=ss["Normal"], fontName="Helvetica-Bold",
                          fontSize=10, leading=13, textColor=MUTED, spaceAfter=8)
 
 H1 = ParagraphStyle("H1", parent=ss["Heading1"], fontName="Helvetica-Bold",
                     fontSize=12.5, leading=15.5, textColor=ACCENT,
-                    spaceBefore=10, spaceAfter=3, keepWithNext=True)
+                    spaceBefore=12, spaceAfter=4, keepWithNext=1)
 H2 = ParagraphStyle("H2", parent=ss["Heading2"], fontName="Helvetica-Bold",
                     fontSize=11.2, leading=14.5, textColor=INK,
-                    spaceBefore=8, spaceAfter=3, keepWithNext=True)
+                    spaceBefore=10, spaceAfter=4, keepWithNext=1)
 H3 = ParagraphStyle("H3", parent=ss["Heading3"], fontName="Helvetica-Bold",
                     fontSize=10, leading=13, textColor=MUTED,
-                    spaceBefore=5, spaceAfter=2, keepWithNext=True)
+                    spaceBefore=6, spaceAfter=2, keepWithNext=1)
 
 BODY = ParagraphStyle("Body", parent=ss["BodyText"], fontName="Helvetica",
                       fontSize=9.5, leading=13.2, textColor=INK,
@@ -90,20 +87,20 @@ BODY = ParagraphStyle("Body", parent=ss["BodyText"], fontName="Helvetica",
 
 QUESTION_TEXT = ParagraphStyle("QuestionText", parent=BODY, fontName="Helvetica-Bold",
                                fontSize=10, leading=13.8, textColor=INK,
-                               spaceBefore=2, spaceAfter=3, keepWithNext=True)
+                               spaceBefore=2, spaceAfter=4, keepWithNext=1)
 
 META_TAG = ParagraphStyle("MetaTag", parent=BODY, fontName="Helvetica-Oblique",
-                          fontSize=8.5, leading=11, textColor=MUTED, spaceAfter=2.5, keepWithNext=True)
+                          fontSize=8.5, leading=11, textColor=MUTED, spaceAfter=3, keepWithNext=1)
 
 OPTION_STYLE = ParagraphStyle("OptionStyle", parent=BODY, fontName="Helvetica",
                               fontSize=9.3, leading=12.8, textColor=INK,
-                              leftIndent=12, firstLineIndent=-12, spaceAfter=1.5, keepWithNext=True)
+                              leftIndent=12, firstLineIndent=-12, spaceAfter=2, keepWithNext=1)
 
 CO_LABEL = ParagraphStyle("CoLabel", parent=ss["Normal"], fontName="Helvetica-Bold",
                           fontSize=8, leading=9.5, textColor=colors.white,
                           spaceAfter=0, alignment=TA_LEFT)
 CO_BODY = ParagraphStyle("CoBody", parent=BODY, fontSize=9.0, leading=12.0,
-                         textColor=colors.HexColor("#0F172A"), spaceAfter=2, alignment=TA_LEFT)
+                         spaceAfter=2, alignment=TA_LEFT)
 
 ACCENT_HEX = "#" + ACCENT.hexval()[2:]
 
@@ -121,16 +118,17 @@ def _ascii_safe(text: str) -> str:
         "\u2153": " 1/3", "\u2154": " 2/3", "\u2155": " 1/5", "\u2156": " 2/5",
         "\u2157": " 3/5", "\u2158": " 4/5", "\u2159": " 1/6", "\u215a": " 5/6",
         "\u00bd": " 1/2", "\u00bc": " 1/4", "\u00be": " 3/4",
-        "≈": "~", "≤": "<=", "≥": ">=", "≠": "!=", "±": "+/-",
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
     text = re.sub(r'[\u2500-\u257f]', '-', text)
-    return text
+    return text.encode("ascii", "replace").decode("ascii")
 
 
-def _clean_latex_math(text: str) -> str:
-    r"""Convert raw LaTeX math (\frac{}, frac{}, \approx, \sqrt{}, \text{}, etc.) into clean typography."""
+def sanitize_math_expressions(text: str) -> str:
+    r"""Convert raw LaTeX math expressions (\frac{}, \approx, \sqrt{}, \text{}, etc.) into clean typography."""
+    text = _ascii_safe(text)
+    # 0. Clean set brackets, spacing, and arrows
     text = text.replace(r'\{', '{').replace(r'\}', '}')
     text = text.replace(r'\left\{', '{').replace(r'\right\}', '}')
     text = text.replace(r'\left(', '(').replace(r'\right)', ')')
@@ -138,64 +136,27 @@ def _clean_latex_math(text: str) -> str:
     text = text.replace(r'\setminus', ' minus ')
     text = re.sub(r'\\(?:q?quad)', '  ', text)
     text = text.replace(r'\,', ' ').replace(r'\;', ' ').replace(r'\:', ' ')
-    text = re.sub(r'\\xrightarrow(?:\[(.*?)\])?\{(.*?)\}', r' -> [\2] -> ', text)
+    text = re.sub(r'\\xrightarrow(?:\[(.*?)\])?\{(.*?)\}', r' --[\2]--> ', text)
 
-    # Handle text tags inside math: \text{Mass}_{1st} -> Mass_{1st}
-    text = re.sub(r'\\(?:text|mathrm|mathbf|textbf)\{([^}]+)\}', r'\1', text)
-    text = re.sub(r'\\(?:mathit|textit)\{([^}]+)\}', r'\1', text)
-
-    # Helper to extract balanced {...} to handle nested braces like frac{Mass_{1st} + Mass_{3rd}}{2}
-    def extract_braced(s: str, start_idx: int):
-        if start_idx >= len(s) or s[start_idx] != '{':
-            return None, start_idx
-        depth = 0
-        for idx in range(start_idx, len(s)):
-            if s[idx] == '{':
-                depth += 1
-            elif s[idx] == '}':
-                depth -= 1
-                if depth == 0:
-                    return s[start_idx + 1:idx], idx + 1
-        return None, start_idx
-
-    # Un-nest fractions: matches \frac{a}{b}, frac{a}{b}, \dfrac{a}{b}, \tfrac{a}{b}
-    pattern = re.compile(r'\\?(?:frac|tfrac|dfrac)\s*\{')
-    for _ in range(10):
-        m = pattern.search(text)
-        if not m:
-            break
-        num_start = m.end() - 1
-        num, next_idx = extract_braced(text, num_start)
-        if num is None:
-            break
-        while next_idx < len(text) and text[next_idx].isspace():
-            next_idx += 1
-        den, end_idx = extract_braced(text, next_idx)
-        if den is None:
-            break
-
-        num_str = num.strip()
-        den_str = den.strip()
-        has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±', '->']) and not (s.startswith('(') and s.endswith(')'))
-        num_clean = f"({num_str})" if has_op(num_str) else num_str
-        den_clean = f"({den_str})" if has_op(den_str) else den_str
-        repl = f"{num_clean} / {den_clean}"
-        text = text[:m.start()] + repl + text[end_idx:]
-
-    # Fallback regex for standard fractions without nested braces
+    # 1. Un-nest \frac{a}{b} iteratively (up to 5 levels of nesting)
     for _ in range(5):
         def repl_frac(m):
             num = m.group(1).strip()
             den = m.group(2).strip()
-            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±', '->']) and not (s.startswith('(') and s.endswith(')'))
+            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±']) and not (s.startswith('(') and s.endswith(')'))
             num_clean = f"({num})" if has_op(num) else num
             den_clean = f"({den})" if has_op(den) else den
             return f"{num_clean} / {den_clean}"
         text = re.sub(r'\\?(?:frac|tfrac|dfrac)\{([^{}]+)\}\{([^{}]+)\}', repl_frac, text)
 
-    # Square roots and symbols
+    # 2. Text formatting macros
+    text = re.sub(r'\\(?:mathrm|textbf|mathbf)\{([^}]+)\}', r'<b>\1</b>', text)
+    text = re.sub(r'\\text\{([^}]+)\}', r'\1', text)
+    text = re.sub(r'\\(?:mathit|textit)\{([^}]+)\}', r'<i>\1</i>', text)
     text = re.sub(r'\\sqrt\{([^}]+)\}', r'√(\1)', text)
     text = re.sub(r'\\sqrt([0-9a-zA-Z])', r'√\1', text)
+
+    # 3. Greek & math symbols
     symbols = {
         r'\approx': '~', r'\sim': '~', r'\neq': '!=', r'\ne': '!=',
         r'\leq': '<=', r'\le': '<=', r'\geq': '>=', r'\ge': '>=',
@@ -211,15 +172,23 @@ def _clean_latex_math(text: str) -> str:
     }
     for k, v in symbols.items():
         text = re.sub(re.escape(k) + r'(?![a-zA-Z])', v, text)
-    text = text.replace('≈', '~')
-    
-    # Convert subscripts and superscripts: Mass_{middle} -> Mass<sub>middle</sub>
+
+    # 4. Superscripts and Subscripts
     text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
     text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
-    # Only convert single-symbol math subscripts like x_1, a_0, v_i, not words_with_underscores, URLs, or IDs
-    text = re.sub(r'(?<=[a-zA-Z])_([0-9]{1,2}|[ijkmnpt])(?![a-zA-Z0-9_-])', r'<sub>\1</sub>', text)
 
-    # Strip $ math delimiters
+    # 1. Un-nest \frac{a}{b} iteratively (up to 5 levels of nesting)
+    for _ in range(5):
+        def repl_frac(m):
+            num = m.group(1).strip()
+            den = m.group(2).strip()
+            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±']) and not (s.startswith('(') and s.endswith(')'))
+            num_clean = f"({num})" if has_op(num) else num
+            den_clean = f"({den})" if has_op(den) else den
+            return f"{num_clean} / {den_clean}"
+        text = re.sub(r'\\?(?:frac|tfrac|dfrac)\{([^{}]+)\}\{([^{}]+)\}', repl_frac, text)
+
+    # 5. Clean up math dollar signs $...$
     text = re.sub(r'\$([^\$]+)\$', r'\1', text)
     text = text.replace('$', '')
     # Strip any dangling LaTeX slashes before words (e.g. \frac left as \frac)
@@ -227,12 +196,14 @@ def _clean_latex_math(text: str) -> str:
     return text
 
 
-def inline(text: str) -> str:
-    text = _clean_latex_math(text)
-    if not text.strip():
-        return ''
+_clean_latex_math = sanitize_math_expressions
 
-    # Unicode sub/superscript map
+
+def inline(text: str) -> str:
+    """Escape XML and apply formatting for ReportLab Paragraphs."""
+    text = sanitize_math_expressions(text)
+
+    # Convert Unicode sub/superscripts & arrows to ReportLab tags
     sub_map = {
         '₀': '<sub>0</sub>', '₁': '<sub>1</sub>', '₂': '<sub>2</sub>', '₃': '<sub>3</sub>', '₄': '<sub>4</sub>',
         '₅': '<sub>5</sub>', '₆': '<sub>6</sub>', '₇': '<sub>7</sub>', '₈': '<sub>8</sub>', '₉': '<sub>9</sub>',
@@ -250,69 +221,32 @@ def inline(text: str) -> str:
     text = text.replace('→', '&rarr;').replace('←', '&larr;').replace('↔', '&harr;').replace('Δ', '&Delta;').replace('°', '&deg;')
 
     text = _ascii_safe(text)
+
+    # XML escape
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    # Highlights
-    text = re.sub(r"==([^=]+?)==", rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text)
-    text = re.sub(r"\[red\](.*?)\[/red\]", rf'<font color="{COLOR_RED}"><b>\1</b></font>', text, flags=re.IGNORECASE)
-    text = re.sub(r"\[green\](.*?)\[/green\]", rf'<font color="{COLOR_GREEN}"><b>\1</b></font>', text, flags=re.IGNORECASE)
-    text = re.sub(r"\[blue\](.*?)\[/blue\]", rf'<font color="{COLOR_BLUE}"><b>\1</b></font>', text, flags=re.IGNORECASE)
-    text = re.sub(r"\[amber\](.*?)\[/amber\]", rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text, flags=re.IGNORECASE)
+    # Code tags `code`
+    text = re.sub(
+        r"`([^`]+)`",
+        r'<font name="Courier" size="8.5" color="#1E3A8A">\1</font>',
+        text,
+    )
 
-    # Triple asterisks
-    text = re.sub(r"\*\*\*(.+?)\*\*\*", rf'<font color="{COLOR_AMBER}"><b><i>\1</i></b></font>', text)
-    # Italics
-    text = re.sub(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])", r"<i>\1</i>", text)
-    text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)
+    # Bold **text**
+    text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
 
-    # Bold: semantic coloring
-    def _bold_repl(m):
-        inner = m.group(1).strip()
-        if re.search(r"\b(incorrect|wrong|false|trap|not|never|except|cannot|violate|penalty|fine)\b", inner, re.I):
-            return f'<font color="{COLOR_RED}"><b>{inner}</b></font>'
-        elif re.search(r"\b(correct|true|right|valid|answer|key|solution|formula|law|principle)\b", inner, re.I):
-            return f'<font color="{COLOR_GREEN}"><b>{inner}</b></font>'
-        elif re.search(r"\b(article|section|act|amendment|case|statute|schedule|commission|ministry)\b", inner, re.I):
-            return f'<font color="{COLOR_BLUE}"><b>{inner}</b></font>'
-        elif re.search(r"(\b\d+[\d,\.]*\b|%|rs\.|rupees|years?|months?|days?|hours?)", inner, re.I):
-            return f'<font color="{COLOR_AMBER}"><b>{inner}</b></font>'
-        else:
-            return f'<font color="#1E3A8A"><b>{inner}</b></font>'
+    # Italic *text*
+    text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<i>\1</i>", text)
 
-    text = re.sub(r"\*\*(.+?)\*\*", _bold_repl, text)
-    text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)", lambda m: f'<u>{m.group(1)}</u>', text)
-    text = re.sub(r"`([^`]+?)`", r'<font face="Courier" size="8.5" color="#1E3A8A">\1</font>', text)
-
-    # Unescape allowed ReportLab tags safely
-    def _clean_anchor(m):
-        raw_val = m.group(1).strip("'\"")
-        clean_val = re.sub(r'<[^>]*>', '', raw_val)
-        clean_val = re.sub(r'&(?:lt|gt|amp|quot);', '', clean_val)
-        clean_val = re.sub(r'[^a-zA-Z0-9_-]', '-', clean_val).strip('-')
-        return f'<a name="{clean_val}">'
-
-    text = re.sub(r"&lt;a\s+(?:name|id)=(.*?)&gt;", _clean_anchor, text)
-    text = re.sub(r"&lt;/a&gt;", r'</a>', text)
+    # Unescape allowed ReportLab tags
     text = re.sub(r"&lt;(/?)b&gt;", r"<\1b>", text)
     text = re.sub(r"&lt;(/?)i&gt;", r"<\1i>", text)
-    text = re.sub(r"&lt;(/?)u&gt;", r"<\1u>", text)
     text = re.sub(r"&lt;(/?)sup&gt;", r"<\1sup>", text)
     text = re.sub(r"&lt;(/?)sub&gt;", r"<\1sub>", text)
-    text = re.sub(r"&lt;br\s*/?&gt;", "<br/>", text, flags=re.IGNORECASE)
     text = re.sub(r"&lt;(/?)font(.*?)&gt;", r"<\1font\2>", text)
     text = text.replace("&amp;rarr;", "&rarr;").replace("&amp;larr;", "&larr;").replace("&amp;harr;", "&harr;")
-    text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;").replace("&amp;bull;", "&bull;")
+    text = text.replace("&amp;Delta;", "&Delta;").replace("&amp;deg;", "&deg;").replace("&amp;nbsp;", "&nbsp;")
     return text
-
-
-def make_para(text: str, style: ParagraphStyle) -> Paragraph:
-    """Create a ReportLab Paragraph with automatic self-healing fallback against malformed XML."""
-    try:
-        return Paragraph(text, style)
-    except Exception:
-        plain = re.sub(r'<[^>]*>', '', text)
-        plain = plain.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        return Paragraph(plain, style)
 
 
 def parse_blocks(md: str) -> list[tuple[str, any]]:
@@ -469,10 +403,10 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
                     ParagraphStyle("co_oi", parent=CO_BODY, leftIndent=12, firstLineIndent=-10, spaceAfter=1.5)))
 
     inner = Table([[Paragraph(inline(label), CO_LABEL)]] + [[p] for p in body_paras],
-                  colWidths=[BODY_W])
+                  colWidths=[BODY_W - 0.3 * cm])
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), spec["bar"]),
-        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#FFFFFF")),
+        ("BACKGROUND", (0, 1), (-1, -1), spec["tint"]),
         ("LEFTPADDING", (0, 0), (-1, -1), 8),
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
         ("TOPPADDING", (0, 0), (-1, 0), 3),
@@ -480,10 +414,16 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
         ("TOPPADDING", (0, 1), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
         ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.white),
-        ("LINEBEFORE", (0, 0), (0, -1), 3.5, spec["bar"]),
-        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
     ]))
-    return [Spacer(1, 2), inner, Spacer(1, 3.5)]
+    outer = Table([[inner]], colWidths=[BODY_W])
+    outer.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LINEBEFORE", (0, 0), (0, 0), 3, spec["bar"]),
+    ]))
+    return [Spacer(1, 2), KeepTogether(outer), Spacer(1, 4)]
 
 
 def make_table(header: list[str], rows: list[list[str]]) -> Table:
@@ -503,8 +443,8 @@ def make_table(header: list[str], rows: list[list[str]]) -> Table:
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, 0), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
         ("LINEBELOW", (0, 0), (-1, 0), 0.8, HIGHLIGHT),
         ("LINEBELOW", (0, -1), (-1, -1), 0.4, RULE),
@@ -589,94 +529,50 @@ def build(src_path: Path, out_path: Path, title: str | None = None) -> int:
             story.append(Spacer(1, 2))
             i += 1
         elif k == "h2" and payload.lower().startswith("question"):
-            # Emit Question header
-            story.append(Spacer(1, 3.5))
-            story.append(Paragraph(f'<font color="{ACCENT_HEX}"><b>{inline(payload)}</b></font>', H2))
+            # Collect complete Question core: Heading + Metadata + Problem + Options + Correct Answer
+            q_flowables = [
+                Spacer(1, 6),
+                Paragraph(f'<font color="{ACCENT_HEX}"><b>{inline(payload)}</b></font>', H2),
+            ]
             i += 1
-
-            q_core = []
             while i < N:
                 k2, p2 = blocks[i]
-                if k2 == "h3" or k2 == "hr" or k2 == "h2":
+                if k2 == "h3" or k2 == "hr" or (k2 == "h2"):
                     break
                 elif k2 == "quote":
-                    if q_core:
-                        story.append(KeepTogether(q_core))
-                        q_core = []
-                    story.append(Paragraph(inline(p2), META_TAG))
+                    q_flowables.append(Paragraph(inline(p2), META_TAG))
                 elif k2 == "p":
-                    if p2.startswith("**Q.**") or p2.startswith("Q."):
-                        if q_core:
-                            story.append(KeepTogether(q_core))
-                            q_core = []
-                        q_core.append(Paragraph(inline(p2), QUESTION_TEXT))
-                    else:
-                        if q_core:
-                            story.append(KeepTogether(q_core))
-                            q_core = []
-                        story.append(Paragraph(inline(p2), BODY))
+                    q_flowables.append(Paragraph(inline(p2), QUESTION_TEXT if (p2.startswith("**Q.**") or p2.startswith("Q.")) else BODY))
                 elif k2 == "ol":
-                    if q_core:
-                        for it in p2:
-                            num, text_val = (it[0], it[1]) if (isinstance(it, tuple) and len(it) == 2) else (1, it)
-                            q_core.append(Paragraph(
-                                f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {inline(text_val)}',
-                                OPTION_STYLE
-                            ))
-                        story.append(KeepTogether(q_core))
-                        q_core = []
-                    else:
-                        for it in p2:
-                            num, text_val = (it[0], it[1]) if (isinstance(it, tuple) and len(it) == 2) else (1, it)
-                            story.append(Paragraph(
-                                f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {inline(text_val)}',
-                                ParagraphStyle("ol_i", parent=BODY, leftIndent=12, firstLineIndent=-10, spaceAfter=1.5)
-                            ))
+                    for it in p2:
+                        num, text_val = (it[0], it[1]) if (isinstance(it, tuple) and len(it) == 2) else (1, it)
+                        q_flowables.append(Paragraph(
+                            f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {inline(text_val)}',
+                            ParagraphStyle("ol_i", parent=BODY, leftIndent=12, firstLineIndent=-10, spaceAfter=2, keepWithNext=1)
+                        ))
                 elif k2 == "ul":
-                    has_mcq_opts = any(re.match(r"^\*\*\([A-D]\)\*\*", it) or re.match(r"^\([A-D]\)", it) for it in p2)
-                    if has_mcq_opts and q_core:
-                        for it in p2:
-                            if re.match(r"^\*\*\([A-D]\)\*\*", it) or re.match(r"^\([A-D]\)", it):
-                                q_core.append(Paragraph(inline(it), OPTION_STYLE))
-                            else:
-                                q_core.append(Paragraph(f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}',
-                                                        ParagraphStyle("ul_i", parent=BODY, leftIndent=10, firstLineIndent=-8, spaceAfter=1.5)))
-                        story.append(KeepTogether(q_core))
-                        q_core = []
-                    else:
-                        if q_core:
-                            story.append(KeepTogether(q_core))
-                            q_core = []
-                        for it in p2:
-                            if re.match(r"^\*\*\([A-D]\)\*\*", it) or re.match(r"^\([A-D]\)", it):
-                                story.append(Paragraph(inline(it), OPTION_STYLE))
-                            else:
-                                story.append(Paragraph(f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}',
-                                                       ParagraphStyle("ul_i", parent=BODY, leftIndent=10, firstLineIndent=-8, spaceAfter=1.5)))
+                    for it in p2:
+                        if re.match(r"^\*\*\([A-D]\)\*\*", it) or re.match(r"^\([A-D]\)", it):
+                            q_flowables.append(Paragraph(inline(it), OPTION_STYLE))
+                        else:
+                            q_flowables.append(Paragraph(f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}',
+                                                   ParagraphStyle("ul_i", parent=BODY, leftIndent=10, firstLineIndent=-8, spaceAfter=2)))
                 elif k2 == "diagram":
-                    if q_core:
-                        story.append(KeepTogether(q_core))
-                        q_core = []
                     fence, code_text = p2
                     try:
                         from bot.diagrams import render_diagram_flowable
                         diag_f = render_diagram_flowable(fence, code_text)
                         if diag_f:
-                            story.append(Spacer(1, 3))
-                            story.append(diag_f)
-                            story.append(Spacer(1, 3))
+                            q_flowables.append(Spacer(1, 4))
+                            q_flowables.append(diag_f)
+                            q_flowables.append(Spacer(1, 4))
                     except Exception as exc:
                         print(f"[build_mcq] diagram render error: {exc}", flush=True)
                 elif k2 == "callout":
-                    if q_core:
-                        story.append(KeepTogether(q_core))
-                        q_core = []
                     kind, co_title, body_lines = p2
-                    story.extend(make_callout(kind, co_title, body_lines))
+                    q_flowables.extend(make_callout(kind, co_title, body_lines))
                 i += 1
-            if q_core:
-                story.append(KeepTogether(q_core))
-            story.append(Spacer(1, 3.5))
+            story.append(KeepTogether(q_flowables))
         elif k == "h2":
             story.append(Paragraph(inline(payload), H1))
             i += 1
@@ -689,9 +585,9 @@ def build(src_path: Path, out_path: Path, title: str | None = None) -> int:
                 from bot.diagrams import render_diagram_flowable
                 diag_f = render_diagram_flowable(fence, code_text)
                 if diag_f:
-                    story.append(Spacer(1, 3))
-                    story.append(diag_f)
                     story.append(Spacer(1, 4))
+                    story.append(diag_f)
+                    story.append(Spacer(1, 6))
             except Exception as exc:
                 print(f"[build_mcq] diagram render error: {exc}", flush=True)
             i += 1
@@ -710,13 +606,13 @@ def build(src_path: Path, out_path: Path, title: str | None = None) -> int:
                     story.append(Paragraph(inline(it), OPTION_STYLE))
                 else:
                     story.append(Paragraph(f'<font color="{ACCENT_HEX}"><b>-</b></font> {inline(it)}',
-                                           ParagraphStyle("ul_i", parent=BODY, leftIndent=10, firstLineIndent=-8, spaceAfter=1.5)))
+                                           ParagraphStyle("ul_i", parent=BODY, leftIndent=10, firstLineIndent=-8, spaceAfter=2)))
             i += 1
         elif k == "ol":
             for it in payload:
                 num, text_val = (it[0], it[1]) if (isinstance(it, tuple) and len(it) == 2) else (1, it)
                 story.append(Paragraph(f'<b><font color="{ACCENT_HEX}">{num}.</font></b> {inline(text_val)}',
-                                       ParagraphStyle("ol_i", parent=BODY, leftIndent=12, firstLineIndent=-10, spaceAfter=1.5)))
+                                       ParagraphStyle("ol_i", parent=BODY, leftIndent=12, firstLineIndent=-10, spaceAfter=2)))
             i += 1
         elif k == "callout":
             kind, co_title, body_lines = payload
@@ -725,14 +621,14 @@ def build(src_path: Path, out_path: Path, title: str | None = None) -> int:
         elif k == "table":
             hdr, rows = payload
             story.append(make_table(hdr, rows))
-            story.append(Spacer(1, 4))
+            story.append(Spacer(1, 6))
             i += 1
         elif k == "hr":
-            story.append(Spacer(1, 2.5))
+            story.append(Spacer(1, 4))
             line_table = Table([[""]], colWidths=[BODY_W], rowHeights=[0.5])
             line_table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), RULE)]))
             story.append(line_table)
-            story.append(Spacer(1, 2.5))
+            story.append(Spacer(1, 4))
             i += 1
         else:
             i += 1

@@ -37,8 +37,8 @@ const FEATURE_TILES: ReadonlyArray<{
   { flag: 'chapters',title: 'Index + QR',       sub: 'Chapter index page and a QR back to the video.' },
 ];
 
-const YT_RE = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?.*v=|shorts\/|live\/)|youtu\.be\/)[\w-]{11}/i;
-const PLAYLIST_RE = /^https?:\/\/(?:www\.|m\.)?youtube\.com\/(?:playlist\?.*list=|watch\?.*[?&]list=)[\w-]+/i;
+const YT_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/(?:shorts|live)\/)[\w-]{11}/;
+const PLAYLIST_RE = /^https?:\/\/(www\.)?youtube\.com\/(playlist\?list=|watch\?.*[?&]list=)[\w-]+/i;
 
 
 
@@ -95,23 +95,24 @@ function GenerateForm() {
     getMe().then(setMe).catch(() => {});
   }, []);
 
-  const isPlaylistUrl = PLAYLIST_RE.test(url.trim());
-  const isSingleVideoUrl = YT_RE.test(url.trim());
-  const valid = isSingleVideoUrl || isPlaylistUrl;
+  const valid = YT_RE.test(url);
 
-  const handleUrlChange = (newUrl: string) => {
-    setUrl(newUrl);
-    const trimmed = newUrl.trim();
+  // Automatic intelligent URL mode detection:
+  // If user pastes a playlist link -> auto switch to playlist mode.
+  // If user pastes a single video link -> auto switch to single mode.
+  useEffect(() => {
+    const trimmed = url.trim();
+    if (!trimmed) return;
     if (PLAYLIST_RE.test(trimmed)) {
-      setMode('playlist');
+      if (mode !== 'playlist') setMode('playlist');
     } else if (YT_RE.test(trimmed)) {
-      setMode('single');
+      if (mode !== 'single') setMode('single');
     }
-  };
+  }, [url, mode]);
 
   // Debounced preview fetch when URL becomes valid (single video mode only)
   useEffect(() => {
-    if (!isSingleVideoUrl || isPlaylistUrl || mode === 'playlist') {
+    if (!valid || mode === 'playlist') {
       setPreview(null);
       setPreviewError(null);
       return;
@@ -119,7 +120,7 @@ function GenerateForm() {
     setPreviewLoading(true);
     setPreviewError(null);
     const t = setTimeout(() => {
-      getPreview(url.trim())
+      getPreview(url)
         .then((p) => {
           setPreview(p);
           setPreviewLoading(false);
@@ -130,14 +131,23 @@ function GenerateForm() {
         });
     }, 400);
     return () => clearTimeout(t);
-  }, [url, isSingleVideoUrl, isPlaylistUrl, mode]);
+  }, [url, valid, mode]);
 
-  // Restore active playlist job from localStorage on mount (keeps banner visible without trapping mode)
+  // Restore active playlist job from localStorage on mount with instant status fetch (< 500ms)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedJobId = localStorage.getItem('active_playlist_job_id');
       if (savedJobId) {
         setPlaylistJobId(savedJobId);
+        // Instant non-blocking status fetch on mount
+        fetch(`/api/playlist/status/${encodeURIComponent(savedJobId)}`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data && (data.status === 'running' || data.status === 'complete' || data.status === 'interrupted' || data.status === 'stopped')) {
+              setPlaylistStatus(data);
+            }
+          })
+          .catch(() => {});
       }
     }
   }, []);
@@ -178,29 +188,22 @@ function GenerateForm() {
 
 
   async function submit() {
-    const trimmed = url.trim();
-    if (!trimmed || submitting) return;
-
-    const isPl = PLAYLIST_RE.test(trimmed);
-    const isYt = YT_RE.test(trimmed);
-    if (!isPl && !isYt) return;
-
-    const effectiveMode = isPl ? 'playlist' : isYt ? 'single' : mode;
-
+    const isPlaylistMode = mode === 'playlist';
+    const isUrlValid = isPlaylistMode ? PLAYLIST_RE.test(url.trim()) : valid;
+    if (!isUrlValid || submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      if (effectiveMode === 'playlist') {
-        const { id } = await createPlaylistJob(trimmed, kind, delaySeconds, maxVideos, concurrency);
+      if (isPlaylistMode) {
+        const { id } = await createPlaylistJob(url.trim(), kind, delaySeconds, maxVideos, concurrency);
         if (typeof window !== 'undefined') {
           localStorage.setItem('active_playlist_job_id', id);
         }
         setPlaylistJobId(id);
-        setMode('playlist');
         setSubmitting(false);
         setPlaylistStatus({ status: 'running', progress: 'Extracting playlist info...' });
       } else {
-        const { id } = await createJob(trimmed, kind, Array.from(features));
+        const { id } = await createJob(url, kind, Array.from(features));
         router.push(`/generate/${id}`);
       }
     } catch (e: any) {
@@ -247,7 +250,7 @@ function GenerateForm() {
         <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
           <button
             type="button"
-            onClick={() => setMode('single')}
+            onClick={() => { setMode('single'); setUrl(''); }}
             style={{
               flex: 1,
               padding: '10px 16px',
@@ -264,7 +267,7 @@ function GenerateForm() {
           </button>
           <button
             type="button"
-            onClick={() => setMode('playlist')}
+            onClick={() => { setMode('playlist'); setUrl(''); }}
             style={{
               flex: 1,
               padding: '10px 16px',
@@ -291,9 +294,9 @@ function GenerateForm() {
           const completedCount = manifest?.items
             ? Object.values(manifest.items).filter((i: any) => i.status === 'complete').length
             : 0;
-          const percent = total > 0 ? Math.round((completedCount / total) * 100) : (playlistStatus.status === 'complete' ? 100 : 0);
-
           const itemsList: any[] = manifest?.items ? Object.values(manifest.items) : [];
+          const failedCount = itemsList.filter((i: any) => i.status === 'failed').length;
+          const percent = total > 0 ? Math.round((completedCount / total) * 100) : (playlistStatus.status === 'complete' ? 100 : 0);
 
           return (
             <div
@@ -309,34 +312,9 @@ function GenerateForm() {
                 <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--c-ink)' }}>
                   📑 Playlist Processing Progress
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Tag tone={playlistStatus.status === 'complete' ? 'mint' : playlistStatus.status === 'error' ? 'error' : 'accent'}>
-                    {playlistStatus.status?.toUpperCase()}
-                  </Tag>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPlaylistJobId(null);
-                      setPlaylistStatus(null);
-                      if (typeof window !== 'undefined') {
-                        localStorage.removeItem('active_playlist_job_id');
-                      }
-                    }}
-                    title="Dismiss this playlist banner"
-                    style={{
-                      background: 'transparent',
-                      border: '1px solid var(--c-line)',
-                      color: 'var(--c-ink-3)',
-                      cursor: 'pointer',
-                      fontSize: 12,
-                      padding: '3px 8px',
-                      borderRadius: 4,
-                      fontFamily: 'inherit',
-                    }}
-                  >
-                    ✕ Dismiss
-                  </button>
-                </div>
+                <Tag tone={playlistStatus.status === 'complete' ? 'mint' : playlistStatus.status === 'error' ? 'error' : 'accent'}>
+                  {playlistStatus.status?.toUpperCase()}
+                </Tag>
               </div>
 
               {/* Progress Bar */}
@@ -425,13 +403,13 @@ function GenerateForm() {
                         ⏹️ Stop Process
                       </button>
                     )}
-                    {itemsList.some((i: any) => i.status === 'failed') && playlistStatus.status !== 'running' && (
+                    {failedCount > 0 && playlistStatus.status !== 'running' && (
                       <button
                         type="button"
                         onClick={async () => {
                           if (!playlistJobId) return;
                           try {
-                            setPlaylistStatus({ ...playlistStatus, status: 'running', progress: 'Retrying remaining videos...' });
+                            setPlaylistStatus({ ...playlistStatus, status: 'running', progress: `Retrying ${failedCount} failed video(s)...` });
                             await retryPlaylistJob(playlistJobId);
                           } catch (e) {
                             console.error('Retry failed', e);
@@ -449,7 +427,7 @@ function GenerateForm() {
                           fontFamily: 'inherit',
                         }}
                       >
-                        🔄 Retry Remaining Videos
+                        🔄 Retry Failed ({failedCount})
                       </button>
                     )}
 
@@ -610,13 +588,13 @@ function GenerateForm() {
                     >
                       📦 Download All 23 PDFs (ZIP)
                     </a>
-                    {playlistStatus.summary && playlistStatus.summary.successful_videos < playlistStatus.summary.total_videos && (
+                    {failedCount > 0 && playlistStatus.status !== 'running' && (
                       <button
                         type="button"
                         onClick={async () => {
                           if (!playlistJobId) return;
                           try {
-                            setPlaylistStatus({ ...playlistStatus, status: 'running', progress: 'Retrying remaining videos...' });
+                            setPlaylistStatus({ ...playlistStatus, status: 'running', progress: `Retrying ${failedCount} failed video(s)...` });
                             await retryPlaylistJob(playlistJobId);
                           } catch (e) {
                             console.error('Retry failed', e);
@@ -634,7 +612,7 @@ function GenerateForm() {
                           fontFamily: 'inherit',
                         }}
                       >
-                        🔄 Retry Remaining Videos
+                        🔄 Retry Failed ({failedCount})
                       </button>
                     )}
                   </div>
@@ -663,9 +641,7 @@ function GenerateForm() {
             display: 'block',
           }}
         >
-          {isPlaylistUrl || (mode === 'playlist' && !isSingleVideoUrl)
-            ? 'YouTube Playlist URL'
-            : 'YouTube Video URL'}
+          {mode === 'single' ? 'YouTube Video URL' : 'YouTube Playlist URL'}
         </label>
 
         <div
@@ -687,11 +663,11 @@ function GenerateForm() {
           <input
             type="text"
             value={url}
-            onChange={(e) => handleUrlChange(e.target.value)}
+            onChange={(e) => setUrl(e.target.value)}
             placeholder={
-              mode === 'playlist'
-                ? 'https://www.youtube.com/playlist?list=...'
-                : 'https://www.youtube.com/watch?v=...'
+              mode === 'single'
+                ? 'https://www.youtube.com/watch?v=...'
+                : 'https://www.youtube.com/playlist?list=...'
             }
             style={{
               flex: 1,
@@ -704,9 +680,9 @@ function GenerateForm() {
             }}
             autoFocus
           />
-          {valid && (
+          {(mode === 'single' ? valid : PLAYLIST_RE.test(url.trim())) && (
             <Tag tone="mint">
-              <Ic.check size={10} /> Valid {isPlaylistUrl ? 'Playlist' : 'Video'}
+              <Ic.check size={10} /> Valid
             </Tag>
           )}
         </div>
@@ -1003,32 +979,23 @@ function GenerateForm() {
             icon={<Ic.sparkle size={14} />}
             disabled={(() => {
               if (submitting) return true;
-              const trimmed = url.trim();
-              if (!trimmed) return true;
-              const isPl = PLAYLIST_RE.test(trimmed);
-              const isYt = YT_RE.test(trimmed);
-              if (!isPl && !isYt) return true;
-
-              if (!isPl && isYt && preview) {
-                const freeLeft =
-                  kind === 'book'
-                    ? (me?.free_books_left ?? 0)
-                    : (me?.free_cheatsheets_left ?? 0);
-                const cost = preview.cost_paise?.[kind as 'cheatsheet' | 'book'] ?? preview.cost_paise?.cheatsheet ?? 0;
-                const walletPaise = me?.wallet_balance_paise ?? 0;
-                if (freeLeft === 0 && walletPaise < cost) {
-                  return true;
-                }
+              if (mode === 'playlist') {
+                return !PLAYLIST_RE.test(url.trim());
               }
-              return false;
+              if (!valid || previewLoading || !!previewError || !preview) {
+                return true;
+              }
+              const freeLeft =
+                kind === 'book'
+                  ? (me?.free_books_left ?? 0)
+                  : (me?.free_cheatsheets_left ?? 0);
+              const cost = preview.cost_paise?.[kind as 'cheatsheet' | 'book'] ?? preview.cost_paise?.cheatsheet ?? 0;
+              const walletPaise = me?.wallet_balance_paise ?? 0;
+              return freeLeft === 0 && walletPaise < cost;
             })()}
             onClick={submit}
           >
-            {submitting
-              ? 'Starting…'
-              : isPlaylistUrl || (mode === 'playlist' && !isSingleVideoUrl)
-              ? 'Extract Playlist'
-              : 'Generate now'}
+            {submitting ? 'Starting…' : mode === 'playlist' ? 'Extract Playlist' : 'Generate now'}
           </Btn>
 
         </div>
