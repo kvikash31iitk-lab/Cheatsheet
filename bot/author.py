@@ -1228,11 +1228,16 @@ def split_transcript(transcript: str, max_chunk_tokens: int) -> list[str]:
     for c in chunks:
         if est_tokens(c) <= max_chunk_tokens:
             out.append(c); continue
-        # Split by lines into halves recursively.
+        # Split by lines into halves recursively, or by characters if a single long line
         lines = c.splitlines()
-        mid = len(lines) // 2
-        out.extend(split_transcript("\n".join(lines[:mid]), max_chunk_tokens))
-        out.extend(split_transcript("\n".join(lines[mid:]), max_chunk_tokens))
+        if len(lines) > 1:
+            mid = len(lines) // 2
+            out.extend(split_transcript("\n".join(lines[:mid]), max_chunk_tokens))
+            out.extend(split_transcript("\n".join(lines[mid:]), max_chunk_tokens))
+        else:
+            half = len(c) // 2
+            out.extend(split_transcript(c[:half], max_chunk_tokens))
+            out.extend(split_transcript(c[half:], max_chunk_tokens))
     return [c for c in out if c.strip()]
 
 
