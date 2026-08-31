@@ -431,6 +431,14 @@ export async function listPlaylists(): Promise<PlaylistJob[]> {
   return res.json();
 }
 
+export async function rebuildPdf(jobId: string): Promise<{ ok: boolean; pdf_url: string }> {
+  const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/rebuild`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to re-compile PDF'));
+  return res.json();
+}
+
 
 
 
