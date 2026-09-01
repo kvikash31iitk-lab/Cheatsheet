@@ -604,11 +604,9 @@ def _strip_reasoning(md: str) -> str:
 
 TPM_LIMIT_TOKENS = 8000
 GROQ_FALLBACK_MODELS = (
-    "qwen/qwen3.8-27b",
-    "qwen/qwen3.6-27b",
-    "openai/gpt-oss-20b",
-    "openai/gpt-oss-120b",
-    "groq/compound",
+    "llama-3.3-70b-versatile",
+    "qwen-2.5-32b",
+    "llama-3.1-8b-instant",
 )
 
 def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
