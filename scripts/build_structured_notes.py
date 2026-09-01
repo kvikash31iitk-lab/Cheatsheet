@@ -1,6 +1,6 @@
 """
-Builder for Structured Notes (Executive Study Cards with Stacked Mathematical Fractions)
-Locked standard format for Cheatsheet engine.
+Hardened Builder for Structured Notes (Executive Study Cards with Stacked Mathematical Fractions)
+Universal, robust renderer with AST-based formula handling, table splitting, and canvas geometry.
 """
 
 import html
@@ -47,11 +47,11 @@ STYLE_TITLE = ParagraphStyle(
     "DocTitle",
     parent=ss["Title"],
     fontName="Helvetica-Bold",
-    fontSize=15.0,
-    leading=18.5,
+    fontSize=14.0,
+    leading=17.0,
     textColor=NAVY,
     alignment=TA_LEFT,
-    spaceAfter=3,
+    spaceAfter=2,
     keepWithNext=1,
 )
 
@@ -59,18 +59,18 @@ STYLE_SUBTITLE = ParagraphStyle(
     "DocSubtitle",
     parent=ss["Normal"],
     fontName="Helvetica-Oblique",
-    fontSize=9.0,
-    leading=12.0,
+    fontSize=8.5,
+    leading=11.0,
     textColor=colors.HexColor("#64748B"),
-    spaceAfter=6,
+    spaceAfter=4,
 )
 
 STYLE_H1 = ParagraphStyle(
     "H1",
     parent=ss["Heading1"],
     fontName="Helvetica-Bold",
-    fontSize=11.2,
-    leading=14.0,
+    fontSize=10.5,
+    leading=13.0,
     textColor=colors.white,
     spaceBefore=0,
     spaceAfter=0,
@@ -81,11 +81,23 @@ STYLE_H2 = ParagraphStyle(
     "H2",
     parent=ss["Heading2"],
     fontName="Helvetica-Bold",
-    fontSize=10.0,
-    leading=13.0,
+    fontSize=9.5,
+    leading=12.0,
     textColor=NAVY,
-    spaceBefore=7,
-    spaceAfter=3,
+    spaceBefore=4,
+    spaceAfter=1.5,
+    keepWithNext=1,
+)
+
+STYLE_H3 = ParagraphStyle(
+    "H3",
+    parent=ss["Heading3"],
+    fontName="Helvetica-Bold",
+    fontSize=8.8,
+    leading=11.2,
+    textColor=SLATE_DARK,
+    spaceBefore=3,
+    spaceAfter=1,
     keepWithNext=1,
 )
 
@@ -93,27 +105,27 @@ STYLE_BODY = ParagraphStyle(
     "Body",
     parent=ss["BodyText"],
     fontName="Helvetica",
-    fontSize=8.8,
-    leading=12.0,
+    fontSize=8.4,
+    leading=11.2,
     textColor=SLATE_TEXT,
     alignment=TA_JUSTIFY,
-    spaceAfter=2.5,
+    spaceAfter=1.5,
 )
 
 STYLE_BULLET = ParagraphStyle(
     "Bullet",
     parent=STYLE_BODY,
-    leftIndent=11,
-    firstLineIndent=-8,
-    spaceAfter=2.0,
+    leftIndent=10,
+    firstLineIndent=-7,
+    spaceAfter=1.2,
 )
 
 STYLE_FORMULA = ParagraphStyle(
     "Formula",
     parent=ss["Normal"],
     fontName="Helvetica",
-    fontSize=8.8,
-    leading=12.0,
+    fontSize=8.4,
+    leading=11.2,
     textColor=SLATE_DARK,
     alignment=TA_LEFT,
 )
@@ -163,7 +175,7 @@ def clean_inline(text: str) -> str:
 
     text = re.sub(r"\*\*(.+?)\*\*", bold_repl, text)
     text = re.sub(r"\*([^*\n]+?)\*", r"<i>\1</i>", text)
-    text = re.sub(r"`([^`]+?)`", r'<font face="Courier-Bold" color="#1E3A8A" size="8.5">\1</font>', text)
+    text = re.sub(r"`([^`]+?)`", r'<font face="Courier-Bold" color="#1E3A8A" size="8.2">\1</font>', text)
 
     text = text.replace("&amp;rarr;", "&rarr;").replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
     text = text.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
@@ -180,40 +192,48 @@ def make_h1_ribbon(title: str) -> Table:
         ("BACKGROUND", (0, 0), (-1, -1), NAVY),
         ("LEFTPADDING", (0, 0), (-1, -1), 8),
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
         ("BOX", (0, 0), (-1, -1), 0.5, NAVY),
     ]))
     return t
 
 
-def make_stacked_fraction_card(raw_formula: str, norm_text: str = "", unit_badge: str = "") -> Table:
-    clean_f = clean_latex_math(raw_formula)
-    clean_f = clean_f.replace("`", "")
+def parse_formula_components(raw_line: str) -> tuple[str, str, str, str]:
+    """Extract (label/LHS, Numerator, Denominator, TrailingEvaluation/Multiplier) from a formula line."""
+    clean_f = clean_latex_math(raw_line).replace("`", "").strip()
+    clean_f = re.sub(r"^[-*+]\s*\*\*Formula[^*]*\*\*:\s*", "", clean_f, flags=re.I)
+    clean_f = re.sub(r"^\*\*Formula[^*]*\*\*:\s*", "", clean_f, flags=re.I)
     
-    lhs = ""
+    label = ""
     num = ""
     den = ""
     mult = ""
     
-    if "=" in clean_f:
+    # 1. Check for leading item prefix like '1. Quantity-Based:' or 'Fixed Cost/Unit ='
+    prefix_match = re.match(r"^(\d+\.\s+[^:]+:)\s*(.*)$", clean_f)
+    if prefix_match:
+        label = prefix_match.group(1).strip()
+        expr = prefix_match.group(2).strip()
+    elif "=" in clean_f:
         parts = clean_f.split("=", 1)
-        lhs = parts[0].strip()
-        rhs = parts[1].strip()
+        label = parts[0].strip() + " ="
+        expr = parts[1].strip()
     else:
-        rhs = clean_f
+        expr = clean_f
         
-    if "/" in rhs:
-        mult_match = re.search(r"\*\s*(\d+)", rhs)
+    if "/" in expr:
+        # Check multiplier like * 100
+        mult_match = re.search(r"\*\s*(\d+)", expr)
         if mult_match:
             mult = f"* {mult_match.group(1)}"
-            rhs = re.sub(r"\*\s*\d+", "", rhs).strip()
+            expr = re.sub(r"\*\s*\d+", "", expr).strip()
             
-        frac_parts = rhs.split("/", 1)
+        frac_parts = expr.split("/", 1)
         num = frac_parts[0].strip().strip("()").strip()
         den_raw = frac_parts[1].strip()
         
-        # If denominator has trailing calculation like '= 220,000/12,000 ≈ Rs. 18.33'
+        # Check for trailing equation like '= 220,000/12,000 ≈ Rs. 18.33'
         if "=" in den_raw:
             d_parts = den_raw.split("=", 1)
             den = d_parts[0].strip().strip("()").strip()
@@ -221,11 +241,20 @@ def make_stacked_fraction_card(raw_formula: str, norm_text: str = "", unit_badge
             mult = f"{mult} {trailing_calc}".strip()
         else:
             den = den_raw.strip("()").strip()
+    else:
+        # No division fraction: whole expr is linear
+        num = expr
+        
+    return label, num, den, mult
+
+
+def make_stacked_fraction_card(raw_formula: str, norm_text: str = "", unit_badge: str = "") -> Table:
+    label, num, den, mult = parse_formula_components(raw_formula)
     
-    style_lhs = ParagraphStyle("LHS", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=9.2, leading=11.5, textColor=NAVY, alignment=TA_LEFT)
-    style_num = ParagraphStyle("NUM", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=8.8, leading=11.0, textColor=SLATE_DARK, alignment=TA_CENTER)
-    style_den = ParagraphStyle("DEN", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=8.8, leading=11.0, textColor=SLATE_DARK, alignment=TA_CENTER)
-    style_mult = ParagraphStyle("MULT", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=9.2, leading=11.5, textColor=NAVY, alignment=TA_LEFT)
+    style_lhs = ParagraphStyle("LHS", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=9.0, leading=11.2, textColor=NAVY, alignment=TA_LEFT)
+    style_num = ParagraphStyle("NUM", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=8.6, leading=10.8, textColor=SLATE_DARK, alignment=TA_CENTER)
+    style_den = ParagraphStyle("DEN", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=8.6, leading=10.8, textColor=SLATE_DARK, alignment=TA_CENTER)
+    style_mult = ParagraphStyle("MULT", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=9.0, leading=11.2, textColor=NAVY, alignment=TA_LEFT)
     
     if num and den:
         p_num = Paragraph(clean_inline(num), style_num)
@@ -235,18 +264,18 @@ def make_stacked_fraction_card(raw_formula: str, norm_text: str = "", unit_badge
         frac_table.setStyle(TableStyle([
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, 0), 1.5),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 2.5),
-            ("TOPPADDING", (0, 1), (-1, 1), 2.5),
-            ("BOTTOMPADDING", (0, 1), (-1, 1), 1.5),
+            ("TOPPADDING", (0, 0), (-1, 0), 1.0),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 2.0),
+            ("TOPPADDING", (0, 1), (-1, 1), 2.0),
+            ("BOTTOMPADDING", (0, 1), (-1, 1), 1.0),
             ("LINEABOVE", (0, 1), (-1, 1), 1.0, NAVY),
             ("LEFTPADDING", (0, 0), (-1, -1), 6),
             ("RIGHTPADDING", (0, 0), (-1, -1), 6),
         ]))
         
         row_cells = []
-        if lhs:
-            p_lhs = Paragraph(f"<b>{clean_inline(lhs)}</b> =", style_lhs)
+        if label:
+            p_lhs = Paragraph(f"<b>{clean_inline(label)}</b>", style_lhs)
             row_cells.append(p_lhs)
         row_cells.append(frac_table)
         if mult:
@@ -262,7 +291,9 @@ def make_stacked_fraction_card(raw_formula: str, norm_text: str = "", unit_badge
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
     else:
-        p_lin = Paragraph(f'<font color="#1E3A8A"><b>FORMULA:</b></font> <font face="Courier-Bold" color="#0F172A"><b>{clean_inline(clean_f)}</b></font>', STYLE_FORMULA)
+        # Linear expression in formula card
+        linear_text = f"<b>{label} {num} {mult}</b>".strip()
+        p_lin = Paragraph(f'<font color="#1E3A8A"><b>FORMULA:</b></font> <font face="Courier-Bold" color="#0F172A">{clean_inline(linear_text)}</font>', STYLE_FORMULA)
         math_expr_table = Table([[p_lin]])
         math_expr_table.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -279,7 +310,7 @@ def make_stacked_fraction_card(raw_formula: str, norm_text: str = "", unit_badge
         right_badges.append(f'<font color="#059669"><b>[{unit_badge}]</b></font>')
         
     if right_badges:
-        badge_style = ParagraphStyle("BadgeR", parent=ss["Normal"], fontName="Helvetica", fontSize=8.2, leading=11, alignment=TA_RIGHT)
+        badge_style = ParagraphStyle("BadgeR", parent=ss["Normal"], fontName="Helvetica", fontSize=8.0, leading=10.5, alignment=TA_RIGHT)
         p_badge = Paragraph(" | ".join(right_badges), badge_style)
         card_table = Table([[math_expr_table, p_badge]], colWidths=[BODY_W * 0.70, BODY_W * 0.30])
     else:
@@ -289,8 +320,8 @@ def make_stacked_fraction_card(raw_formula: str, norm_text: str = "", unit_badge
         ("BACKGROUND", (0, 0), (-1, -1), BG_FORMULA),
         ("LEFTPADDING", (0, 0), (-1, -1), 8),
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
         ("LINELEFT", (0, 0), (0, -1), 3.0, NAVY),
         ("BOX", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -306,10 +337,10 @@ def make_callout_box(label: str, content: str, color_hex: str = "#1E3A8A") -> Ta
         ("BACKGROUND", (0, 0), (-1, -1), BG_LIGHT),
         ("LEFTPADDING", (0, 0), (-1, -1), 8),
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, 0), 3),
+        ("TOPPADDING", (0, 0), (-1, 0), 2.5),
         ("BOTTOMPADDING", (0, 0), (-1, 0), 1),
         ("TOPPADDING", (0, 1), (-1, 1), 1),
-        ("BOTTOMPADDING", (0, 1), (-1, 1), 4),
+        ("BOTTOMPADDING", (0, 1), (-1, 1), 3.5),
         ("LINELEFT", (0, 0), (0, -1), 3.0, colors.HexColor(color_hex)),
         ("BOX", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
     ]))
@@ -317,11 +348,8 @@ def make_callout_box(label: str, content: str, color_hex: str = "#1E3A8A") -> Ta
 
 
 def is_formula_line(line: str) -> bool:
-    """Determine if a markdown line represents an explicit formula or equation."""
     l = line.strip()
-    if re.match(r"^[-*+]\s*\*\*Formula:?\*\*", l, re.I):
-        return True
-    if re.match(r"^\*\*Formula:?\*\*", l, re.I):
+    if re.search(r"\*\*Formula.*?\*\*", l, re.I):
         return True
     if re.search(r"\\?frac\{", l):
         return True
@@ -330,7 +358,7 @@ def is_formula_line(line: str) -> bool:
     return False
 
 
-def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Principles - Ratio Analysis"):
+def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Principles"):
     raw_md = md_path.read_text(encoding="utf-8")
     
     doc = SimpleDocTemplate(
@@ -344,9 +372,10 @@ def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Princi
     
     story = []
     
+    # Title & Subtitle
     story.append(Paragraph(clean_inline(title), STYLE_TITLE))
     story.append(Paragraph("Structured Study Notes & Examination Reference | UPSC EPFO AO/EO & APFC", STYLE_SUBTITLE))
-    story.append(HRFlowable(width="100%", thickness=0.8, color=NAVY, spaceBefore=0, spaceAfter=6))
+    story.append(HRFlowable(width="100%", thickness=0.8, color=NAVY, spaceBefore=0, spaceAfter=5))
     
     lines = raw_md.splitlines()
     i = 0
@@ -356,34 +385,47 @@ def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Princi
             i += 1
             continue
             
+        # Suppress Markdown horizontal rules like '---' or '***'
+        if re.match(r"^(\-{3,}|\*{3,}|_{3,})$", line):
+            i += 1
+            continue
+            
+        # H1 Sections
         if line.startswith("## "):
             sec_title = line.replace("## ", "").strip()
-            story.append(Spacer(1, 5))
-            story.append(make_h1_ribbon(sec_title))
             story.append(Spacer(1, 4))
+            story.append(make_h1_ribbon(sec_title))
+            story.append(Spacer(1, 3))
             i += 1
             continue
             
+        # H2 Subsections
         if line.startswith("### "):
             sub_title = line.replace("### ", "").strip()
-            story.append(Spacer(1, 4))
+            story.append(Spacer(1, 3))
             story.append(Paragraph(f"<b>{clean_inline(sub_title)}</b>", STYLE_H2))
-            story.append(Spacer(1, 2))
+            story.append(Spacer(1, 1.5))
             i += 1
             continue
             
+        # H3 Sub-subsections
+        if line.startswith("#### "):
+            h3_title = line.replace("#### ", "").strip()
+            story.append(Spacer(1, 2))
+            story.append(Paragraph(f"<b>{clean_inline(h3_title)}</b>", STYLE_H3))
+            story.append(Spacer(1, 1))
+            i += 1
+            continue
+            
+        # Formula Lines
         if is_formula_line(line):
-            f_content = re.sub(r"^[-*+]\s*\*\*Formula:?\*\*\s*", "", line, flags=re.I).strip()
-            f_content = re.sub(r"^\*\*Formula:?\*\*\s*", "", f_content, flags=re.I).strip()
-            if not f_content and i + 1 < len(lines) and (lines[i+1].strip().startswith("$$") or "frac" in lines[i+1]):
-                f_content = lines[i+1].strip()
-                i += 1
-            elif not f_content and i + 1 < len(lines) and not lines[i+1].strip().startswith("-"):
-                f_content = lines[i+1].strip()
-                i += 1
-            elif not f_content:
-                f_content = line
-                
+            f_content = line
+            if (line.startswith("- **Formula:**") or line.startswith("- **Formula**:")) and i + 1 < len(lines):
+                next_l = lines[i+1].strip()
+                if next_l.startswith("$$") or "frac" in next_l or "=" in next_l:
+                    f_content = next_l
+                    i += 1
+                    
             norm_val = ""
             unit_val = ""
             if i + 1 < len(lines) and ("Ideal Benchmark" in lines[i+1] or "Benchmark" in lines[i+1]):
@@ -397,10 +439,11 @@ def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Princi
                 unit_val = "TIMES"
                 
             story.append(make_stacked_fraction_card(f_content, norm_val, unit_val))
-            story.append(Spacer(1, 3))
+            story.append(Spacer(1, 2.5))
             i += 1
             continue
             
+        # Callouts
         if line.startswith("> [!"):
             m = re.match(r"^>\s*\[!(\w+)\]\s*(.*)$", line)
             c_label = m.group(2) if m else "EXAMINATION KEY RULE"
@@ -410,9 +453,10 @@ def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Princi
                 c_body.append(lines[i].strip().lstrip(">").strip())
                 i += 1
             story.append(make_callout_box(c_label, " ".join(c_body), "#1E3A8A"))
-            story.append(Spacer(1, 3))
+            story.append(Spacer(1, 2.5))
             continue
             
+        # Tables (with repeatRows=1 to ensure headers repeat on page break)
         if "|" in line and i + 1 < len(lines) and re.match(r"^[\s\|:\-]+$", lines[i+1].strip()):
             header = [c.strip() for c in line.strip("|").split("|")]
             i += 2
@@ -421,8 +465,8 @@ def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Princi
                 rows.append([c.strip() for c in lines[i].strip().strip("|").split("|")])
                 i += 1
                 
-            th_style = ParagraphStyle("TH", parent=STYLE_BODY, fontName="Helvetica-Bold", textColor=colors.white, fontSize=8.2, leading=11)
-            td_style = ParagraphStyle("TD", parent=STYLE_BODY, fontName="Helvetica", fontSize=8.0, leading=11, textColor=SLATE_TEXT)
+            th_style = ParagraphStyle("TH", parent=STYLE_BODY, fontName="Helvetica-Bold", textColor=colors.white, fontSize=8.0, leading=10.5)
+            td_style = ParagraphStyle("TD", parent=STYLE_BODY, fontName="Helvetica", fontSize=7.8, leading=10.5, textColor=SLATE_TEXT)
             
             t_data = [[Paragraph(clean_inline(c), th_style) for c in header]]
             for r in rows:
@@ -430,6 +474,8 @@ def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Princi
                 
             if len(header) == 5:
                 col_w = [BODY_W * 0.22, BODY_W * 0.28, BODY_W * 0.15, BODY_W * 0.13, BODY_W * 0.22]
+            elif len(header) == 4:
+                col_w = [BODY_W * 0.22, BODY_W * 0.26, BODY_W * 0.26, BODY_W * 0.26]
             elif len(header) == 3:
                 col_w = [BODY_W * 0.25, BODY_W * 0.30, BODY_W * 0.45]
             else:
@@ -439,19 +485,20 @@ def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Princi
             tbl.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), NAVY),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_LIGHT]),
-                ("BOX", (0, 0), (-1, -1), 0.6, BORDER_COLOR),
-                ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#E2E8F0")),
+                ("BOX", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+                ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#E2E8F0")),
             ]))
-            story.append(Spacer(1, 3))
+            story.append(Spacer(1, 2))
             story.append(tbl)
-            story.append(Spacer(1, 4))
+            story.append(Spacer(1, 3))
             continue
             
+        # Bullet Points
         if line.startswith(("- ", "* ", "+ ")):
             b_text = re.sub(r"^[-*+]\s+", "", line)
             bullet_p = Paragraph(f'<font color="#1E3A8A"><b>&bull;</b></font> {clean_inline(b_text)}', STYLE_BULLET)
@@ -459,6 +506,7 @@ def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Princi
             i += 1
             continue
             
+        # Numbered List
         m_num = re.match(r"^(\d+)\.\s+(.*)$", line)
         if m_num:
             n_num = m_num.group(1)
@@ -468,6 +516,7 @@ def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Princi
             i += 1
             continue
             
+        # Standard Paragraph
         story.append(Paragraph(clean_inline(line), STYLE_BODY))
         i += 1
 
@@ -475,15 +524,17 @@ def build(md_path: Path, pdf_path: Path, title: str = "General Accounting Princi
         canvas.saveState()
         canvas.setFont("Helvetica", 7.5)
         canvas.setFillColor(colors.HexColor("#64748B"))
+        # Top page header
         canvas.drawString(MARGIN, PAGE_H - MARGIN + 4, "UPSC EPFO APFC | GENERAL ACCOUNTING PRINCIPLES")
         canvas.drawRightString(PAGE_W - MARGIN, PAGE_H - MARGIN + 4, "STRUCTURED STUDY NOTES")
         canvas.setStrokeColor(BORDER_COLOR)
         canvas.setLineWidth(0.4)
         canvas.line(MARGIN, PAGE_H - MARGIN + 2, PAGE_W - MARGIN, PAGE_H - MARGIN + 2)
         
+        # Bottom page footer - Fixed horizontal line (no diagonal)
         canvas.drawString(MARGIN, MARGIN - 10, "Structured Study Notes — Executive Reference")
         canvas.drawRightString(PAGE_W - MARGIN, MARGIN - 10, f"Page {doc.page}")
-        canvas.line(MARGIN, MARGIN - 2, PAGE_W - MARGIN, PAGE_H - MARGIN - 2)
+        canvas.line(MARGIN, MARGIN - 2, PAGE_W - MARGIN, MARGIN - 2)
         canvas.restoreState()
 
     doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
