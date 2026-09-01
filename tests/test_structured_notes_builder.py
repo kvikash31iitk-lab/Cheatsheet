@@ -1,5 +1,12 @@
+import os
+import sys
 import pathlib
 import re
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import fitz
 from scripts.build_structured_notes import build, parse_formula_components, clean_latex_math
 
@@ -54,3 +61,14 @@ Here is a normal paragraph.
     # Verify no raw '---' in PDF text
     page_text = doc[0].get_text()
     assert "---" not in page_text
+
+if __name__ == "__main__":
+    import tempfile
+    print("Testing parse_formula_components...")
+    test_parse_formula_components()
+    print("Formula parser OK!")
+    print("Testing PDF rendering...")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        test_pdf_rendering_no_diagonal_line(pathlib.Path(tmp_dir))
+    print("PDF rendering OK!")
+    print("ALL TESTS PASSED SUCCESSFULLY!")
