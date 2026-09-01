@@ -1090,7 +1090,7 @@ async def library(
 
 class CreateRequest(BaseModel):
     url: str = Field(..., min_length=10)
-    kind: Literal["cheatsheet", "book", "mcq"]
+    kind: Literal["cheatsheet", "book", "mcq", "structured_notes"]
     # Opt-in PDF enhancements. Each string is a short flag; unknown values
     # are silently dropped server-side (forward-compat with newer clients).
     # Empty list = the legacy/default PDF (no enhancements). See author.py

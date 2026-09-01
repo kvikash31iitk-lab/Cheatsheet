@@ -133,7 +133,7 @@ class Generation(Base):
         String(32), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
 
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # cheatsheet | book
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)  # cheatsheet | book | mcq | structured_notes
     url: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Video metadata (filled in once yt-dlp returns)
