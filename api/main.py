@@ -93,8 +93,9 @@ from scripts.ytdlp_client import YtDlpError  # noqa: E402
 from scripts.build_cheatsheet import build as build_cheatsheet  # noqa: E402
 from scripts.build_illustrated_book import build as build_book  # noqa: E402
 from scripts.build_mcq_handbook import build as build_mcq  # noqa: E402
+from scripts.build_structured_notes import build as build_structured_notes  # noqa: E402
 from scripts.run_local_job import run_url_job  # noqa: E402
-from bot.author import author_book, author_cheatsheet, author_mcq  # noqa: E402
+from bot.author import author_book, author_cheatsheet, author_mcq, author_structured_notes  # noqa: E402
 from bot import cache as bot_cache  # noqa: E402
 
 from api.db import (  # noqa: E402
@@ -2040,7 +2041,18 @@ async def _run_job(job_id: str) -> None:
         elif kind == "mcq":
             md_text = await asyncio.to_thread(
                 author_mcq,
-                result["transcript_txt"],
+                result.get("transcript_txt") or result.get("transcript_with_frames"),
+                title_hint=meta["title"],
+                duration_seconds=meta["duration"],
+                on_progress=lambda m: emit(m, max(progress_state["p"], 0.72)),
+                system_override=custom_prompt_mcq,
+                cost_sink=cost_sink,
+                features=features,
+            )
+        elif kind == "structured_notes":
+            md_text = await asyncio.to_thread(
+                author_structured_notes,
+                result.get("transcript_txt") or result.get("transcript_with_frames"),
                 title_hint=meta["title"],
                 duration_seconds=meta["duration"],
                 on_progress=lambda m: emit(m, max(progress_state["p"], 0.72)),
@@ -2077,6 +2089,13 @@ async def _run_job(job_id: str) -> None:
         elif kind == "mcq":
             await asyncio.to_thread(
                 build_mcq,
+                md_path,
+                pdf_path,
+                meta["title"],
+            )
+        elif kind == "structured_notes":
+            await asyncio.to_thread(
+                build_structured_notes,
                 md_path,
                 pdf_path,
                 meta["title"],

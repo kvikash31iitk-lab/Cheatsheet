@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 import scripts.build_cheatsheet as bc
 import scripts.build_illustrated_book as bb
 import scripts.build_mcq_handbook as bm
+import scripts.build_structured_notes as bsn
 
 
 def render_md_file(md_path: Path, out_path: Path | None = None, title: str | None = None, kind: str = "cheatsheet") -> Path:
@@ -47,6 +48,8 @@ def render_md_file(md_path: Path, out_path: Path | None = None, title: str | Non
         bb.build(src=md_path, out=out_path, title=title)
     elif kind == "mcq":
         bm.build(src=md_path, out=out_path, title=title)
+    elif kind == "structured_notes":
+        bsn.build(md_path=md_path, pdf_path=out_path, title=title or "Structured Notes")
     else:
         bc.build(src=md_path, out=out_path, title=title)
 
@@ -57,7 +60,7 @@ def main():
     parser = argparse.ArgumentParser(description="Rebuild PDF from Markdown")
     parser.add_argument("input", nargs="?", help="Path to input .md file")
     parser.add_argument("output", nargs="?", help="Path to output .pdf file (optional)")
-    parser.add_argument("--kind", choices=["cheatsheet", "book", "mcq"], default="cheatsheet", help="Document kind")
+    parser.add_argument("--kind", choices=["cheatsheet", "book", "mcq", "structured_notes"], default="cheatsheet", help="Document kind")
     parser.add_argument("--title", help="Document title for header")
     parser.add_argument("--folder", help="Batch rebuild all .md files in this directory")
 

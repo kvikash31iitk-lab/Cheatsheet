@@ -603,70 +603,77 @@ def _strip_reasoning(md: str) -> str:
 
 
 TPM_LIMIT_TOKENS = 8000
-GROQ_FALLBACK_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-20b")
-
+GROQ_FALLBACK_MODELS = (
+    "qwen/qwen3.8-27b",
+    "qwen/qwen3.6-27b",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
+    "groq/compound",
+)
 
 def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                  cost_sink: Optional[dict] = None) -> str:
     prompt_tokens = est_tokens(system) + est_tokens(user)
-    request_max_tokens = min(max_tokens, max(2800, 16000 - prompt_tokens))
+    request_max_tokens = min(max_tokens, max(1200, 6800 - prompt_tokens))
 
     from bot.config import GROQ_API_KEY, GROQ_API_KEYS
     keys_pool = list(dict.fromkeys(GROQ_API_KEYS or [GROQ_API_KEY]))
     from groq import Groq
     
-    primary = AUTHORING_MODEL if AUTHORING_MODEL and not AUTHORING_MODEL.startswith("gemini-") else "openai/gpt-oss-120b"
-    fallbacks = GROQ_FALLBACK_MODELS or ("openai/gpt-oss-120b", "qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-20b")
+    primary = AUTHORING_MODEL if AUTHORING_MODEL and not AUTHORING_MODEL.startswith("gemini-") else "qwen/qwen3.8-27b"
+    fallbacks = GROQ_FALLBACK_MODELS or ("qwen/qwen3.8-27b", "qwen/qwen3.6-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b")
     models = [primary] + [m for m in fallbacks if m != primary]
-    
     last_err = None
-    for api_k in keys_pool:
-        client = Groq(api_key=api_k)
-        for model in models:
-            model_user = user
-            model_options = {}
-            if "qwen" in model.lower():
-                model_options = {
-                    "reasoning_effort": "none",
-                    "reasoning_format": "hidden",
-                }
-                request_max_tokens = min(request_max_tokens, 4000)
-            for attempt in range(1, 3):
-                try:
-                    resp = client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": model_user},
-                        ],
-                        temperature=0.3,
-                        max_tokens=request_max_tokens,
-                        **model_options,
-                    )
+    for outer_try in range(1, 4):
+        if outer_try > 1:
+            time.sleep(6.0 * (outer_try - 1))
+        for api_k in keys_pool:
+            client = Groq(api_key=api_k)
+            for model in models:
+                model_user = user
+                model_options = {}
+                if "qwen" in model.lower():
+                    model_options = {
+                        "reasoning_effort": "none",
+                        "reasoning_format": "hidden",
+                    }
+                    request_max_tokens = min(request_max_tokens, 3500)
+                for attempt in range(1, 3):
+                    try:
+                        resp = client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "system", "content": system},
+                                {"role": "user", "content": model_user},
+                            ],
+                            temperature=0.3,
+                            max_tokens=request_max_tokens,
+                            **model_options,
+                        )
 
-                    text = _strip_reasoning(resp.choices[0].message.content or "")
-                    if not text:
-                        raise RuntimeError("Groq returned an empty authoring response")
-                    if cost_sink is not None:
-                        cost_sink["authoring_model"] = model
-                        if getattr(resp, "usage", None):
-                            cost_sink["tokens_in"] = (
-                                cost_sink.get("tokens_in", 0)
-                                + int(resp.usage.prompt_tokens or 0)
-                            )
-                            cost_sink["tokens_out"] = (
-                                cost_sink.get("tokens_out", 0)
-                                + int(resp.usage.completion_tokens or 0)
-                            )
-                    return text
-                except Exception as exc:
-                    last_err = exc
-                    error_text = str(exc).casefold()
-                    if any(tok in error_text for tok in ("rate limit", "429", "quota", "too large", "not_found", "does not exist", "unrecognized")):
-                        print(f"[author] groq model {model!r} rate limited or unavailable; rotating", flush=True)
-                        break
-                    wait = 3 * attempt
-                    time.sleep(wait)
+                        text = _strip_reasoning(resp.choices[0].message.content or "")
+                        if not text:
+                            raise RuntimeError("Groq returned an empty authoring response")
+                        if cost_sink is not None:
+                            cost_sink["authoring_model"] = model
+                            if getattr(resp, "usage", None):
+                                cost_sink["tokens_in"] = (
+                                    cost_sink.get("tokens_in", 0)
+                                    + int(resp.usage.prompt_tokens or 0)
+                                )
+                                cost_sink["tokens_out"] = (
+                                    cost_sink.get("tokens_out", 0)
+                                    + int(resp.usage.completion_tokens or 0)
+                                )
+                        return text
+                    except Exception as exc:
+                        last_err = exc
+                        error_text = str(exc).casefold()
+                        if any(tok in error_text for tok in ("rate limit", "429", "quota", "too large", "not_found", "does not exist", "unrecognized")):
+                            print(f"[author] groq model {model!r} rate limited or unavailable; rotating", flush=True)
+                            break
+                        wait = 3 * attempt
+                        time.sleep(wait)
     raise RuntimeError(f"All Groq fallback models and keys failed. Last error: {last_err}")
 
 
@@ -1679,4 +1686,97 @@ def author_mcq(transcript_path: Path, *,
         title = (title_hint or "Solved MCQ Handbook").replace('\n', ' ').strip()
         cleaned = f"# {title}\n\n### Solved MCQ Handbook & Concept Master Guide\n\n{cleaned}"
     return cleaned
+
+
+STRUCTURED_NOTES_SYSTEM = """You are an elite academic note-taker and subject-matter expert producing exhaustive, high-yield "Structured Notes" from a lecture transcript.
+
+Your objective is to provide a deeply organized, complete set of notes capturing 100% of the substantive concepts, facts, provisions, comparisons, and teacher insights without conversational filler, artificial segment limits, or gimmicky boilerplate.
+
+================================================================================
+CORE PRINCIPLES:
+================================================================================
+1. ORGANIC HIERARCHICAL DECOMPOSITION (NO ARBITRARY 6-10 SEGMENT FORCING):
+   - Derive the structural architecture organically from the lecture flow:
+     # Main Document Title (Clear, Specific, Academic)
+     ## Major Part / Core Theme (High-level conceptual pillar)
+     ### Sub-topic / Module / Case / Policy (Atomic concept)
+     #### Specific Provision / Clause / Component (Granular breakdown)
+   - Use structured nested bullet hierarchies, analytical comparisons, and data tables to maximize density and scannability.
+
+2. EXHAUSTIVE CONCEPT COVERAGE & HIGH DENSITY (3–5 PAGE TARGET):
+   - Capture every single concept, law, scheme, date, committee, formula, condition, and distinction mentioned in the transcript.
+   - Dense & Concise: Deliver depth through precision, bulleted structures, and matrices rather than rambling paragraphs.
+   - Avoid lossy over-simplification; preserve the teacher's nuanced explanations and reasoning.
+
+3. DOMAIN-ADAPTIVE CONTENT (NO FORCED NUMERICALS OR FAKE MATH):
+   - Theoretical / Humanities / Governance / Schemes:
+     * Focus on Objectives, Eligibility Criteria, Funding Patterns, Nodal Ministries, Statutory Articles, Historical Evolution, Critical Comparisons, and Implementation Challenges.
+     * NEVER fabricate math steps, numerical equations, or calculation exercises when none exist in the lecture.
+   - Quantitative / Accounting / Technical / Reasoning / Science:
+     * Preserve authentic formulas, derivations, variables, benchmarks, and worked calculations taught by the instructor.
+     * ALWAYS format formulas cleanly:
+       - **Formula:** `LHS = (Numerator) / (Denominator)` or `LHS = (Numerator) / (Denominator) * 100`
+       - **Ideal Benchmark Norm:** `2 : 1` (or relevant norm/threshold if mentioned by teacher)
+       - **Constituent Components:** Numerator terms vs Denominator terms breakdown with definitions.
+       - **Analytical Significance / Rules:** Margin of safety, high vs low interpretation.
+
+4. ELIMINATE CHEEKY GIMMICKS & FORCED BOILERPLATE:
+   - Do NOT include repetitive, artificial callout banners on every single section.
+   - Use callout blocks ONLY when the instructor explicitly points out a critical exam trap, a crucial heuristic, or a formal legal/academic definition:
+     > [!def] Formal Definition / Statutory Rule
+     > [!note] Critical Exam Caveat or Common Misconception
+   - Never pad the notes with conversational pleasantries, motivational banter, or YouTube subscriber requests.
+
+5. ANALYTICAL MATRICES & COMPARATIVE TABLES:
+   - Whenever the instructor discusses two or more entities, schemes, provisions, shifts over time, or competing theories, synthesize them into a clean Markdown table.
+
+OUTPUT FORMAT:
+Output ONLY pure, valid markdown. No conversational preamble, no wrapping in code blocks.
+"""
+
+
+def author_structured_notes(transcript_path: Path, *,
+                            title_hint: Optional[str] = None,
+                            duration_seconds: Optional[float] = None,
+                            on_progress: ProgressFn = None,
+                            system_override: Optional[str] = None,
+                            cost_sink: Optional[dict] = None,
+                            features: Optional[list[str]] = None) -> str:
+    """Return exhaustive, high-yield structured notes markdown text."""
+    transcript = Path(transcript_path).read_text(encoding="utf-8")
+    if _needs_condensation() or est_tokens(transcript) > 5000:
+        if on_progress:
+            on_progress("Preserving 100% concepts across lecture sections...")
+        body = condense(transcript, on_progress=on_progress)
+        body_label = "CONDENSED TRANSCRIPT (exhaustive section summaries with 100% concepts preserved):"
+    else:
+        body = transcript
+        body_label = "RAW TRANSCRIPT WITH TIMESTAMPS (exhaustively author all topics without skipping):"
+
+    user_msg = (
+        (f"TITLE HINT: {title_hint}\n" if title_hint else "")
+        + (f"SOURCE LENGTH: {duration_seconds/60:.0f} minutes\n"
+           if duration_seconds else "")
+        + f"\n{body_label}\n"
+        + body
+    )
+
+    if on_progress:
+        on_progress("Authoring exhaustive Structured Notes...")
+
+    sys_prompt = system_override or STRUCTURED_NOTES_SYSTEM
+
+    # Target 3-5 high density pages
+    raw = _author(
+        sys_prompt,
+        user_msg,
+        max_tokens=8000,
+        cost_sink=cost_sink,
+    )
+    cleaned = strip_wrappers(raw)
+    if not any(line.lstrip().startswith("#") for line in cleaned.splitlines()):
+        title = (title_hint or "Structured Lecture Notes").replace('\n', ' ').strip()
+        cleaned = f"# {title}\n\n### Comprehensive Structured Notes\n\n{cleaned}"
+    return cleaned
+
 

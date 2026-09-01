@@ -853,6 +853,15 @@ function GenerateForm() {
             time="~30 seconds"
           />
           <KindCard
+            kind="structured_notes"
+            selected={kind === 'structured_notes'}
+            onClick={() => setKind('structured_notes')}
+            icon={<Ic.list size={16} />}
+            title="Structured Notes"
+            sub="Exhaustive study cards · stacked formulas, benchmarks & zero fluff."
+            time="~45 seconds"
+          />
+          <KindCard
             kind="mcq"
             selected={kind === 'mcq'}
             onClick={() => setKind('mcq')}

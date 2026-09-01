@@ -17,6 +17,7 @@ KIND_LABELS = {
     "cheatsheet": "Cheatsheet",
     "mcq": "Solved MCQs",
     "book": "Illustrated Book",
+    "structured_notes": "Structured Notes",
     "marathon": "Handbook",
     "playlist": "Playlist",
 }

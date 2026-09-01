@@ -86,7 +86,7 @@ GROQ_FALLBACK_MODELS = tuple(
     model.strip()
     for model in os.environ.get(
         "GROQ_FALLBACK_MODELS",
-        "qwen/qwen3.6-27b,openai/gpt-oss-20b",
+        "qwen/qwen3.8-27b,qwen/qwen3.6-27b,openai/gpt-oss-20b",
     ).split(",")
     if model.strip()
 )

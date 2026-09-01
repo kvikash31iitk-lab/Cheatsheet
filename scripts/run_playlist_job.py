@@ -511,6 +511,13 @@ def run_playlist_job(
             master_pdf_path,
             title=playlist_title_final,
         )
+    elif kind == "structured_notes":
+        from scripts.build_structured_notes import build as build_structured_notes
+        build_structured_notes(
+            master_md_path,
+            master_pdf_path,
+            title=playlist_title_final,
+        )
     else:
         build_book(
             master_md_path,

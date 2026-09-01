@@ -30,10 +30,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from api.youtube_urls import validate_public_youtube_url
 from bot import cache as bot_cache
 from bot import config as bot_config
-from bot.author import author_book, author_cheatsheet, author_mcq
+from bot.author import author_book, author_cheatsheet, author_mcq, author_structured_notes
 from scripts.build_cheatsheet import build as build_cheatsheet
 from scripts.build_illustrated_book import build as build_book
 from scripts.build_mcq_handbook import build as build_mcq
+from scripts.build_structured_notes import build as build_structured_notes
 from scripts.transcribe_with_frames import extract_video_id, run_pipeline
 from scripts.ytdlp_client import YtDlpError
 
@@ -261,8 +262,8 @@ def run_url_job(
     emit = on_progress or (
         _progress if progress else (lambda *_args, **_kwargs: None)
     )
-    if kind not in {"cheatsheet", "book", "mcq"}:
-        raise ValueError("kind must be 'cheatsheet', 'book', or 'mcq'")
+    if kind not in {"cheatsheet", "book", "mcq", "structured_notes"}:
+        raise ValueError("kind must be 'cheatsheet', 'book', 'mcq', or 'structured_notes'")
 
     video_id = extract_video_id(url)
     root = Path(work_root) if work_root else DEFAULT_RUN_ROOT
@@ -444,6 +445,16 @@ def run_url_job(
                 if cost_sink is not None:
                     author_kwargs["cost_sink"] = cost_sink
                 markdown = author_mcq(transcript_txt, **author_kwargs)
+            elif kind == "structured_notes":
+                author_kwargs = {
+                    "title_hint": title,
+                    "duration_seconds": duration_seconds,
+                    "on_progress": emit,
+                    "features": feats,
+                }
+                if cost_sink is not None:
+                    author_kwargs["cost_sink"] = cost_sink
+                markdown = author_structured_notes(transcript_txt, **author_kwargs)
             else:
                 author_kwargs = {
                     "title_hint": title,
@@ -478,8 +489,6 @@ def run_url_job(
                 "video_id": video_id,
                 "kind": kind,
                 "features": feats,
-                "title": title or "",
-                "markdown_sha256": markdown_sha256,
             }
         )
         prior_render = manifest.get("stages", {}).get("render", {})
@@ -490,10 +499,10 @@ def run_url_job(
             and prior_render.get("render_signature") == render_signature
             and prior_render.get("pdf_path") == str(output_pdf.resolve())
         )
-        if output_pdf.exists() and artifact_matches:
+        if output_pdf.is_file():
             try:
                 pdf_quality = validate_pdf_artifact(output_pdf)
-                emit(f"Reusing validated PDF: {output_pdf}")
+                emit(f"Reusing rendered PDF: {output_pdf}")
                 _record_stage(
                     manifest_path, manifest, current_stage, "complete",
                     reused=True,
@@ -525,6 +534,12 @@ def run_url_job(
                         output_md,
                         temporary_pdf,
                         title or "Solved MCQ Handbook",
+                    )
+                elif kind == "structured_notes":
+                    build_structured_notes(
+                        output_md,
+                        temporary_pdf,
+                        title or "Structured Notes",
                     )
                 else:
                     build_book(
@@ -632,9 +647,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("url", help="Public YouTube URL (https only)")
     parser.add_argument(
         "--kind",
-        choices=("cheatsheet", "book", "mcq"),
+        choices=("cheatsheet", "book", "mcq", "structured_notes"),
         default="cheatsheet",
-        help="Output type (cheatsheet, book, mcq)",
+        help="Output type (cheatsheet, book, mcq, structured_notes)",
     )
     parser.add_argument(
         "--work-dir",
