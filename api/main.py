@@ -2045,7 +2045,6 @@ async def _run_job(job_id: str) -> None:
                 title_hint=meta["title"],
                 duration_seconds=meta["duration"],
                 on_progress=lambda m: emit(m, max(progress_state["p"], 0.72)),
-                system_override=custom_prompt_mcq,
                 cost_sink=cost_sink,
                 features=features,
             )
