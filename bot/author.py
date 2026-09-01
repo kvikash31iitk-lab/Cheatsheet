@@ -617,18 +617,26 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
     request_max_tokens = min(max_tokens, max(1200, 6800 - prompt_tokens))
 
     from bot.config import GROQ_API_KEY, GROQ_API_KEYS
-    keys_pool = list(dict.fromkeys(GROQ_API_KEYS or [GROQ_API_KEY]))
+    raw_keys = [k.strip() for k in (GROQ_API_KEYS or [GROQ_API_KEY]) if k and k.strip()]
+    # Remove duplicate keys while preserving order
+    keys_pool = list(dict.fromkeys(raw_keys))
+    if not keys_pool:
+        raise RuntimeError("No Groq API keys configured for authoring")
     from groq import Groq
     
-    primary = AUTHORING_MODEL if AUTHORING_MODEL and not AUTHORING_MODEL.startswith("gemini-") else "qwen/qwen3.8-27b"
-    fallbacks = GROQ_FALLBACK_MODELS or ("qwen/qwen3.8-27b", "qwen/qwen3.6-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b")
+    primary = AUTHORING_MODEL if AUTHORING_MODEL and not AUTHORING_MODEL.startswith("gemini-") else "llama-3.3-70b-versatile"
+    fallbacks = GROQ_FALLBACK_MODELS or ("llama-3.3-70b-versatile", "qwen-2.5-32b", "llama-3.1-8b-instant")
     models = [primary] + [m for m in fallbacks if m != primary]
     last_err = None
-    for outer_try in range(1, 4):
+    
+    for outer_try in range(1, 3):
         if outer_try > 1:
-            time.sleep(6.0 * (outer_try - 1))
+            time.sleep(3.0)
         for api_k in keys_pool:
-            client = Groq(api_key=api_k)
+            try:
+                client = Groq(api_key=api_k, timeout=90.0)
+            except Exception as e:
+                continue
             for model in models:
                 model_user = user
                 model_options = {}
@@ -638,7 +646,7 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                         "reasoning_format": "hidden",
                     }
                     request_max_tokens = min(request_max_tokens, 3500)
-                for attempt in range(1, 3):
+                for attempt in range(1, 2):
                     try:
                         resp = client.chat.completions.create(
                             model=model,
@@ -669,10 +677,14 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
                     except Exception as exc:
                         last_err = exc
                         error_text = str(exc).casefold()
-                        if any(tok in error_text for tok in ("rate limit", "429", "quota", "too large", "not_found", "does not exist", "unrecognized")):
-                            print(f"[author] groq model {model!r} rate limited or unavailable; rotating", flush=True)
+                        # If key is invalid (401/403), break model loop to advance immediately to next Groq key
+                        if any(tok in error_text for tok in ("401", "403", "invalid_api_key", "unauthorized", "permission_denied")):
+                            print(f"[author] groq key ...{api_k[-6:]} invalid or unauthorized ({exc}); rotating key immediately", flush=True)
                             break
-                        wait = 3 * attempt
+                        if any(tok in error_text for tok in ("rate limit", "429", "quota", "too large", "not_found", "does not exist", "unrecognized")):
+                            print(f"[author] groq model {model!r} rate limited or unavailable; rotating model", flush=True)
+                            break
+                        wait = 2 * attempt
                         time.sleep(wait)
     raise RuntimeError(f"All Groq fallback models and keys failed. Last error: {last_err}")
 
