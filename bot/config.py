@@ -44,12 +44,12 @@ GROQ_API_KEY = GROQ_API_KEYS[0] if GROQ_API_KEYS else ""
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 def _valid_gemini_key(k: str) -> bool:
-    return bool(k and not k.startswith("AQ."))
+    return bool(k and len(k) > 10)
 
 _raw_gemini = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
 _raw_keys = [k.strip() for k in (os.environ.get("GEMINI_API_KEYS", "") or _raw_gemini).split(",") if k.strip()]
 GEMINI_API_KEYS = [k for k in _raw_keys if _valid_gemini_key(k)]
-if not GEMINI_API_KEYS and os.environ.get("CTTS_KEY", "").startswith("AIzaSy"):
+if not GEMINI_API_KEYS and os.environ.get("CTTS_KEY", "").strip():
     GEMINI_API_KEYS = [os.environ.get("CTTS_KEY", "").strip()]
 GEMINI_API_KEY = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""
 
