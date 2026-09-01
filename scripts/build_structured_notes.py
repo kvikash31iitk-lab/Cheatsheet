@@ -202,8 +202,9 @@ def make_h1_ribbon(title: str) -> Table:
 def parse_formula_components(raw_line: str) -> tuple[str, str, str, str]:
     """Extract (label/LHS, Numerator, Denominator, TrailingEvaluation/Multiplier) from a formula line."""
     clean_f = clean_latex_math(raw_line).replace("`", "").strip()
-    clean_f = re.sub(r"^[-*+]\s*\*\*Formula[^*]*\*\*:\s*", "", clean_f, flags=re.I)
-    clean_f = re.sub(r"^\*\*Formula[^*]*\*\*:\s*", "", clean_f, flags=re.I)
+    clean_f = re.sub(r"^[-*+]\s*(?:\*\*)?(?:Formula|Equation)[^*:]*(?:\*\*)?:?\s*", "", clean_f, flags=re.I)
+    clean_f = re.sub(r"^(?:\*\*)?(?:Formula|Equation)[^*:]*(?:\*\*)?:?\s*", "", clean_f, flags=re.I)
+    clean_f = re.sub(r"^[-*+]\s*", "", clean_f).strip()
     
     label = ""
     num = ""
