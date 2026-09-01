@@ -1616,13 +1616,12 @@ def author_marathon_mcq_handbook(transcript: str, *, title_hint: Optional[str] =
                                 duration_seconds: Optional[float] = None,
                                 on_progress: ProgressFn = None,
                                 cost_sink: Optional[dict] = None) -> str:
-    """Universal multi-pass MCQ extraction engine for any video length.
+    """Universal high-speed parallel multi-pass MCQ extraction engine for any video length.
     
     Splits transcripts into strictly bounded 2-chunk (~15-18 minute) time windows.
-    Guarantees output tokens per pass never exceed 5,000 tokens (well under LLM output walls),
-    allowing 100% question extraction for videos of any duration (10 mins to 10+ hours).
+    Runs all extraction passes concurrently using thread pools across the pooled API keys.
+    Collects, deduplicates, and sequentially numbers all questions into a master solved bank.
     """
-    import math
     raw_chunks = split_transcript(transcript, 10000)
     total_chunks = len(raw_chunks)
     if total_chunks <= 1:
@@ -1631,54 +1630,74 @@ def author_marathon_mcq_handbook(transcript: str, *, title_hint: Optional[str] =
     # Strictly 2 chunks (~15-18 mins) per pass to guarantee output token headroom
     chunk_step = 2
     num_passes = math.ceil(total_chunks / chunk_step)
-
     main_title = (title_hint or "Solved MCQ Handbook & PYQ Bank").strip()
-    extracted_questions: list[str] = []
-    seen_statements: set[str] = set()
-    current_q_num = 1
 
+    if on_progress:
+        on_progress(f"Launching {num_passes} parallel MCQ extraction workers across {total_chunks} lecture chunks...")
+
+    pass_inputs = []
     for pass_idx in range(num_passes):
         start_c = pass_idx * chunk_step
         end_c = min(total_chunks, (pass_idx + 1) * chunk_step)
         pass_chunks = raw_chunks[start_c:end_c]
         combined_text = "\n\n".join(pass_chunks)
+        pass_inputs.append((pass_idx, start_c, end_c, combined_text))
 
-        if on_progress:
-            on_progress(f"Extracting MCQs Pass {pass_idx+1}/{num_passes} (chunks {start_c+1}-{end_c}/{total_chunks})...")
-
+    def _extract_single_pass(p_idx: int, s_c: int, e_c: int, text_win: str) -> dict:
         sys_prompt = MCQ_SYSTEM
         user_prompt = (
             f"COURSE TITLE: {main_title}\n"
-            f"EXTRACTION PASS {pass_idx+1} of {num_passes}\n"
+            f"EXTRACTION PASS {p_idx+1} of {num_passes}\n"
             f"INSTRUCTION: Extract EVERY SINGLE MCQ discussed in the transcript window below without skipping any question.\n\n"
-            f"RAW TRANSCRIPT CHUNKS WITH TIMESTAMPS:\n{combined_text}"
+            f"RAW TRANSCRIPT CHUNKS WITH TIMESTAMPS:\n{text_win}"
         )
-
         try:
             raw_pass = _author(sys_prompt, user_prompt, max_tokens=8192, cost_sink=cost_sink)
             cleaned_pass = strip_wrappers(raw_pass)
-            
-            # Extract individual question blocks, deduplicate, and renumber sequentially
-            q_blocks = re.split(r"(?m)^##\s+Question\s+\d+:?", cleaned_pass)
-            for q_b in q_blocks[1:]:
-                q_b_trimmed = q_b.strip()
-                if not q_b_trimmed:
-                    continue
-                
-                # Deduplicate by key problem statement snippet
-                stmt_key = q_b_trimmed[:120].lower()
-                if stmt_key in seen_statements:
-                    continue
-                seen_statements.add(stmt_key)
-
-                # Re-format heading with global sequential question number
-                lines = q_b_trimmed.splitlines()
-                title_line = lines[0].strip().lstrip(":")
-                rest = "\n".join(lines[1:])
-                extracted_questions.append(f"## Question {current_q_num}: {title_line}\n{rest}")
-                current_q_num += 1
+            return {"index": p_idx, "raw_markdown": cleaned_pass}
         except Exception as err:
-            print(f"[mcq_pass_{pass_idx+1}_error] {err}", flush=True)
+            print(f"[parallel_mcq_pass_{p_idx+1}_error] {err}", flush=True)
+            return {"index": p_idx, "raw_markdown": ""}
+
+    import concurrent.futures
+    max_w = min(6, num_passes)
+    pass_results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_w) as executor:
+        futures = {
+            executor.submit(_extract_single_pass, p_idx, s_c, e_c, text_win): p_idx
+            for (p_idx, s_c, e_c, text_win) in pass_inputs
+        }
+        for f in concurrent.futures.as_completed(futures):
+            try:
+                pass_results.append(f.result())
+            except Exception as exc:
+                print(f"[parallel_mcq_future_error] {exc}", flush=True)
+
+    pass_results.sort(key=lambda x: x["index"])
+
+    extracted_questions: list[str] = []
+    seen_statements: set[str] = set()
+    current_q_num = 1
+
+    for pr in pass_results:
+        cleaned_pass = pr["raw_markdown"]
+        if not cleaned_pass:
+            continue
+        q_blocks = re.split(r"(?m)^##\s+Question\s+\d+:?", cleaned_pass)
+        for q_b in q_blocks[1:]:
+            q_b_trimmed = q_b.strip()
+            if not q_b_trimmed:
+                continue
+            stmt_key = q_b_trimmed[:120].lower()
+            if stmt_key in seen_statements:
+                continue
+            seen_statements.add(stmt_key)
+
+            lines = q_b_trimmed.splitlines()
+            title_line = lines[0].strip().lstrip(":")
+            rest = "\n".join(lines[1:])
+            extracted_questions.append(f"## Question {current_q_num}: {title_line}\n{rest}")
+            current_q_num += 1
 
     if not extracted_questions:
         return ""
