@@ -1478,8 +1478,65 @@ def author_book(transcript_path: Path, frames_index_path: Optional[Path] = None,
     """Return exhaustive academic master handbook markdown text.
     
     Zero-loss academic book covering 100% of concepts, derivations, and worked examples.
+    For videos > 45 minutes or transcripts > 35k chars, automatically partitions into
+    macro-chapters and authors them concurrently with multi-key pool rotation.
     """
     transcript = Path(transcript_path).read_text(encoding="utf-8")
+    dur_m = (duration_seconds / 60.0) if duration_seconds else (len(transcript) / 1000.0)
+    
+    # Check if this qualifies for high-speed parallel macro-chapter execution
+    lines = transcript.splitlines()
+    if dur_m > 45.0 or len(transcript) > 40000:
+        target_chapters = min(12, max(3, int(dur_m / 40.0) if dur_m else int(len(transcript) / 45000)))
+        chunk_lines = math.ceil(len(lines) / target_chapters)
+        
+        if on_progress:
+            on_progress(f"Partitioned {dur_m:.0f}m lecture into {target_chapters} macro-chapters (parallel authoring)...")
+            
+        chapter_chunks = []
+        for i in range(0, len(lines), chunk_lines):
+            c_text = "\n".join(lines[i:i + chunk_lines]).strip()
+            if c_text:
+                chapter_chunks.append(c_text)
+                
+        base_prompt = system_override or BOOK_SYSTEM
+        full_prompt = (
+            base_prompt if system_override
+            else _compose_system_prompt(base_prompt, BOOK_FEATURE_SNIPPETS, features)
+        )
+        
+        def _author_single_chapter(chap_idx: int, total_chaps: int, text_chunk: str) -> dict:
+            u_prompt = f"""COURSE / TOPIC: {title_hint or 'Academic Master Handbook'}
+CHAPTER {chap_idx} OF {total_chaps}
+TRANSCRIPT SEGMENT:
+{text_chunk}
+
+Author Chapter {chap_idx} in full academic depth with clear worked examples, tables, definitions, and rules."""
+            res_md = _author(full_prompt, u_prompt, max_tokens=5000, cost_sink=cost_sink)
+            return {"index": chap_idx, "content": strip_wrappers(res_md)}
+            
+        import concurrent.futures
+        max_w = min(5, len(chapter_chunks))
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_w) as executor:
+            futures = {
+                executor.submit(_author_single_chapter, idx + 1, len(chapter_chunks), ch): idx + 1
+                for idx, ch in enumerate(chapter_chunks)
+            }
+            for f in concurrent.futures.as_completed(futures):
+                try:
+                    results.append(f.result())
+                except Exception as exc:
+                    print(f"[parallel_book_worker_error] {exc}", flush=True)
+                    
+        if results:
+            results.sort(key=lambda x: x["index"])
+            main_title = (title_hint or "Academic Master Handbook").strip()
+            master_md = f"# {main_title}\n\n### Comprehensive Master Lecture Handbook\n\n"
+            master_md += "\n\n---\n\n".join(r["content"] for r in results)
+            return master_md
+
+    # Single-pass execution for standard shorter videos
     if _needs_condensation() or est_tokens(transcript) > 4500:
         body = condense(transcript, on_progress=on_progress)
         body_label = "CONDENSED TRANSCRIPT (exhaustive section summaries with 100% concepts and details preserved):"
@@ -1500,14 +1557,7 @@ def author_book(transcript_path: Path, frames_index_path: Optional[Path] = None,
         base_prompt if system_override
         else _compose_system_prompt(base_prompt, BOOK_FEATURE_SNIPPETS, features)
     )
-    # Scale token output to maximum for full textbook depth
-    dur_m = (duration_seconds / 60.0) if duration_seconds else 30.0
-    if dur_m <= 20.0:
-        max_out = 8192
-    elif dur_m <= 60.0:
-        max_out = 12288
-    else:
-        max_out = 16384
+    max_out = 8192 if dur_m <= 20.0 else (12288 if dur_m <= 60.0 else 16384)
 
     raw = _author(
         full_prompt,
