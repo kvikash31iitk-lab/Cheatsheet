@@ -470,7 +470,7 @@ function GenerateForm() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               {isComplete && playlistJobId && (
                                 <a
-                                  href={`http://127.0.0.1:8000/api/playlist/download/${playlistJobId}/item/${item.key || Object.keys(manifest?.items || {}).find(k => manifest?.items[k] === item) || item.result?.video_id || ''}`}
+                                  href={`/api/playlist/download/${playlistJobId}/item/${item.key || Object.keys(manifest?.items || {}).find(k => manifest?.items[k] === item) || item.result?.video_id || ''}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   style={{
@@ -550,7 +550,7 @@ function GenerateForm() {
                   </div>
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     <a
-                      href={`http://127.0.0.1:8000/api/playlist/download/${playlistJobId}/master`}
+                      href={`/api/playlist/download/${playlistJobId}/master`}
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{
@@ -569,7 +569,7 @@ function GenerateForm() {
                       📖 Download 70-Page Master PDF
                     </a>
                     <a
-                      href={`http://127.0.0.1:8000/api/playlist/download/${playlistJobId}/zip`}
+                      href={`/api/playlist/download/${playlistJobId}/zip`}
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{
