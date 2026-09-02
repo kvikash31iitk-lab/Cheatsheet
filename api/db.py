@@ -45,17 +45,31 @@ class Base(DeclarativeBase):
     """Common declarative base."""
 
 
-# Async engine — used by FastAPI request handlers.
-async_engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+from sqlalchemy import event
+
+# Engines configured with WAL mode & busy timeout for concurrent access
+if "sqlite" in DATABASE_URL:
+    async_engine = create_async_engine(
+        DATABASE_URL, echo=False, future=True, connect_args={"timeout": 60.0}
+    )
+    sync_engine = create_engine(
+        _sync_url(DATABASE_URL), echo=False, future=True, connect_args={"timeout": 60.0}
+    )
+
+    @event.listens_for(sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=60000")
+        cursor.close()
+else:
+    async_engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+    sync_engine = create_engine(_sync_url(DATABASE_URL), echo=False, future=True)
+
 AsyncSessionLocal = async_sessionmaker(
     async_engine, class_=AsyncSession, expire_on_commit=False
 )
-
-
-# Sync engine — used by the pipeline worker thread to push progress updates.
-# Falls back to the same SQLite/Postgres file via the sync driver. We default
-# to using the standard ``sqlite3`` and ``psycopg`` drivers when sync.
-sync_engine = create_engine(_sync_url(DATABASE_URL), echo=False, future=True)
 SyncSessionLocal = sessionmaker(sync_engine, expire_on_commit=False)
 
 
