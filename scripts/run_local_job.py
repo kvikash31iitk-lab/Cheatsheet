@@ -263,8 +263,8 @@ def run_url_job(
     emit = on_progress or (
         _progress if progress else (lambda *_args, **_kwargs: None)
     )
-    if kind not in {"cheatsheet", "book", "mcq", "structured_notes"}:
-        raise ValueError("kind must be 'cheatsheet', 'book', 'mcq', or 'structured_notes'")
+    if kind not in {"cheatsheet", "cheatsheet_refined", "book", "mcq", "structured_notes"}:
+        raise ValueError("kind must be 'cheatsheet', 'cheatsheet_refined', 'book', 'mcq', or 'structured_notes'")
 
     video_id = extract_video_id(url)
     root = Path(work_root) if work_root else DEFAULT_RUN_ROOT
@@ -663,9 +663,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("url", help="Public YouTube URL (https only)")
     parser.add_argument(
         "--kind",
-        choices=("cheatsheet", "book", "mcq", "structured_notes"),
+        choices=("cheatsheet", "cheatsheet_refined", "book", "mcq", "structured_notes"),
         default="cheatsheet",
-        help="Output type (cheatsheet, book, mcq, structured_notes)",
+        help="Output type (cheatsheet, cheatsheet_refined, book, mcq, structured_notes)",
     )
     parser.add_argument(
         "--work-dir",

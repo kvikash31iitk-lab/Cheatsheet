@@ -495,8 +495,14 @@ def run_playlist_job(
     emit(f"Rendering master PDF to: {master_pdf_path}")
 
     playlist_title_final = found_title or manifest.get("playlist_title") or "Master Consolidated Cheatsheet"
-    if kind == "cheatsheet":
-
+    if kind == "cheatsheet_refined":
+        from scripts.build_cheatsheet_refined import build as build_cheatsheet_refined
+        build_cheatsheet_refined(
+            master_md_path,
+            master_pdf_path,
+            title=playlist_title_final,
+        )
+    elif kind == "cheatsheet":
         build_cheatsheet(
             master_md_path,
             master_pdf_path,

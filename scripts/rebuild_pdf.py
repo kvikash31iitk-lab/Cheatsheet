@@ -50,6 +50,9 @@ def render_md_file(md_path: Path, out_path: Path | None = None, title: str | Non
         bm.build(src=md_path, out=out_path, title=title)
     elif kind == "structured_notes":
         bsn.build(md_path=md_path, pdf_path=out_path, title=title or "Structured Notes")
+    elif kind == "cheatsheet_refined":
+        from scripts.build_cheatsheet_refined import build as build_refined
+        build_refined(md_path=md_path, pdf_path=out_path, title=title or "High-Yield Revision Cheatsheet")
     else:
         bc.build(src=md_path, out=out_path, title=title)
 
@@ -60,7 +63,7 @@ def main():
     parser = argparse.ArgumentParser(description="Rebuild PDF from Markdown")
     parser.add_argument("input", nargs="?", help="Path to input .md file")
     parser.add_argument("output", nargs="?", help="Path to output .pdf file (optional)")
-    parser.add_argument("--kind", choices=["cheatsheet", "book", "mcq", "structured_notes"], default="cheatsheet", help="Document kind")
+    parser.add_argument("--kind", choices=["cheatsheet", "cheatsheet_refined", "book", "mcq", "structured_notes"], default="cheatsheet", help="Document kind")
     parser.add_argument("--title", help="Document title for header")
     parser.add_argument("--folder", help="Batch rebuild all .md files in this directory")
 
