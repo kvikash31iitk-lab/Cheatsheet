@@ -605,9 +605,10 @@ def _strip_reasoning(md: str) -> str:
 
 TPM_LIMIT_TOKENS = 8000
 GROQ_FALLBACK_MODELS = (
-    "llama-3.3-70b-versatile",
-    "qwen-2.5-32b",
-    "llama-3.1-8b-instant",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+    "qwen/qwen3.6-27b",
 )
 
 def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
@@ -623,8 +624,8 @@ def _author_groq(system: str, user: str, *, max_tokens: int = 8000,
         raise RuntimeError("No Groq API keys configured for authoring")
     from groq import Groq
     
-    primary = AUTHORING_MODEL if AUTHORING_MODEL and not AUTHORING_MODEL.startswith("gemini-") else "llama-3.3-70b-versatile"
-    fallbacks = GROQ_FALLBACK_MODELS or ("llama-3.3-70b-versatile", "qwen-2.5-32b", "llama-3.1-8b-instant")
+    primary = AUTHORING_MODEL if AUTHORING_MODEL and not AUTHORING_MODEL.startswith("gemini-") else "openai/gpt-oss-120b"
+    fallbacks = GROQ_FALLBACK_MODELS or ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b")
     models = [primary] + [m for m in fallbacks if m != primary]
     last_err = None
     
