@@ -933,7 +933,7 @@ function GenerateForm() {
         )}
 
         {(() => {
-          if (!preview) return null;
+          if (!preview || me?.is_admin) return null;
           const freeLeft =
             kind === 'book'
               ? (me?.free_books_left ?? 0)
@@ -1003,6 +1003,7 @@ function GenerateForm() {
               if (!valid || previewLoading || !!previewError || !preview) {
                 return true;
               }
+              if (me?.is_admin) return false;
               const freeLeft =
                 kind === 'book'
                   ? (me?.free_books_left ?? 0)

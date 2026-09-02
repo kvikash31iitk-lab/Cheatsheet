@@ -210,6 +210,8 @@ async def _daily_used(s: AsyncSession, user_id: str) -> tuple[int, int]:
 
 async def _free_limits_for(s: AsyncSession, user: User) -> tuple[int, int]:
     """Per-day free quota for ``user`` — honouring admin overrides."""
+    if user.is_admin or is_admin_email(user.email):
+        return 999999, 999999
     cfg = await app_settings.get_many(
         s, ["free_cheatsheets_per_day", "free_books_per_day"]
     )
@@ -1590,6 +1592,8 @@ def _daily_used_sync(s: Any, user_id: str) -> tuple[int, int]:
 def _free_limits_for_sync(user_row: User) -> tuple[int, int]:
     """Sync equivalent of `_free_limits_for`, reading from the cached
     settings module instead of an async DB session."""
+    if user_row.is_admin or is_admin_email(user_row.email):
+        return 999999, 999999
     cheats = (
         user_row.daily_cheatsheets_override
         if user_row.daily_cheatsheets_override is not None
