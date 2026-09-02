@@ -216,19 +216,27 @@ def _clean_latex_math(text: str) -> str:
 
 
 def _ascii_safe(text: str) -> str:
+    # 1. Strip unmapped Devanagari / Indic Unicode scripts to prevent black square missing glyph boxes (■) in Helvetica
+    text = re.sub(r'[\u0900-\u097F]+', '', text)
+    # 2. Map typographic punctuation, math symbols, and unicode quotes
     replacements = {
         "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
         "\u2013": "-", "\u2014": "-", "\u2010": "-", "\u2011": "-", "\u2012": "-",
         "\u2212": "-", "\u00ad": "-", "\u2026": "...", "\u00a0": " ",
         "\u200b": "", "\u200c": "", "\u200d": "", "\ufeff": "",
         "₹": "Rs. ", "≈": "~", "≤": "<=", "≥": ">=", "≠": "!=",
+        "•": "*", "■": "-", "▪": "-", "►": ">", "✔": "[Y]", "✖": "[X]",
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
+    # Strip non-printable control characters
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
     return text
 
 
 def inline(text: str) -> str:
+    import html
+    text = html.unescape(text)  # pre-decode any existing &amp;, &lt;, &gt; to prevent double escaping
     text = _ascii_safe(text)
     text = _clean_latex_math(text)
     # Strip orphaned bold/italic markers the LLM left unclosed (e.g. lone '**')
@@ -253,7 +261,9 @@ def inline(text: str) -> str:
         text = text.replace(k, v)
     text = text.replace('→', '&rarr;').replace('←', '&larr;').replace('↔', '&harr;').replace('Δ', '&Delta;').replace('°', '&deg;')
 
-    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # Only escape bare ampersands that are NOT already valid HTML entities
+    text = re.sub(r'&(?!(?:amp|lt|gt|quot|apos|rarr|larr|harr|Delta|deg|nbsp|bull|#\d+);)', '&amp;', text)
+    text = text.replace("<", "&lt;").replace(">", "&gt;")
 
     # Multi-color tags
     text = re.sub(r"==([^=]+?)==", rf'<font color="{COLOR_AMBER}"><b>\1</b></font>', text)
@@ -325,10 +335,18 @@ def make_para(text: str, style, bulletText=None) -> Paragraph:
     raw_str = str(text)
     if not raw_str.strip():
         return Paragraph("", style, bulletText=bulletText)
+    
+    # If the text has already been formatted with ReportLab XML tags, use it directly;
+    # otherwise format it through inline().
+    if re.search(r"<(?:font|b|i|u|sup|sub|a|br)\b", raw_str, re.I) or "&#" in raw_str:
+        formatted_str = raw_str
+    else:
+        formatted_str = inline(raw_str)
+
     try:
-        return Paragraph(inline(raw_str), style, bulletText=bulletText)
+        return Paragraph(formatted_str, style, bulletText=bulletText)
     except Exception:
-        clean = re.sub(r"<[^>]+>", "", raw_str)
+        clean = re.sub(r"<[^>]+>", "", formatted_str)
         clean = clean.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         try:
             return Paragraph(clean, style, bulletText=bulletText)
@@ -452,9 +470,12 @@ def parse_blocks(md: str):
         if re.match(r"^\d+\.\s+", stripped):
             items = []
             while i < len(lines) and re.match(r"^\d+\.\s+", lines[i].strip()):
-                cleaned = _clean_list_item(re.sub(r"^\d+\.\s+", "", lines[i].strip()))
+                raw_line = lines[i]
+                indent = len(raw_line) - len(raw_line.lstrip())
+                level = 2 if indent >= 2 else 1
+                cleaned = _clean_list_item(re.sub(r"^\d+\.\s+", "", raw_line.strip()))
                 if cleaned:
-                    items.append(cleaned)
+                    items.append((level, cleaned))
                 i += 1
             if items:
                 yield ("ol", items)
@@ -463,9 +484,12 @@ def parse_blocks(md: str):
         if stripped.startswith(("- ", "* ", "+ ")):
             items = []
             while i < len(lines) and lines[i].strip().startswith(("- ", "* ", "+ ")):
-                cleaned = _clean_list_item(lines[i].strip()[2:].strip())
+                raw_line = lines[i]
+                indent = len(raw_line) - len(raw_line.lstrip())
+                level = 2 if indent >= 2 else 1
+                cleaned = _clean_list_item(raw_line.strip()[2:].strip())
                 if cleaned:
-                    items.append(cleaned)
+                    items.append((level, cleaned))
                 i += 1
             if items:
                 yield ("ul", items)
@@ -483,25 +507,17 @@ def parse_blocks(md: str):
 # --- flowable factories -----------------------------------------------------
 
 def make_image_flowable(alt: str, path: str) -> list:
-    """Render a markdown image with auto-fit width and italic caption.
-
-    Path resolution is forgiving on purpose: the BOOK_SYSTEM prompt asks the
-    LLM to write `frames/<name>.jpg`, but in practice the LLM sometimes
-    drops the `frames/` prefix and writes the bare filename, and the caller
-    may pass IMAGE_BASE as either the slot dir or the frames dir itself.
-    We try a handful of candidates so a markdown/image_base combo that
-    "looks right" still embeds the frame instead of falling to a placeholder.
-    """
+    """Render a markdown image with auto-fit width and italic caption."""
     p = Path(path)
     if p.is_absolute() and p.exists():
         chosen = p
     else:
         rel = Path(path)
-        bare = rel.name  # "frame_00-00-00.jpg" regardless of how it was written
+        bare = rel.name
         candidates = [
-            IMAGE_BASE / rel,                # IMAGE_BASE=slot/, path="frames/X.jpg" → slot/frames/X.jpg
-            IMAGE_BASE / bare,               # IMAGE_BASE=slot/frames/, path="frames/X.jpg" → slot/frames/X.jpg
-            IMAGE_BASE / "frames" / bare,    # IMAGE_BASE=slot/, path="X.jpg" → slot/frames/X.jpg
+            IMAGE_BASE / rel,
+            IMAGE_BASE / bare,
+            IMAGE_BASE / "frames" / bare,
         ]
         chosen = next((c for c in candidates if c.exists()), None)
     if chosen is None or not chosen.exists():
@@ -513,7 +529,7 @@ def make_image_flowable(alt: str, path: str) -> list:
     except Exception as exc:
         return [Paragraph(f"<i>[image error: {exc}]</i>", BODY)]
     max_w = BODY_W
-    max_h = (PAGE_H - MARGIN_T - MARGIN_B) * 0.55  # never bigger than ~55% of body height
+    max_h = (PAGE_H - MARGIN_T - MARGIN_B) * 0.55
     scale = min(max_w / iw, max_h / ih, 1.0)
     w, h = iw * scale, ih * scale
     img = Image(str(p), width=w, height=h)
@@ -537,22 +553,27 @@ def make_callout(kind: str, title: str, body_lines: list[str]) -> list:
     for kind2, payload2 in parse_blocks(pseudo):
         if kind2 == "p":
             clean_p = payload2.replace(r"\text{ Crore}", " Crore").replace(r"\text{ Cr}", " Cr").replace(r"\text{", "").replace("}", "")
-            body_paras.append(make_para(clean_p, ParagraphStyle("co_pg", parent=CO_BODY, fontSize=9.2, leading=14.0, spaceAfter=3.5, alignment=TA_LEFT)))
+            body_paras.append(make_para(clean_p, ParagraphStyle("co_pg", parent=CO_BODY, fontSize=9.2, leading=14.0, spaceAfter=3.5, alignment=TA_JUSTIFY)))
         elif kind2 == "ul":
-            for it in payload2:
+            for it_entry in payload2:
+                level, it = it_entry if isinstance(it_entry, tuple) else (1, it_entry)
                 clean_it = it.replace(r"\text{ Crore}", " Crore").replace(r"\text{ Cr}", " Cr").replace(r"\text{", "").replace("}", "")
                 m = re.match(r"^(\s*\*\*?[^*:]+\*\*?:?)(.*)$", clean_it)
                 if m:
                     styled_it = f'<b><font color="#1E3A8A">{m.group(1).strip()}</font></b>{m.group(2)}'
                 else:
                     styled_it = clean_it
-                body_paras.append(make_para(f'<font color="{spec["bar"].hexval()}">&#9646;</font>&nbsp;&nbsp;{inline(styled_it)}',
-                                            ParagraphStyle("co_lig", parent=CO_BODY, fontSize=9.2, leading=14.0, leftIndent=12, firstLineIndent=-10, spaceAfter=2.5, alignment=TA_LEFT)))
+                indent_val = 22 if level >= 2 else 12
+                bullet_sym = "&#9642;" if level >= 2 else "&#9646;"
+                body_paras.append(make_para(f'<font color="{spec["bar"].hexval()}">{bullet_sym}</font>&nbsp;&nbsp;{inline(styled_it)}',
+                                            ParagraphStyle(f"co_lig_{level}", parent=CO_BODY, fontSize=9.2, leading=14.0, leftIndent=indent_val, firstLineIndent=-10, spaceAfter=2.5, alignment=TA_JUSTIFY)))
         elif kind2 == "ol":
-            for n, it in enumerate(payload2, 1):
+            for n, it_entry in enumerate(payload2, 1):
+                level, it = it_entry if isinstance(it_entry, tuple) else (1, it_entry)
                 clean_it = it.replace(r"\text{ Crore}", " Crore").replace(r"\text{ Cr}", " Cr").replace(r"\text{", "").replace("}", "")
+                indent_val = 24 if level >= 2 else 14
                 body_paras.append(make_para(f'<b><font color="#1E3A8A">{n}.</font></b>&nbsp;&nbsp;{inline(clean_it)}',
-                                            ParagraphStyle("co_oig", parent=CO_BODY, fontSize=9.2, leading=14.0, leftIndent=14, firstLineIndent=-12, spaceAfter=2.5, alignment=TA_LEFT)))
+                                            ParagraphStyle(f"co_oig_{level}", parent=CO_BODY, fontSize=9.2, leading=14.0, leftIndent=indent_val, firstLineIndent=-12, spaceAfter=2.5, alignment=TA_JUSTIFY)))
 
     label_para = make_para(f'<b><font color="{spec["bar"].hexval()}">{label}</font></b>', 
                            ParagraphStyle("CoLabelGold", parent=CO_LABEL, fontSize=9.0, leading=11))
@@ -581,7 +602,7 @@ def make_table(header, rows):
                         fontSize=8.5, leading=11, textColor=colors.white,
                         alignment=TA_LEFT)
     td = ParagraphStyle("td_gold", parent=BODY, fontName="Helvetica",
-                        fontSize=8.0, leading=11.2, alignment=TA_LEFT)
+                        fontSize=8.0, leading=11.2, alignment=TA_JUSTIFY)
     
     if num_cols == 2:
         col_widths = [5.5 * cm, BODY_W - 5.5 * cm]
@@ -606,7 +627,7 @@ def make_table(header, rows):
             row_cells.append(make_para(c_clean, p_style))
         data.append(row_cells)
 
-    t = Table(data, colWidths=col_widths)
+    t = Table(data, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E3A8A")),
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
@@ -623,13 +644,19 @@ def make_table(header, rows):
 
 
 def make_ul(items):
-    bullet_style = ParagraphStyle(
-        "BulletGold", parent=BODY, fontName="Helvetica",
-        fontSize=9.6, leading=15.0, alignment=TA_LEFT,
-        spaceAfter=4.0, leftIndent=16, firstLineIndent=-12
+    bullet_style_l1 = ParagraphStyle(
+        "BulletGoldL1", parent=BODY, fontName="Helvetica",
+        fontSize=9.6, leading=14.6, alignment=TA_JUSTIFY,
+        spaceAfter=3.5, leftIndent=14, firstLineIndent=-10
+    )
+    bullet_style_l2 = ParagraphStyle(
+        "BulletGoldL2", parent=BODY, fontName="Helvetica",
+        fontSize=9.2, leading=13.8, alignment=TA_JUSTIFY,
+        spaceAfter=2.5, leftIndent=26, firstLineIndent=-10
     )
     out = []
-    for it in items:
+    for it_entry in items:
+        level, it = it_entry if isinstance(it_entry, tuple) else (1, it_entry)
         clean_it = it.replace(r"\text{ Crore}", " Crore").replace(r"\text{ Cr}", " Cr").replace(r"\text{", "").replace("}", "")
         m = re.match(r"^(\s*\*\*?[^*:]+\*\*?:?)(.*)$", clean_it)
         if m:
@@ -638,26 +665,53 @@ def make_ul(items):
             styled_text = f'<b><font color="#1E3A8A">{prefix}</font></b>{rest}'
         else:
             styled_text = clean_it
-        out.append(make_para(
-            f'<font color="#2563EB" size="10">&#8226;</font>&nbsp;&nbsp;{inline(styled_text)}',
-            bullet_style
-        ))
+
+        if level >= 2:
+            out.append(make_para(
+                f'<font color="#475569" size="8">&#9646;</font>&nbsp;&nbsp;{inline(styled_text)}',
+                bullet_style_l2
+            ))
+        else:
+            out.append(make_para(
+                f'<font color="#2563EB" size="10">&#8226;</font>&nbsp;&nbsp;{inline(styled_text)}',
+                bullet_style_l1
+            ))
     return out
 
 
 def make_ol(items):
-    num_style = ParagraphStyle(
-        "NumGold", parent=BODY, fontName="Helvetica",
-        fontSize=9.6, leading=15.0, alignment=TA_LEFT,
-        spaceAfter=4.0, leftIndent=18, firstLineIndent=-14
+    num_style_l1 = ParagraphStyle(
+        "NumGoldL1", parent=BODY, fontName="Helvetica",
+        fontSize=9.6, leading=14.6, alignment=TA_JUSTIFY,
+        spaceAfter=3.5, leftIndent=16, firstLineIndent=-12
+    )
+    num_style_l2 = ParagraphStyle(
+        "NumGoldL2", parent=BODY, fontName="Helvetica",
+        fontSize=9.2, leading=13.8, alignment=TA_JUSTIFY,
+        spaceAfter=2.5, leftIndent=28, firstLineIndent=-12
     )
     out = []
-    for n, it in enumerate(items, 1):
+    for n, it_entry in enumerate(items, 1):
+        level, it = it_entry if isinstance(it_entry, tuple) else (1, it_entry)
         clean_it = it.replace(r"\text{ Crore}", " Crore").replace(r"\text{ Cr}", " Cr").replace(r"\text{", "").replace("}", "")
-        out.append(make_para(
-            f'<b><font color="#1E3A8A">{n}.</font></b>&nbsp;&nbsp;{inline(clean_it)}',
-            num_style
-        ))
+        m = re.match(r"^(\s*\*\*?[^*:]+\*\*?:?)(.*)$", clean_it)
+        if m:
+            prefix = m.group(1).strip()
+            rest = m.group(2)
+            styled_text = f'<b><font color="#1E3A8A">{prefix}</font></b>{rest}'
+        else:
+            styled_text = clean_it
+
+        if level >= 2:
+            out.append(make_para(
+                f'<b><font color="#475569">{n}.</font></b>&nbsp;&nbsp;{inline(styled_text)}',
+                num_style_l2
+            ))
+        else:
+            out.append(make_para(
+                f'<b><font color="#1E3A8A">{n}.</font></b>&nbsp;&nbsp;{inline(styled_text)}',
+                num_style_l1
+            ))
     return out
 
 

@@ -135,6 +135,8 @@ def clean_latex_math(text: str) -> str:
     """Turn raw LaTeX equations into clean readable arithmetic expressions."""
     if not text:
         return ""
+    # Strip unmapped Devanagari / Indic Unicode scripts to prevent black square missing glyph boxes (■) in Helvetica
+    text = re.sub(r'[\u0900-\u097F]+', '', text)
     text = text.replace("$$", " ").replace("$", " ")
     text = re.sub(r"\\?text\{([^}]+)\}", r"\1", text)
     for _ in range(5):
@@ -154,8 +156,12 @@ def clean_inline(text: str) -> str:
     if not text:
         return ""
     
+    import html
+    text = html.unescape(text)  # pre-decode any existing &amp;, &lt;, &gt; to prevent double escaping
     text = clean_latex_math(text)
-    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # Only escape bare ampersands that are NOT already valid HTML entities
+    text = re.sub(r'&(?!(?:amp|lt|gt|quot|apos|rarr|larr|harr|Delta|deg|nbsp|bull|#\d+);)', '&amp;', text)
+    text = text.replace("<", "&lt;").replace(">", "&gt;")
 
     def bold_repl(m):
         val = m.group(1).strip()
