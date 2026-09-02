@@ -9,7 +9,7 @@ import { getLibrary, listPlaylists, retryPlaylistJob, stopPlaylistJob, type Job 
 
 
 
-type Filter = 'all' | 'cheatsheet' | 'structured_notes' | 'mcq' | 'book' | 'playlist' | 'failed';
+type Filter = 'all' | 'cheatsheet_refined' | 'cheatsheet' | 'structured_notes' | 'mcq' | 'book' | 'playlist' | 'failed';
 
 export default function LibraryPage() {
   const [items, setItems] = useState<Job[] | null>(null);
@@ -45,6 +45,7 @@ export default function LibraryPage() {
     const base = items ? items.reduce(
       (acc, j) => {
         acc.all++;
+        if (j.kind === 'cheatsheet_refined') acc.cheatsheet_refined++;
         if (j.kind === 'cheatsheet') acc.cheatsheet++;
         if (j.kind === 'structured_notes') acc.structured_notes++;
         if (j.kind === 'mcq') acc.mcq++;
@@ -53,8 +54,8 @@ export default function LibraryPage() {
         if (st === 'error' || st === 'failed') acc.failed++;
         return acc;
       },
-      { all: 0, cheatsheet: 0, structured_notes: 0, mcq: 0, book: 0, failed: 0 },
-    ) : { all: 0, cheatsheet: 0, structured_notes: 0, mcq: 0, book: 0, failed: 0 };
+      { all: 0, cheatsheet_refined: 0, cheatsheet: 0, structured_notes: 0, mcq: 0, book: 0, failed: 0 },
+    ) : { all: 0, cheatsheet_refined: 0, cheatsheet: 0, structured_notes: 0, mcq: 0, book: 0, failed: 0 };
     return base;
   }, [items]);
 
@@ -76,6 +77,7 @@ export default function LibraryPage() {
     if (!items) return [];
     const q = query.trim().toLowerCase();
     return items.filter((j) => {
+      if (filter === 'cheatsheet_refined' && j.kind !== 'cheatsheet_refined') return false;
       if (filter === 'cheatsheet' && j.kind !== 'cheatsheet') return false;
       if (filter === 'structured_notes' && j.kind !== 'structured_notes') return false;
       if (filter === 'mcq' && j.kind !== 'mcq') return false;
@@ -187,7 +189,8 @@ export default function LibraryPage() {
           {(
             [
               { l: 'All', k: 'all', n: query ? filtered.length + filteredPlaylists.length : counts.all + playlists.length },
-              { l: 'Cheatsheets', k: 'cheatsheet', n: counts.cheatsheet },
+              { l: 'Refined Cheatsheets', k: 'cheatsheet_refined', n: counts.cheatsheet_refined },
+              { l: 'Classic Cheatsheets', k: 'cheatsheet', n: counts.cheatsheet },
               { l: 'Structured Notes', k: 'structured_notes', n: counts.structured_notes },
               { l: 'MCQ Notes', k: 'mcq', n: counts.mcq },
               { l: 'Book Notes', k: 'book', n: counts.book },

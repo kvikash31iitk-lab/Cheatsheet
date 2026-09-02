@@ -30,8 +30,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from api.youtube_urls import validate_public_youtube_url
 from bot import cache as bot_cache
 from bot import config as bot_config
-from bot.author import author_book, author_cheatsheet, author_mcq, author_structured_notes
+from bot.author import author_book, author_cheatsheet, author_mcq, author_refined_cheatsheet, author_structured_notes
 from scripts.build_cheatsheet import build as build_cheatsheet
+from scripts.build_cheatsheet_refined import build as build_cheatsheet_refined
 from scripts.build_illustrated_book import build as build_book
 from scripts.build_mcq_handbook import build as build_mcq
 from scripts.build_structured_notes import build as build_structured_notes
@@ -425,7 +426,16 @@ def run_url_job(
         except RuntimeError:
             _record_stage(manifest_path, manifest, current_stage, "running")
             emit(f"Authoring {kind} notes...")
-            if kind == "cheatsheet":
+            if kind == "cheatsheet_refined":
+                author_kwargs: dict[str, Any] = {
+                    "title_hint": title,
+                    "duration_seconds": duration_seconds,
+                    "on_progress": emit,
+                }
+                if cost_sink is not None:
+                    author_kwargs["cost_sink"] = cost_sink
+                markdown = author_refined_cheatsheet(transcript_txt, **author_kwargs)
+            elif kind == "cheatsheet":
                 author_kwargs: dict[str, Any] = {
                     "title_hint": title,
                     "duration_seconds": duration_seconds,
@@ -521,7 +531,13 @@ def run_url_job(
             )
             emit(f"Rendering PDF: {output_pdf}")
             try:
-                if kind == "cheatsheet":
+                if kind == "cheatsheet_refined":
+                    build_cheatsheet_refined(
+                        output_md,
+                        temporary_pdf,
+                        title or "High-Yield Revision Cheatsheet",
+                    )
+                elif kind == "cheatsheet":
                     build_cheatsheet(
                         output_md,
                         temporary_pdf,

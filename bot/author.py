@@ -34,6 +34,43 @@ def est_tokens(text: str) -> int:
 
 # --- prompts ---------------------------------------------------------------
 
+REFINED_CHEATSHEET_SYSTEM = """You are an elite Civil Services & Competitive Examination Revision Architect.
+Your task is to convert the raw lecture transcript into an exhaustive, high-density REVISION CHEATSHEET ("Seedhi Baat No Bakwaas").
+
+### STRICT DIRECTIVES:
+1. PURE REVISION DENSITY:
+   - ZERO conversational filler, zero introductory pleasantries ("In this video...", "Welcome to...").
+   - ZERO narrative paragraphs. Everything is structured concise data bullets.
+2. 100% FACT RETENTION:
+   - Extract EVERY SINGLE key term, statutory section, article, act, ministry, formula, ratio, committee, scheme, date, number, limit, landmark case, and static background fact.
+3. BULLET ARCHITECTURE (3-Level Hierarchy):
+   - Level 1: `* **Parameter / Entity Name**: Direct concise rule, data, or fact.`
+   - Level 2: `  * **Sub-Point**: Detail / classification`
+   - Level 3: `    * **Sub-Sub-Point**: Specific nuance`
+4. DENSE 2-COLUMN FACT GRIDS:
+   - For short biographical, numerical, or key-value data (e.g., Dates, Capitals, Kings, Ratios, Thresholds), format as clean bullet lists under a parent heading so the renderer automatically packs them into 2-column space-saving grids.
+5. COMPARATIVE MATRIX TABLES:
+   - When 2 or more entities/schemes/laws are compared or share common parameters:
+     | Parameter | Entity A | Entity B | Key Exam Distinction |
+6. EXAM TRAPS & EXCEPTIONS:
+   - Use:
+     > [!warning] Exam Trap & Common Pitfall: [Exact trap to avoid in MCQs]
+
+### OUTPUT FORMAT:
+# [Main Topic Title]
+## [Section / Theme 1]
+* **[Concept/Entity]**: [Precise definition / fact]
+* **[Classification / Dimensions]**:
+  * **[Item 1]**: [Rule]
+  * **[Item 2]**: [Rule]
+| Parameter | Entity A | Entity B | Key Distinction |
+| :--- | :--- | :--- | :--- |
+> [!warning] Exam Trap: [Key exception]
+
+## [Section / Theme 2]
+...
+"""
+
 CHEATSHEET_SYSTEM = """You are an expert technical author creating an authoritative, high-yield study cheatsheet from a video transcript.
 
 TARGET DENSITY & PAGE BUDGET:
@@ -1361,6 +1398,60 @@ def author_marathon_handbook(transcript: str, *, title_hint: Optional[str] = Non
 
 
 # --- public API --------------------------------------------------------------
+
+def author_refined_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None,
+                              duration_seconds: Optional[float] = None,
+                              on_progress: ProgressFn = None,
+                              cost_sink: Optional[dict] = None) -> str:
+    """Author exhaustive, high-density Refined Revision Cheatsheet ("Seedhi Baat No Bakwaas")."""
+    transcript = Path(transcript_path).read_text(encoding="utf-8")
+    
+    dur_m = (duration_seconds / 60.0) if duration_seconds else (len(transcript) / 800.0)
+    # If video is long (> 40 mins) or large transcript (> 35K chars), use parallel macro-windows for speed & completeness
+    if dur_m >= 40.0 or len(transcript) > 35000:
+        if on_progress:
+            on_progress(f"Detected long lecture ({dur_m:.0f}m). Running parallel macro-window revision engine...")
+        import concurrent.futures
+        raw_chunks = split_transcript(transcript, 12000)
+        total_chunks = len(raw_chunks)
+        chunk_step = 3
+        num_windows = math.ceil(total_chunks / chunk_step)
+        
+        window_inputs = []
+        for w_idx in range(num_windows):
+            start_c = w_idx * chunk_step
+            end_c = min(total_chunks, (w_idx + 1) * chunk_step)
+            win_text = "\n\n".join(raw_chunks[start_c:end_c])
+            window_inputs.append((w_idx, start_c, end_c, win_text))
+            
+        def _process_win(w_idx: int, s_c: int, e_c: int, text: str) -> dict:
+            user_msg = f"COURSE TITLE: {title_hint or 'Lecture'}\nPART: {w_idx+1}/{num_windows} (Chunks {s_c+1}-{e_c})\n\nTRANSCRIPT:\n{text}\n\nINSTRUCTION: Output high-density revision markdown. 100% facts, zero fluff."
+            raw_out = _author(REFINED_CHEATSHEET_SYSTEM, user_msg, max_tokens=8000, cost_sink=cost_sink)
+            return {"index": w_idx, "content": strip_wrappers(raw_out)}
+
+        results = []
+        max_workers = min(7, num_windows)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_idx = {executor.submit(_process_win, *inp): inp[0] for inp in window_inputs}
+            for future in concurrent.futures.as_completed(future_to_idx):
+                results.append(future.result())
+                if on_progress:
+                    on_progress(f"Refined revision synthesized {len(results)}/{num_windows} sections...")
+                    
+        results.sort(key=lambda x: x["index"])
+        assembled = []
+        for r in results:
+            sec_text = re.sub(r"^#\s+.*?\n", "", r["content"].strip())
+            assembled.append(sec_text)
+            
+        return f"# {title_hint or 'High-Yield Revision Cheatsheet'}\n\n" + "\n\n---\n\n".join(assembled)
+    else:
+        if on_progress:
+            on_progress("Synthesizing high-density revision cheatsheet...")
+        user_msg = f"COURSE TITLE: {title_hint or 'Lecture'}\nDURATION: {dur_m:.0f} minutes\n\nTRANSCRIPT:\n{transcript}\n\nINSTRUCTION: Author exhaustive, high-density revision cheatsheet. 100% facts, zero fluff."
+        raw_out = _author(REFINED_CHEATSHEET_SYSTEM, user_msg, max_tokens=8000, cost_sink=cost_sink)
+        return strip_wrappers(raw_out)
+
 
 def author_cheatsheet(transcript_path: Path, *, title_hint: Optional[str] = None,
                       duration_seconds: Optional[float] = None,

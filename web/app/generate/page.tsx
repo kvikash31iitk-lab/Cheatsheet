@@ -842,14 +842,23 @@ function GenerateForm() {
         >
           Output type
         </label>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12, marginBottom: 28 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 28 }}>
+          <KindCard
+            kind="cheatsheet_refined"
+            selected={kind === 'cheatsheet_refined'}
+            onClick={() => setKind('cheatsheet_refined')}
+            icon={<Ic.zap size={16} />}
+            title="Refined Cheatsheet"
+            sub="High-density revision · 2-column grids, zero fluff & exam traps."
+            time="~30 seconds"
+          />
           <KindCard
             kind="cheatsheet"
             selected={kind === 'cheatsheet'}
             onClick={() => setKind('cheatsheet')}
             icon={<Ic.zap size={16} />}
-            title="Cheatsheet"
-            sub="Single page · key terms, formulas, structure."
+            title="Cheatsheet (Classic)"
+            sub="Standard revision · key terms, formulas, structure."
             time="~30 seconds"
           />
           <KindCard

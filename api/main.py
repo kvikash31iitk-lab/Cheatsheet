@@ -91,11 +91,12 @@ from scripts.transcribe_with_frames import (  # noqa: E402
 )
 from scripts.ytdlp_client import YtDlpError  # noqa: E402
 from scripts.build_cheatsheet import build as build_cheatsheet  # noqa: E402
+from scripts.build_cheatsheet_refined import build as build_cheatsheet_refined  # noqa: E402
 from scripts.build_illustrated_book import build as build_book  # noqa: E402
 from scripts.build_mcq_handbook import build as build_mcq  # noqa: E402
 from scripts.build_structured_notes import build as build_structured_notes  # noqa: E402
 from scripts.run_local_job import run_url_job  # noqa: E402
-from bot.author import author_book, author_cheatsheet, author_mcq, author_structured_notes  # noqa: E402
+from bot.author import author_book, author_cheatsheet, author_mcq, author_refined_cheatsheet, author_structured_notes  # noqa: E402
 from bot import cache as bot_cache  # noqa: E402
 
 from api.db import (  # noqa: E402
@@ -1090,7 +1091,7 @@ async def library(
 
 class CreateRequest(BaseModel):
     url: str = Field(..., min_length=10)
-    kind: Literal["cheatsheet", "book", "mcq", "structured_notes"]
+    kind: Literal["cheatsheet", "cheatsheet_refined", "book", "mcq", "structured_notes"]
     # Opt-in PDF enhancements. Each string is a short flag; unknown values
     # are silently dropped server-side (forward-compat with newer clients).
     # Empty list = the legacy/default PDF (no enhancements). See author.py
@@ -2027,7 +2028,16 @@ async def _run_job(job_id: str) -> None:
                     print(f"[cache] adopt failed (non-fatal): {exc}", flush=True)
 
         emit("Authoring notes", 0.72)
-        if kind == "cheatsheet":
+        if kind == "cheatsheet_refined":
+            md_text = await asyncio.to_thread(
+                author_refined_cheatsheet,
+                result["transcript_txt"],
+                title_hint=meta["title"],
+                duration_seconds=meta["duration"],
+                on_progress=lambda m: emit(m, max(progress_state["p"], 0.72)),
+                cost_sink=cost_sink,
+            )
+        elif kind == "cheatsheet":
             md_text = await asyncio.to_thread(
                 author_cheatsheet,
                 result["transcript_txt"],
@@ -2076,7 +2086,14 @@ async def _run_job(job_id: str) -> None:
 
         emit("Rendering PDF", 0.92)
         pdf_path = work / "output.pdf"
-        if kind == "cheatsheet":
+        if kind == "cheatsheet_refined":
+            await asyncio.to_thread(
+                build_cheatsheet_refined,
+                md_path,
+                pdf_path,
+                meta["title"],
+            )
+        elif kind == "cheatsheet":
             await asyncio.to_thread(
                 build_cheatsheet,
                 md_path,
