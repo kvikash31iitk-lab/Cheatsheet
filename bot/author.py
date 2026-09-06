@@ -1407,10 +1407,10 @@ def author_refined_cheatsheet(transcript_path: Path, *, title_hint: Optional[str
     transcript = Path(transcript_path).read_text(encoding="utf-8")
     
     dur_m = (duration_seconds / 60.0) if duration_seconds else (len(transcript) / 800.0)
-    # If video is long (> 40 mins) or large transcript (> 35K chars), use parallel macro-windows for speed & completeness
-    if dur_m >= 40.0 or len(transcript) > 35000:
+    # If video is substantive (>= 15 mins or > 12K chars), use parallel macro-windows for speed & completeness
+    if dur_m >= 15.0 or len(transcript) > 12000:
         if on_progress:
-            on_progress(f"Detected long lecture ({dur_m:.0f}m). Running parallel macro-window revision engine...")
+            on_progress(f"Detected substantive lecture ({dur_m:.0f}m). Running parallel macro-window revision engine...")
         import concurrent.futures
         raw_chunks = split_transcript(transcript, 12000)
         total_chunks = len(raw_chunks)
@@ -1579,8 +1579,9 @@ def author_book(transcript_path: Path, frames_index_path: Optional[Path] = None,
     
     # Check if this qualifies for high-speed parallel macro-chapter execution
     lines = transcript.splitlines()
-    if dur_m > 45.0 or len(transcript) > 40000:
-        target_chapters = min(12, max(3, int(dur_m / 40.0) if dur_m else int(len(transcript) / 45000)))
+    if dur_m >= 15.0 or len(transcript) > 12000:
+        # Dynamically scale chapters: 2-3 chapters for 15-30m, 4-6 for 30-90m, up to 14 for marathons
+        target_chapters = min(14, max(2, int(dur_m / 25.0) if dur_m else int(len(transcript) / 25000)))
         chunk_lines = math.ceil(len(lines) / target_chapters)
         
         if on_progress:
@@ -1609,7 +1610,7 @@ Author Chapter {chap_idx} in full academic depth with clear worked examples, tab
             return {"index": chap_idx, "content": strip_wrappers(res_md)}
             
         import concurrent.futures
-        max_w = min(5, len(chapter_chunks))
+        max_w = min(6, len(chapter_chunks))
         results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_w) as executor:
             futures = {
@@ -1629,7 +1630,7 @@ Author Chapter {chap_idx} in full academic depth with clear worked examples, tab
             master_md += "\n\n---\n\n".join(r["content"] for r in results)
             return master_md
 
-    # Single-pass execution for standard shorter videos
+    # Single-pass execution for very short (<15m) videos
     if _needs_condensation() or est_tokens(transcript) > 4500:
         body = condense(transcript, on_progress=on_progress)
         body_label = "CONDENSED TRANSCRIPT (exhaustive section summaries with 100% concepts and details preserved):"
