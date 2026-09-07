@@ -1118,9 +1118,9 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
                                 cost_sink.get("tokens_out", 0) + int(usage.get("candidatesTokenCount", 0))
                             )
                         return text
-                    elif resp.status_code == 400 and "tools" in payload:
-                        # Fallback without tools if endpoint does not support search grounding
-                        print(f"[author] gemini {model} returned 400 with tools, retrying without tools...", flush=True)
+                    elif (resp.status_code in (400, 429)) and "tools" in payload and any(err_tok in resp.text.casefold() for err_tok in ("tool", "search", "credit", "billing", "prepaid")):
+                        # Fallback without tools if endpoint/key lacks prepaid search grounding credits
+                        print(f"[author] gemini {model} returned {resp.status_code} with tools, retrying without tools...", flush=True)
                         p_no_tools = dict(payload)
                         p_no_tools.pop("tools", None)
                         r2 = requests.post(url, json=p_no_tools, headers=headers, timeout=120)
@@ -1128,6 +1128,15 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
                             data = r2.json()
                             text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                             if text:
+                                if cost_sink is not None:
+                                    cost_sink["authoring_model"] = model
+                                    usage = data.get("usageMetadata", {})
+                                    cost_sink["tokens_in"] = (
+                                        cost_sink.get("tokens_in", 0) + int(usage.get("promptTokenCount", 0))
+                                    )
+                                    cost_sink["tokens_out"] = (
+                                        cost_sink.get("tokens_out", 0) + int(usage.get("candidatesTokenCount", 0))
+                                    )
                                 return text
                         raise RuntimeError(f"HTTP {resp.status_code}: {resp.text}")
                     elif resp.status_code in (404, 503, 429):
@@ -2234,13 +2243,15 @@ def _audit_single_chunk(
         "3. Return the <<<VERACITY_REPORT_JSON>>> block followed by the <<<ENRICHED_MARKDOWN>>> block containing the complete audited chapter text."
     )
     chunk_cost: dict[str, int] = {}
+    search_grounding = os.getenv("GEMINI_ENABLE_SEARCH_GROUNDING", "0").lower() in ("1", "true")
+    tools = [{"google_search": {}}] if search_grounding else None
     try:
         raw = _author(
             system_prompt,
             user_msg,
             max_tokens=8000,
             cost_sink=chunk_cost,
-            tools=[{"google_search": {}}],
+            tools=tools,
         )
     except Exception as exc:
         print(f"[enrich] Error in _author on chunk {chunk_idx} ({header}): {exc}", flush=True)
