@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { AppBar } from '@/components/app-bar';
 import { Btn, Tag } from '@/components/ui';
 import { Ic } from '@/components/icons';
-import { friendlyGenerationError, getJob, rebuildPdf, type Job } from '@/lib/api';
+import { friendlyGenerationError, getJob, rebuildPdf, enrichJob, type Job, type EnrichResponse } from '@/lib/api';
 
 export default function JobPage() {
   const params = useParams<{ jobId: string }>();
@@ -147,6 +147,24 @@ function DoneView({ job }: { job: Job }) {
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildMsg, setRebuildMsg] = useState<string | null>(null);
 
+  const [enriching, setEnriching] = useState(false);
+  const [enrichData, setEnrichData] = useState<EnrichResponse | null>(null);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
+
+  const handleEnrich = async () => {
+    if (enriching) return;
+    setEnriching(true);
+    setEnrichError(null);
+    try {
+      const res = await enrichJob(job.id);
+      setEnrichData(res);
+    } catch (err: any) {
+      setEnrichError(err.message || 'Failed to run veracity check');
+    } finally {
+      setEnriching(false);
+    }
+  };
+
   const handleRebuild = async () => {
     if (rebuilding) return;
     setRebuilding(true);
@@ -178,15 +196,37 @@ function DoneView({ job }: { job: Job }) {
           justifyContent: 'space-between',
           alignItems: 'center',
           marginBottom: 24,
+          flexWrap: 'wrap',
+          gap: 12,
         }}
       >
         <div style={{ display: 'flex', gap: 8 }}>
           <Tag tone="mint">
             <Ic.check size={10} /> Generated
           </Tag>
-          <Tag tone="accent">{job.kind === 'cheatsheet' ? 'Cheatsheet' : job.kind === 'mcq' ? 'MCQ Handbook' : 'Book Notes'}</Tag>
+          <Tag tone="accent">
+            {job.kind === 'cheatsheet_refined'
+              ? 'Refined Cheatsheet'
+              : job.kind === 'cheatsheet'
+              ? 'Cheatsheet'
+              : job.kind === 'mcq'
+              ? 'MCQ Handbook'
+              : 'Book Notes'}
+          </Tag>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Btn
+            variant="secondary"
+            size="md"
+            onClick={handleEnrich}
+            disabled={enriching}
+            style={{
+              borderColor: 'var(--c-accent)',
+              color: 'var(--c-accent)',
+            }}
+          >
+            {enriching ? 'Auditing with AI Critic…' : '🔍 Fact-Check & Enrich Notes'}
+          </Btn>
           <Btn variant="secondary" size="md" onClick={handleRebuild} disabled={rebuilding}>
             {rebuilding ? 'Re-compiling...' : '⚡ Re-compile PDF'}
           </Btn>
@@ -197,6 +237,77 @@ function DoneView({ job }: { job: Job }) {
           </a>
         </div>
       </div>
+
+      {enrichError && (
+        <div style={{ padding: 12, borderRadius: 8, background: 'var(--c-error-bg)', color: 'var(--c-error)', fontSize: 13, marginBottom: 16 }}>
+          {enrichError}
+        </div>
+      )}
+
+      {enrichData && (
+        <div
+          style={{
+            background: 'rgba(217, 119, 6, 0.08)',
+            border: '1px solid var(--c-accent)',
+            borderRadius: 12,
+            padding: 20,
+            marginBottom: 24,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--c-ink)' }}>
+              ✨ Grounded Veracity & Knowledge Enrichment Audit
+            </div>
+            <a href={enrichData.enriched_pdf_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+              <Btn variant="accent" size="sm" icon={<Ic.download size={12} />}>
+                Download Enriched PDF
+              </Btn>
+            </a>
+          </div>
+
+          <div style={{ display: 'flex', gap: 16, marginBottom: 14, flexWrap: 'wrap' }}>
+            <div style={{ background: 'var(--c-surface)', padding: '6px 12px', borderRadius: 8, fontSize: 12, border: '1px solid var(--c-line)' }}>
+              🟢 <b>{enrichData.veracity_report.verified_count}</b> Facts Verified
+            </div>
+            <div style={{ background: 'var(--c-surface)', padding: '6px 12px', borderRadius: 8, fontSize: 12, border: '1px solid var(--c-line)' }}>
+              🟡 <b>{enrichData.veracity_report.corrections.length}</b> Lecturer Slips Corrected
+            </div>
+            <div style={{ background: 'var(--c-surface)', padding: '6px 12px', borderRadius: 8, fontSize: 12, border: '1px solid var(--c-line)' }}>
+              💡 <b>{enrichData.veracity_report.enrichments.length}</b> Static Links Added
+            </div>
+          </div>
+
+          {enrichData.veracity_report.corrections.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-ink-2)', marginBottom: 4 }}>
+                ⚠️ Corrections & Exam Traps Resolved:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: 'var(--c-ink-2)', lineHeight: 1.5 }}>
+                {enrichData.veracity_report.corrections.map((c, i) => (
+                  <li key={i}>
+                    <b>[{c.topic}]</b> Spoken: <i>"{c.spoken_claim}"</i> → <b>Corrected:</b> {c.corrected_fact} ({c.reason})
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {enrichData.veracity_report.enrichments.length > 0 && (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-ink-2)', marginBottom: 4 }}>
+                📌 High-Yield Static Enrichments:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: 'var(--c-ink-2)', lineHeight: 1.5 }}>
+                {enrichData.veracity_report.enrichments.map((e, i) => (
+                  <li key={i}>
+                    <b>[{e.topic}]</b> {e.added_point} <i>({e.context})</i>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
       {rebuildMsg && (
         <div style={{ fontSize: 12, color: 'var(--c-accent)', marginBottom: 12, textAlign: 'right' }}>
           {rebuildMsg}

@@ -96,7 +96,14 @@ from scripts.build_illustrated_book import build as build_book  # noqa: E402
 from scripts.build_mcq_handbook import build as build_mcq  # noqa: E402
 from scripts.build_structured_notes import build as build_structured_notes  # noqa: E402
 from scripts.run_local_job import run_url_job  # noqa: E402
-from bot.author import author_book, author_cheatsheet, author_mcq, author_refined_cheatsheet, author_structured_notes  # noqa: E402
+from bot.author import (  # noqa: E402
+    author_book,
+    author_cheatsheet,
+    author_mcq,
+    author_refined_cheatsheet,
+    author_structured_notes,
+    enrich_and_verify_notes,
+)
 from bot import cache as bot_cache  # noqa: E402
 
 from api.db import (  # noqa: E402
@@ -1482,6 +1489,99 @@ async def get_pdf(
     safe = safe.strip()[:80] or "cheatsheet"
     return FileResponse(
         gen.pdf_path, media_type="application/pdf", filename=f"{safe}.pdf"
+    )
+
+
+@app.post("/api/jobs/{job_id}/enrich")
+async def enrich_job(
+    job_id: str,
+    user: User = Depends(current_user),
+    s: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Trial Grounded Veracity & Knowledge Enrichment Pass (NotebookLM Critic)."""
+    result = await s.execute(select(Generation).where(Generation.id == job_id))
+    gen = result.scalar_one_or_none()
+    if not gen:
+        raise HTTPException(404, "Job not found")
+    if gen.user_id != user.id and not user.is_admin:
+        raise HTTPException(403, "Not your job")
+
+    # Locate work directory
+    work_dir = WORK_ROOT / job_id
+    if not work_dir.exists():
+        work_dir = WORK_ROOT / "new" / job_id
+    if not work_dir.exists():
+        raise HTTPException(404, "Job work directory not found")
+
+    md_path = work_dir / "output.md"
+    if not md_path.is_file():
+        raise HTTPException(404, "Original markdown output not found")
+
+    md_text = md_path.read_text(encoding="utf-8")
+    tr_path = work_dir / "transcript.txt"
+    tr_text = tr_path.read_text(encoding="utf-8") if tr_path.is_file() else ""
+
+    # Run veracity & enrichment critic
+    cost_sink: dict[str, int] = {"tokens_in": 0, "tokens_out": 0}
+    enrich_result = await asyncio.to_thread(
+        enrich_and_verify_notes, md_text, tr_text, cost_sink
+    )
+
+    enriched_md_text = enrich_result.get("enriched_markdown", md_text)
+    veracity_report = enrich_result.get("veracity_report", {})
+
+    # Save enriched outputs
+    enriched_md_path = work_dir / "output_enriched.md"
+    enriched_md_path.write_text(enriched_md_text, encoding="utf-8")
+
+    report_path = work_dir / "veracity_report.json"
+    report_path.write_text(json.dumps(veracity_report, indent=2), encoding="utf-8")
+
+    enriched_pdf_path = work_dir / "output_enriched.pdf"
+    title = gen.title or "High-Yield Enriched Notes"
+    await asyncio.to_thread(
+        build_cheatsheet_refined,
+        enriched_md_path,
+        enriched_pdf_path,
+        title,
+    )
+
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "enriched_pdf_url": f"/api/files/{job_id}/enriched_pdf",
+        "veracity_report": veracity_report,
+    }
+
+
+@app.get("/api/files/{job_id}/enriched_pdf")
+async def get_enriched_pdf(
+    job_id: str,
+    user: User = Depends(current_user),
+    s: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    """Serve the trial enriched & verified PDF."""
+    result = await s.execute(select(Generation).where(Generation.id == job_id))
+    gen = result.scalar_one_or_none()
+    if not gen:
+        raise HTTPException(404, "Job not found")
+    if gen.user_id != user.id and not user.is_admin:
+        raise HTTPException(403, "Not your job")
+
+    work_dir = WORK_ROOT / job_id
+    if not work_dir.exists():
+        work_dir = WORK_ROOT / "new" / job_id
+    pdf_path = work_dir / "output_enriched.pdf"
+
+    if not pdf_path.is_file():
+        raise HTTPException(404, "Enriched PDF not generated yet")
+
+    safe = "".join(c if c.isalnum() or c in " ._-" else "_" for c in (gen.title or ""))
+    safe = safe.strip()[:80] or "enriched_notes"
+    return FileResponse(
+        str(pdf_path),
+        media_type="application/pdf",
+        filename=f"{safe}_Enriched_Verified.pdf",
     )
 
 

@@ -224,6 +224,28 @@ export async function createNewEngineJob(url: string): Promise<{ id: string }> {
   return r.json();
 }
 
+export type VeracityReport = {
+  verified_count: number;
+  corrections: { topic: string; spoken_claim: string; corrected_fact: string; reason: string }[];
+  enrichments: { topic: string; added_point: string; context: string }[];
+};
+
+export type EnrichResponse = {
+  ok: boolean;
+  job_id: string;
+  enriched_pdf_url: string;
+  veracity_report: VeracityReport;
+};
+
+export async function enrichJob(id: string): Promise<EnrichResponse> {
+  const r = await fetch(`/api/jobs/${id}/enrich`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+  });
+  if (!r.ok) throw new Error(await apiErrorMessage(r, 'Could not run veracity and knowledge enrichment pass.'));
+  return r.json();
+}
+
 export async function getJob(id: string): Promise<Job> {
   const r = await fetch(`/api/jobs/${id}`);
   if (!r.ok) throw new Error(await apiErrorMessage(r, 'Could not load generation.'));
