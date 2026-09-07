@@ -2282,8 +2282,11 @@ def _audit_single_chunk(
     }
     m_rep = re.search(r"<<<VERACITY_REPORT_JSON>>>([\s\S]*?)<<<END_VERACITY_REPORT>>>", cleaned)
     if m_rep:
+        rep_raw = m_rep.group(1).strip()
+        rep_raw = re.sub(r"^```(?:json)?\s*", "", rep_raw)
+        rep_raw = re.sub(r"\s*```$", "", rep_raw).strip()
         try:
-            parsed_rep = json.loads(m_rep.group(1).strip())
+            parsed_rep = json.loads(rep_raw)
             if isinstance(parsed_rep, dict):
                 report = parsed_rep
         except Exception as e:

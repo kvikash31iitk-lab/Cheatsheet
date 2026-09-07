@@ -57,6 +57,10 @@ def main():
     out_md.write_text(enriched_md, encoding="utf-8")
     print(f"\nSaved Enriched Markdown to: {out_md}")
 
+    rep_file = out_md.parent / "veracity_report.json"
+    rep_file.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"Saved Veracity Report JSON to: {rep_file}")
+
     if args.out_pdf:
         out_pdf = Path(args.out_pdf)
         build_cheatsheet_refined(out_md, out_pdf, title=out_md.stem.replace("_", " ").title())
