@@ -235,6 +235,13 @@ function DoneView({ job }: { job: Job }) {
               Download PDF
             </Btn>
           </a>
+          {job.status.enriched_pdf_url && !enrichData && (
+            <a href={job.status.enriched_pdf_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+              <Btn variant="accent" size="md" icon={<Ic.download size={13} />}>
+                ✨ Download Enriched PDF
+              </Btn>
+            </a>
+          )}
         </div>
       </div>
 

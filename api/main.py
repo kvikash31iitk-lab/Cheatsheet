@@ -1650,9 +1650,17 @@ def _serialize(gen: Generation) -> dict[str, Any]:
     }
     st = (gen.status or "").lower()
     if st in ("done", "completed", "complete", "success"):
+        enriched_url = None
+        work_dir = WORK_ROOT / gen.id
+        if not work_dir.exists():
+            work_dir = WORK_ROOT / "new" / gen.id
+        if (work_dir / "output_enriched.pdf").is_file():
+            enriched_url = f"/api/files/{gen.id}/enriched_pdf"
+
         base["status"] = {
             "state": "done",
             "pdf_url": f"/api/files/{gen.id}/pdf",
+            "enriched_pdf_url": enriched_url,
             "markdown": gen.markdown or "",
             "meta": base["meta"] or {},
         }

@@ -15,7 +15,7 @@ export type FeatureFlag =
 export type JobStatus =
   | { state: 'queued'; position?: number }
   | { state: 'running'; step: string; progress: number }
-  | { state: 'done'; pdf_url: string; markdown: string; meta: JobMeta }
+  | { state: 'done'; pdf_url: string; enriched_pdf_url?: string | null; markdown: string; meta: JobMeta }
   | { state: 'error'; message: string };
 
 export type JobMeta = {
@@ -238,7 +238,7 @@ export type EnrichResponse = {
 };
 
 export async function enrichJob(id: string): Promise<EnrichResponse> {
-  const maxAttempts = 60;
+  const maxAttempts = 200; // 200 * 1.5s = 300s (5 minutes for 13-hour marathons)
   for (let i = 0; i < maxAttempts; i++) {
     const r = await fetch(`/api/jobs/${id}/enrich`, {
       method: 'POST',
