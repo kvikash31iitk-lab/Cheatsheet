@@ -1043,7 +1043,8 @@ def _author_codex_cli(system: str, user: str, *, max_tokens: int = 8000,
 
 def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
                    cost_sink: Optional[dict] = None,
-                   tools: Optional[list] = None) -> str:
+                   tools: Optional[list] = None,
+                   key_offset: int = 0) -> str:
     """Invoke the Gemini API directly via HTTP request with currently active production models.
 
     Active production cascade:
@@ -1073,6 +1074,11 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
     keys_to_try = [k.strip() for k in (GEMINI_API_KEYS or [GEMINI_API_KEY]) if k and k.strip()]
     if not keys_to_try:
         raise RuntimeError("No Gemini API keys configured for authoring")
+
+    # Distribute parallel workers across the API key pool so each worker starts on a distinct key
+    if key_offset and len(keys_to_try) > 1:
+        start_idx = key_offset % len(keys_to_try)
+        keys_to_try = keys_to_try[start_idx:] + keys_to_try[:start_idx]
 
 
     last_err = None
@@ -1150,7 +1156,8 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
                     
                     # Fall over immediately to next model or next API key for rate limits, blocked keys, or unavailable errors
                     if any(err_token in error_msg for err_token in ("403", "404", "503", "429", "permission_denied", "api_key_service_blocked", "resource_exhausted", "quota", "not found", "unavailable")):
-                        print(f"[author] gemini {model} (key ...{api_key[-6:]}) rate limited or blocked ({exc}); rotating key/model immediately", flush=True)
+                        print(f"[author] gemini {model} (key ...{api_key[-6:]}) rate limited ({exc}); rotating key/model", flush=True)
+                        time.sleep(0.5)
                         break
                         
                     wait = 3 * attempt
@@ -1167,7 +1174,8 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
 
 def _author(system: str, user: str, *, max_tokens: int = 8000,
             cost_sink: Optional[dict] = None,
-            tools: Optional[list] = None) -> str:
+            tools: Optional[list] = None,
+            key_offset: int = 0) -> str:
     """Dispatch to the configured authoring provider with seamless auto-fallback."""
     from bot.config import GEMINI_API_KEY, GEMINI_API_KEYS, GROQ_API_KEY
 
@@ -1180,13 +1188,13 @@ def _author(system: str, user: str, *, max_tokens: int = 8000,
                 if cost_sink is not None:
                     cost_sink["fallback_used"] = "gemini"
                     cost_sink["fallback_reason"] = "groq_rate_limit"
-                return _author_gemini(system, user, max_tokens=max_tokens, cost_sink=cost_sink, tools=tools)
+                return _author_gemini(system, user, max_tokens=max_tokens, cost_sink=cost_sink, tools=tools, key_offset=key_offset)
             raise
 
     if AUTHORING_PROVIDER == "gemini":
         try:
             return _author_gemini(
-                system, user, max_tokens=max_tokens, cost_sink=cost_sink, tools=tools
+                system, user, max_tokens=max_tokens, cost_sink=cost_sink, tools=tools, key_offset=key_offset
             )
         except Exception as exc:
             if GROQ_API_KEY:
@@ -2080,7 +2088,7 @@ You MUST output your response in this EXACT structured layout:
 VERACITY_ENRICHMENT_SYSTEM = VERACITY_ENRICHMENT_SYSTEM_MARKED
 
 
-def split_markdown_sections(markdown: str, max_chars: int = 16000) -> tuple[str, list[dict]]:
+def split_markdown_sections(markdown: str, max_chars: int = 22000) -> tuple[str, list[dict]]:
     """Split a markdown document into preamble and chapter chunks of <= max_chars.
 
     Preserves code fences, tables, callouts, and heading structures intact.
@@ -2198,8 +2206,8 @@ def split_markdown_sections(markdown: str, max_chars: int = 16000) -> tuple[str,
 
     for unit in atomic_units:
         u_len = len(unit["text"])
-        # If adding this unit exceeds max_chars, or if current section is substantial (>= 3000 chars)
-        if c_cur and (c_len + u_len > max_chars or (c_len >= 3000 and u_len >= 3000)):
+        # Group adjacent units up to max_chars boundary
+        if c_cur and (c_len + u_len > max_chars):
             chunks.append({
                 "index": idx,
                 "header": c_hdr,
@@ -2253,6 +2261,7 @@ def _audit_single_chunk(
             max_tokens=8000,
             cost_sink=chunk_cost,
             tools=tools,
+            key_offset=chunk_idx,
         )
     except Exception as exc:
         print(f"[enrich] Error in _author on chunk {chunk_idx} ({header}): {exc}", flush=True)
@@ -2322,7 +2331,7 @@ def enrich_and_verify_notes(
     else:
         sys_prompt = VERACITY_ENRICHMENT_SYSTEM_MARKED
 
-    preamble, chunks = split_markdown_sections(markdown, max_chars=16000)
+    preamble, chunks = split_markdown_sections(markdown, max_chars=22000)
     print(f"[enrich] Document split into {len(chunks)} chapters (preamble: {len(preamble)} chars). Style: {style}", flush=True)
 
     # If single small chunk, execute directly
@@ -2346,8 +2355,8 @@ def enrich_and_verify_notes(
             "enriched_markdown": full_md,
         }
 
-    # Parallel chunk processing across the multi-key pool
-    max_workers = min(8, len(chunks))
+    # Parallel chunk processing across the multi-key pool (staggered keys)
+    max_workers = min(5, len(chunks))
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
