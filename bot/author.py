@@ -1058,10 +1058,10 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
     
     # Active production endpoints only to guarantee 0% 404 rate
     active_models = [
-        "gemini-3.7-flash",
         "gemini-3.6-flash",
         "gemini-3.5-flash-lite",
         "gemini-3.5-flash",
+        "gemini-3.7-flash",
     ]
     
     models_to_try = []
