@@ -148,15 +148,16 @@ function DoneView({ job }: { job: Job }) {
   const [rebuildMsg, setRebuildMsg] = useState<string | null>(null);
 
   const [enriching, setEnriching] = useState(false);
+  const [enrichStyle, setEnrichStyle] = useState<'marked' | 'blended'>('marked');
   const [enrichData, setEnrichData] = useState<EnrichResponse | null>(null);
   const [enrichError, setEnrichError] = useState<string | null>(null);
 
-  const handleEnrich = async () => {
+  const handleEnrich = async (forceRerun: boolean = false) => {
     if (enriching) return;
     setEnriching(true);
     setEnrichError(null);
     try {
-      const res = await enrichJob(job.id);
+      const res = await enrichJob(job.id, enrichStyle, forceRerun);
       setEnrichData(res);
     } catch (err: any) {
       setEnrichError(err.message || 'Failed to run veracity check');
@@ -215,18 +216,40 @@ function DoneView({ job }: { job: Job }) {
           </Tag>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Btn
-            variant="secondary"
-            size="md"
-            onClick={handleEnrich}
-            disabled={enriching}
-            style={{
-              borderColor: 'var(--c-accent)',
-              color: 'var(--c-accent)',
-            }}
-          >
-            {enriching ? 'Auditing with AI Critic…' : '🔍 Fact-Check & Enrich Notes'}
-          </Btn>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <select
+              value={enrichStyle}
+              onChange={(e) => setEnrichStyle(e.target.value as 'marked' | 'blended')}
+              disabled={enriching}
+              style={{
+                background: 'var(--c-surface)',
+                border: '1px solid var(--c-line)',
+                color: 'var(--c-ink)',
+                borderRadius: 6,
+                padding: '6px 8px',
+                fontSize: 12,
+                fontWeight: 500,
+                outline: 'none',
+                cursor: enriching ? 'not-allowed' : 'pointer',
+              }}
+              title="Select Enrichment Mode"
+            >
+              <option value="marked">Style 1: Visually Marked (Default)</option>
+              <option value="blended">Style 2: Completely Blended</option>
+            </select>
+            <Btn
+              variant="secondary"
+              size="md"
+              onClick={() => handleEnrich(enrichData !== null)}
+              disabled={enriching}
+              style={{
+                borderColor: 'var(--c-accent)',
+                color: 'var(--c-accent)',
+              }}
+            >
+              {enriching ? 'Auditing with AI Critic…' : '🔍 Fact-Check & Enrich'}
+            </Btn>
+          </div>
           <Btn variant="secondary" size="md" onClick={handleRebuild} disabled={rebuilding}>
             {rebuilding ? 'Re-compiling...' : '⚡ Re-compile PDF'}
           </Btn>
@@ -263,7 +286,7 @@ function DoneView({ job }: { job: Job }) {
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
             <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--c-ink)' }}>
-              ✨ Grounded Veracity & Knowledge Enrichment Audit
+              ✨ Grounded Veracity & Knowledge Enrichment Audit ({enrichData.style === 'blended' ? 'Style 2: Completely Blended' : 'Style 1: Visually Marked'})
             </div>
             <a href={enrichData.enriched_pdf_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
               <Btn variant="accent" size="sm" icon={<Ic.download size={12} />}>

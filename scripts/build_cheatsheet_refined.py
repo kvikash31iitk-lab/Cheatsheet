@@ -225,8 +225,11 @@ def clean_inline(text: str) -> str:
         # Clean any nested italic markdown inside bold
         inner = re.sub(r"\*([^*]+)\*", r"<i>\1</i>", inner)
         
+        # High-Yield Links
+        if re.search(r"\b(high-yield link|syllabus link|exam link)\b", inner, re.I):
+            return f'<font color="{ACCENT_BLUE.hexval()}"><b>{inner}</b></font>'
         # Traps / Warnings
-        if re.search(r"\b(prohibit|forbidden|illegal|penalty|fine|disqualif|void|offence|breach|trap|warning|danger)\b", inner, re.I):
+        elif re.search(r"\b(prohibit|forbidden|illegal|penalty|fine|disqualif|void|offence|breach|trap|warning|danger)\b", inner, re.I):
             return f'<font color="{RED_TRAP.hexval()}"><b>{inner}</b></font>'
         # Core sections / Articles / Acts / Ministries / Bodies / Dynasties
         elif re.search(r"\b(section|sec\.|article|art\.|act|code|ministry|commission|tribunal|committee|treaty|convention|scheme|mission|portal|index|report|dynasty|king|emperor|council)\b", inner, re.I):
@@ -446,12 +449,21 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
         # Callouts (> [!warning] or > [!def])
         if line.startswith("> [!"):
             m = re.match(r"^>\s*\[!(\w+)\]\s*(.*)$", line)
-            c_label = m.group(2) if m else "EXAM TRAP & KEY EXCEPTION"
+            c_label = m.group(2).strip() if m else "EXAM TRAP & KEY EXCEPTION"
             c_body = []
             i += 1
             while i < len(lines) and lines[i].strip().startswith(">"):
                 c_body.append(lines[i].strip().lstrip(">").strip())
                 i += 1
+            
+            if not c_body:
+                if ":" in c_label:
+                    c_parts = c_label.split(":", 1)
+                    c_label = c_parts[0].strip()
+                    c_body = [c_parts[1].strip()]
+                else:
+                    c_body = [c_label]
+                    c_label = "EXAM TRAP / KEY EXCEPTION"
             story.append(make_callout_box(c_label, " ".join(c_body), "warning"))
             story.append(Spacer(1, 1.8))
             continue
@@ -470,25 +482,27 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
             continue
             
         # Bullets & Intelligent 2-Column Grid Detection
-        if line.startswith(("- ", "* ", "+ ")):
-            raw_line = lines[i]
-            indent = len(raw_line) - len(raw_line.lstrip())
-            
-            # Check if this is a parent bullet followed by a series of sub-bullets
-            b_text = re.sub(r"^[-*+]\s+", "", line)
-            
+        bullet_prefixes = ("- ", "* ", "+ ", "• ", "▪ ", "▫ ")
+        if line.startswith(bullet_prefixes):
             # Collect consecutive bullet block
             bullet_group = []
-            while i < len(lines) and lines[i].strip().startswith(("- ", "* ", "+ ")):
+            while i < len(lines) and lines[i].strip().startswith(bullet_prefixes):
                 curr_raw = lines[i]
+                curr_strip = lines[i].strip()
                 curr_indent = len(curr_raw) - len(curr_raw.lstrip())
-                if curr_indent >= 4:
+                if curr_strip.startswith("▫ "):
+                    lvl = 3
+                elif curr_strip.startswith("▪ "):
+                    lvl = 2
+                elif curr_strip.startswith("• "):
+                    lvl = 1
+                elif curr_indent >= 4:
                     lvl = 3
                 elif curr_indent >= 2:
                     lvl = 2
                 else:
                     lvl = 1
-                curr_text = re.sub(r"^[-*+]\s+", "", lines[i].strip())
+                curr_text = re.sub(r"^([•▪▫\-\*\+]|\- \[[ xX]\])\s*", "", curr_strip)
                 bullet_group.append((lvl, curr_text))
                 i += 1
                 

@@ -17,6 +17,12 @@ def main():
     parser = argparse.ArgumentParser(description="Enrich and verify markdown notes")
     parser.add_argument("--input", required=True, help="Path to input markdown file")
     parser.add_argument("--transcript", default="", help="Optional path to raw transcript text")
+    parser.add_argument(
+        "--style",
+        choices=["marked", "blended"],
+        default="marked",
+        help="Enrichment style: 'marked' (default: tags, callouts, and high-yield links) or 'blended' (seamless textbook weave)",
+    )
     parser.add_argument("--out-md", default=None, help="Path for output enriched markdown")
     parser.add_argument("--out-pdf", default=None, help="Path for output enriched PDF")
     args = parser.parse_args()
@@ -29,8 +35,8 @@ def main():
     md_text = in_path.read_text(encoding="utf-8")
     tr_text = Path(args.transcript).read_text(encoding="utf-8") if args.transcript and Path(args.transcript).is_file() else ""
 
-    print(f"Running Veracity & Knowledge Enrichment Pass on {in_path.name}...")
-    res = enrich_and_verify_notes(md_text, tr_text)
+    print(f"Running Veracity & Knowledge Enrichment Pass on {in_path.name} (Style: {args.style})...")
+    res = enrich_and_verify_notes(md_text, tr_text, style=args.style)
 
     report = res.get("veracity_report", {})
     enriched_md = res.get("enriched_markdown", md_text)

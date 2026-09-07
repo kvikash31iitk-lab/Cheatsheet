@@ -233,14 +233,23 @@ export type VeracityReport = {
 export type EnrichResponse = {
   ok: boolean;
   job_id: string;
+  style?: 'marked' | 'blended';
   enriched_pdf_url: string;
   veracity_report: VeracityReport;
 };
 
-export async function enrichJob(id: string): Promise<EnrichResponse> {
+export async function enrichJob(
+  id: string,
+  style: 'marked' | 'blended' = 'marked',
+  force: boolean = false,
+): Promise<EnrichResponse> {
   const maxAttempts = 200; // 200 * 1.5s = 300s (5 minutes for 13-hour marathons)
   for (let i = 0; i < maxAttempts; i++) {
-    const r = await fetch(`/api/jobs/${id}/enrich`, {
+    const query = new URLSearchParams({ style });
+    if (force && i === 0) {
+      query.set('force', 'true');
+    }
+    const r = await fetch(`/api/jobs/${id}/enrich?${query.toString()}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
     });

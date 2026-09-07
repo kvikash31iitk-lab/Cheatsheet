@@ -1495,7 +1495,7 @@ async def get_pdf(
 _ENRICHING_JOBS: set[str] = set()
 
 
-async def _bg_run_enrichment(job_id: str, work_dir: Path, title: str):
+async def _bg_run_enrichment(job_id: str, work_dir: Path, title: str, style: str = "marked"):
     """Background execution of veracity and enrichment pass to prevent proxy timeouts."""
     try:
         md_path = work_dir / "output.md"
@@ -1507,7 +1507,7 @@ async def _bg_run_enrichment(job_id: str, work_dir: Path, title: str):
 
         cost_sink: dict[str, int] = {"tokens_in": 0, "tokens_out": 0}
         enrich_result = await asyncio.to_thread(
-            enrich_and_verify_notes, md_text, tr_text, cost_sink
+            enrich_and_verify_notes, md_text, tr_text, style, cost_sink
         )
 
         enriched_md_text = enrich_result.get("enriched_markdown", md_text)
@@ -1518,6 +1518,9 @@ async def _bg_run_enrichment(job_id: str, work_dir: Path, title: str):
 
         report_path = work_dir / "veracity_report.json"
         report_path.write_text(json.dumps(veracity_report, indent=2), encoding="utf-8")
+
+        style_path = work_dir / "enrichment_style.txt"
+        style_path.write_text(style, encoding="utf-8")
 
         enriched_pdf_path = work_dir / "output_enriched.pdf"
         await asyncio.to_thread(
@@ -1535,6 +1538,8 @@ async def _bg_run_enrichment(job_id: str, work_dir: Path, title: str):
 @app.post("/api/jobs/{job_id}/enrich")
 async def enrich_job(
     job_id: str,
+    style: str = "marked",
+    force: bool = False,
     user: User = Depends(current_user),
     s: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -1559,13 +1564,17 @@ async def enrich_job(
 
     report_path = work_dir / "veracity_report.json"
     enriched_pdf_path = work_dir / "output_enriched.pdf"
-    if report_path.is_file() and enriched_pdf_path.is_file():
+    style_path = work_dir / "enrichment_style.txt"
+    cached_style = style_path.read_text(encoding="utf-8").strip() if style_path.is_file() else "marked"
+
+    if not force and cached_style == style and report_path.is_file() and enriched_pdf_path.is_file():
         try:
             veracity_report = json.loads(report_path.read_text(encoding="utf-8"))
             return {
                 "ok": True,
                 "status": "done",
                 "job_id": job_id,
+                "style": cached_style,
                 "enriched_pdf_url": f"/api/files/{job_id}/enriched_pdf",
                 "veracity_report": veracity_report,
             }
@@ -1577,14 +1586,16 @@ async def enrich_job(
             "ok": True,
             "status": "running",
             "job_id": job_id,
+            "style": style,
         }
 
     _ENRICHING_JOBS.add(job_id)
-    asyncio.create_task(_bg_run_enrichment(job_id, work_dir, gen.title or ""))
+    asyncio.create_task(_bg_run_enrichment(job_id, work_dir, gen.title or "", style=style))
     return {
         "ok": True,
-        "status": "running",
+        "status": "started",
         "job_id": job_id,
+        "style": style,
     }
 
 

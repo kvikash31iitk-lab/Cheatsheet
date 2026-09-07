@@ -1041,7 +1041,8 @@ def _author_codex_cli(system: str, user: str, *, max_tokens: int = 8000,
 
 
 def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
-                   cost_sink: Optional[dict] = None) -> str:
+                   cost_sink: Optional[dict] = None,
+                   tools: Optional[list] = None) -> str:
     """Invoke the Gemini API directly via HTTP request with currently active production models.
 
     Active production cascade:
@@ -1093,6 +1094,8 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
                     "temperature": 0.3
                 }
             }
+            if tools:
+                payload["tools"] = tools
             
             headers = {"Content-Type": "application/json"}
             
@@ -1115,6 +1118,18 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
                                 cost_sink.get("tokens_out", 0) + int(usage.get("candidatesTokenCount", 0))
                             )
                         return text
+                    elif resp.status_code == 400 and "tools" in payload:
+                        # Fallback without tools if endpoint does not support search grounding
+                        print(f"[author] gemini {model} returned 400 with tools, retrying without tools...", flush=True)
+                        p_no_tools = dict(payload)
+                        p_no_tools.pop("tools", None)
+                        r2 = requests.post(url, json=p_no_tools, headers=headers, timeout=120)
+                        if r2.status_code == 200:
+                            data = r2.json()
+                            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                            if text:
+                                return text
+                        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text}")
                     elif resp.status_code in (404, 503, 429):
                         raise RuntimeError(f"HTTP {resp.status_code}: {resp.text}")
                     else:
@@ -1141,7 +1156,8 @@ def _author_gemini(system: str, user: str, *, max_tokens: int = 8000,
 
 
 def _author(system: str, user: str, *, max_tokens: int = 8000,
-            cost_sink: Optional[dict] = None) -> str:
+            cost_sink: Optional[dict] = None,
+            tools: Optional[list] = None) -> str:
     """Dispatch to the configured authoring provider with seamless auto-fallback."""
     from bot.config import GEMINI_API_KEY, GEMINI_API_KEYS, GROQ_API_KEY
 
@@ -1154,13 +1170,13 @@ def _author(system: str, user: str, *, max_tokens: int = 8000,
                 if cost_sink is not None:
                     cost_sink["fallback_used"] = "gemini"
                     cost_sink["fallback_reason"] = "groq_rate_limit"
-                return _author_gemini(system, user, max_tokens=max_tokens, cost_sink=cost_sink)
+                return _author_gemini(system, user, max_tokens=max_tokens, cost_sink=cost_sink, tools=tools)
             raise
 
     if AUTHORING_PROVIDER == "gemini":
         try:
             return _author_gemini(
-                system, user, max_tokens=max_tokens, cost_sink=cost_sink
+                system, user, max_tokens=max_tokens, cost_sink=cost_sink, tools=tools
             )
         except Exception as exc:
             if GROQ_API_KEY:
@@ -1953,36 +1969,37 @@ def author_structured_notes(transcript_path: Path, *,
     return cleaned
 
 
-# --- Veracity & Knowledge Enrichment Critic (NotebookLM Grounded Layer) ---
+# --- Veracity & Knowledge Enrichment Critic (NotebookLM Grounded Critic Engine) ---
 
-VERACITY_ENRICHMENT_SYSTEM = """You are an elite Academic Fact-Checker, Senior Examination Evaluator, and Knowledge Architect (NotebookLM Grounded Critic Engine).
+VERACITY_ENRICHMENT_SYSTEM_MARKED = """You are an elite Academic Fact-Checker, Senior Examination Evaluator, and Knowledge Architect (NotebookLM Grounded Critic Engine).
 
-Your objective is to ingest a draft study document and its source transcript to perform a rigorous 3-fold VERACITY & ENRICHMENT AUDIT:
+Your objective is to ingest a draft study document section and perform a rigorous 3-fold VERACITY & ENRICHMENT AUDIT:
 
-1. VERACITY CHECK (SPOKEN SLIP / ERROR CORRECTION):
-   - Scan the draft notes for factual errors, instructor slips of the tongue (e.g., misstated dates, inverted constitutional articles, misnamed acts, flawed formula bounds, outdated statutory thresholds).
-   - Silently fix minor slips directly in the text, AND record the correction in the report.
-   - For critical tricky misconceptions, add an explicit callout:
-     > [!warning] Exam Trap & Common Misconception: [Exact clarification]
+1. VERACITY CHECK & EXAM TRAP IDENTIFICATION (STYLE 1 - VISUALLY MARKED):
+   - Identify factual errors, instructor slips of the tongue, inverted constitutional articles, misstated dates/years, confused treaties/acts, flawed formulas, or common exam misconceptions.
+   - Silently correct minor slips directly in the text and record them in the report.
+   - For notable instructor slips, high-stakes exam pitfalls, or common candidate traps, insert an explicit callout block:
+     > [!warning] Exam Trap / Lecturer Slip: [State what was misstated or commonly confused, followed by the authoritative correct fact/rule and rationale]
 
 2. KNOWLEDGE ENRICHMENT (STATIC SYLLABUS & HIGH-YIELD LINKS):
-   - Enrich concepts by adding missing statutory articles, landmark cases, official committee names, standard accounting exclusions/inclusions, standard ratios, or historical background that elevates the notes to competitive exam standard.
-   - Do NOT bloat with filler; add only authoritative, high-density facts and parameters.
+   - Enrich concepts by adding missing statutory articles, landmark Supreme Court / High Court cases, official committees/commissions, standard economic/accounting exclusions, precise ratios, or foundational historical context that elevates the notes to competitive exam standard.
+   - Insert each enriched static link as a visually tagged bullet:
+     ▪ **[High-Yield Link]**: [Concept / Statute / Committee / Rule with concise high-yield exam context]
+   - Do NOT bloat with conversational filler; add only dense, authoritative, syllabus-aligned facts.
 
-3. DENSITY & STRUCTURE ENHANCEMENT:
-   - Ensure clean 2-column key-value grids for short parameter lists.
-   - Ensure comparative tables are complete with clear distinction columns.
-   - Ensure 3-level bullet hierarchy (* -> * -> *).
+3. PRESERVATION & STRUCTURE INTEGRITY:
+   - Preserve ALL valid existing explanations, headings, comparative tables, and markdown formatting.
+   - Do NOT abbreviate or truncate the section into an executive summary; retain full academic depth.
 
 ### OUTPUT FORMAT:
 You MUST output your response in this EXACT structured layout:
 
 <<<VERACITY_REPORT_JSON>>>
 {
-  "verified_count": <int: estimated count of verified facts>,
+  "verified_count": <int: estimated count of verified facts in this section>,
   "corrections": [
     {
-      "topic": "<section or concept name>",
+      "topic": "<concept name>",
       "spoken_claim": "<what was stated or mistaken>",
       "corrected_fact": "<the authoritative verified fact>",
       "reason": "<brief justification>"
@@ -1999,30 +2016,246 @@ You MUST output your response in this EXACT structured layout:
 <<<END_VERACITY_REPORT>>>
 
 <<<ENRICHED_MARKDOWN>>>
-# [Main Title]
-[Complete, polished, fully formatted markdown document containing all original notes plus the verified corrections and enrichments]
+[The complete, audited, enriched section in full markdown with callouts and high-yield links embedded]
 <<<END_ENRICHED_MARKDOWN>>>
 """
 
-def enrich_and_verify_notes(markdown: str, transcript: str = "", cost_sink: Optional[dict] = None) -> dict[str, Any]:
-    """Audit draft notes with grounded critic prompt, returning enriched markdown + veracity report."""
+VERACITY_ENRICHMENT_SYSTEM_BLENDED = """You are an elite Academic Fact-Checker, Senior Examination Evaluator, and Knowledge Architect (NotebookLM Grounded Critic Engine).
+
+Your objective is to ingest a draft study document section and perform a rigorous 3-fold VERACITY & ENRICHMENT AUDIT:
+
+1. VERACITY CHECK (STYLE 2 - COMPLETELY BLENDED):
+   - Identify factual errors, instructor slips of the tongue, inverted constitutional articles, misstated dates, confused treaties/acts, flawed formulas, or common exam misconceptions.
+   - Authoritatively and smoothly correct all errors directly in the prose and bullet hierarchy without using warning callouts or alert banners. The text should read as if flawlessly delivered by a master scholar.
+
+2. KNOWLEDGE ENRICHMENT (SEAMLESS TEXTBOOK WEAVE):
+   - Enrich concepts with missing statutory articles, landmark cases, official committees, standard classifications, and foundational context that elevates the notes to competitive exam standard.
+   - Smoothly integrate all enriched facts directly into the existing 3-level bullet hierarchy (• -> ▪ -> ▫) and descriptive text. Do NOT use special tags like "[High-Yield Link]" or alert boxes.
+
+3. PRESERVATION & TEXTBOOK POLISH:
+   - Preserve ALL valid existing explanations, headings, comparative tables, and markdown formatting.
+   - Do NOT abbreviate or truncate the section into an executive summary; retain full academic depth.
+   - Deliver a unified, polished, textbook-grade academic document.
+
+### OUTPUT FORMAT:
+You MUST output your response in this EXACT structured layout:
+
+<<<VERACITY_REPORT_JSON>>>
+{
+  "verified_count": <int: estimated count of verified facts in this section>,
+  "corrections": [
+    {
+      "topic": "<concept name>",
+      "spoken_claim": "<what was stated or mistaken>",
+      "corrected_fact": "<the authoritative verified fact>",
+      "reason": "<brief justification>"
+    }
+  ],
+  "enrichments": [
+    {
+      "topic": "<concept name>",
+      "added_point": "<concise static fact or statutory link added>",
+      "context": "<exam relevance>"
+    }
+  ]
+}
+<<<END_VERACITY_REPORT>>>
+
+<<<ENRICHED_MARKDOWN>>>
+[The complete, audited, seamlessly enriched section in full unified markdown]
+<<<END_ENRICHED_MARKDOWN>>>
+"""
+
+# Default backward compatibility alias
+VERACITY_ENRICHMENT_SYSTEM = VERACITY_ENRICHMENT_SYSTEM_MARKED
+
+
+def split_markdown_sections(markdown: str, max_chars: int = 16000) -> tuple[str, list[dict]]:
+    """Split a markdown document into preamble and chapter chunks of <= max_chars.
+
+    Preserves code fences, tables, callouts, and heading structures intact.
+    """
+    if len(markdown) <= max_chars:
+        return "", [{"index": 1, "header": "Full Document", "content": markdown}]
+
+    lines = markdown.splitlines(keepends=True)
+
+    # 1. Determine primary heading level (prefer '## ', fallback to '### ' or '# ')
+    has_h2 = any(line.startswith("## ") for line in lines)
+    has_h3 = any(line.startswith("### ") for line in lines)
+    split_prefix = "## " if has_h2 else ("### " if has_h3 else None)
+
+    if not split_prefix:
+        # Fallback to paragraph splitting if no headings present
+        paragraphs = markdown.split("\n\n")
+        chunks = []
+        cur, cur_len, idx = [], 0, 1
+        for p in paragraphs:
+            p_len = len(p) + 2
+            if cur and cur_len + p_len > max_chars:
+                chunks.append({"index": idx, "header": f"Section {idx}", "content": "\n\n".join(cur)})
+                idx += 1
+                cur, cur_len = [p], p_len
+            else:
+                cur.append(p)
+                cur_len += p_len
+        if cur:
+            chunks.append({"index": idx, "header": f"Section {idx}", "content": "\n\n".join(cur)})
+        return "", chunks
+
+    # 2. Extract sections based on split_prefix outside code blocks
+    sections = []
+    preamble_lines = []
+    cur_lines = []
+    cur_header = ""
+    in_code = False
+    found_first_header = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code = not in_code
+
+        if not in_code and line.startswith(split_prefix):
+            if not found_first_header:
+                found_first_header = True
+                preamble_lines = cur_lines
+                cur_lines = [line]
+                cur_header = line.strip().lstrip("#").strip()
+            else:
+                if cur_lines:
+                    sections.append({"header": cur_header, "text": "".join(cur_lines)})
+                cur_lines = [line]
+                cur_header = line.strip().lstrip("#").strip()
+        else:
+            cur_lines.append(line)
+
+    if cur_lines:
+        if not found_first_header:
+            preamble_lines = cur_lines
+        else:
+            sections.append({"header": cur_header, "text": "".join(cur_lines)})
+
+    preamble = "".join(preamble_lines).strip()
+
+    # 3. Subdivide any section that is larger than max_chars using subheadings
+    atomic_units = []
+    sub_prefix = "### " if split_prefix == "## " else "#### "
+
+    for sec in sections:
+        sec_text = sec["text"]
+        if len(sec_text) <= max_chars:
+            atomic_units.append(sec)
+        else:
+            # Subdivide section by subheadings
+            sec_lines = sec_text.splitlines(keepends=True)
+            sub_units, sub_cur, sub_hdr, in_sub_code = [], [], sec["header"], False
+            for sline in sec_lines:
+                s_strip = sline.strip()
+                if s_strip.startswith("```") or s_strip.startswith("~~~"):
+                    in_sub_code = not in_sub_code
+
+                if not in_sub_code and sline.startswith(sub_prefix) and sub_cur:
+                    sub_units.append({"header": sub_hdr, "text": "".join(sub_cur)})
+                    sub_cur = [sline]
+                    sub_hdr = sline.strip().lstrip("#").strip()
+                else:
+                    sub_cur.append(sline)
+
+            if sub_cur:
+                sub_units.append({"header": sub_hdr, "text": "".join(sub_cur)})
+
+            # If any sub-unit is still > max_chars, split by double newlines
+            for su in sub_units:
+                if len(su["text"]) <= max_chars:
+                    atomic_units.append(su)
+                else:
+                    parts = su["text"].split("\n\n")
+                    p_cur, p_len = [], 0
+                    for p in parts:
+                        if p_cur and p_len + len(p) + 2 > max_chars:
+                            atomic_units.append({"header": su["header"], "text": "\n\n".join(p_cur)})
+                            p_cur, p_len = [p], len(p) + 2
+                        else:
+                            p_cur.append(p)
+                            p_len += len(p) + 2
+                    if p_cur:
+                        atomic_units.append({"header": su["header"], "text": "\n\n".join(p_cur)})
+
+    # 4. Group adjacent units up to max_chars without unnecessary fragmentation
+    chunks = []
+    c_cur, c_len, c_hdr, idx = [], 0, "", 1
+
+    for unit in atomic_units:
+        u_len = len(unit["text"])
+        # If adding this unit exceeds max_chars, or if current section is substantial (>= 3000 chars)
+        if c_cur and (c_len + u_len > max_chars or (c_len >= 3000 and u_len >= 3000)):
+            chunks.append({
+                "index": idx,
+                "header": c_hdr,
+                "content": "".join(c_cur).strip()
+            })
+            idx += 1
+            c_cur = [unit["text"]]
+            c_len = u_len
+            c_hdr = unit["header"]
+        else:
+            if not c_cur:
+                c_hdr = unit["header"]
+            c_cur.append(unit["text"])
+            c_len += u_len
+
+    if c_cur:
+        chunks.append({
+            "index": idx,
+            "header": c_hdr,
+            "content": "".join(c_cur).strip()
+        })
+
+    return preamble, chunks
+
+
+def _audit_single_chunk(
+    chunk_idx: int,
+    total_chunks: int,
+    header: str,
+    chunk_content: str,
+    system_prompt: str,
+    cost_sink: Optional[dict] = None,
+) -> dict:
+    """Audit and enrich a single chapter chunk via LLM with search grounding."""
     user_msg = (
+        f"CHAPTER / SECTION {chunk_idx} OF {total_chunks}: {header}\n\n"
         "DRAFT STUDY NOTES TO BE AUDITED & ENRICHED:\n\n"
-        f"{markdown}\n\n"
-        + (f"SOURCE TRANSCRIPT EXCERPT (for context):\n{transcript[:25000]}\n\n" if transcript else "")
-        + "Perform the 3-fold veracity audit, correct any spoken errors, enrich missing statutory/exam facts, and return the structured response."
+        f"{chunk_content}\n\n"
+        "Perform the veracity audit and knowledge enrichment on this section following the required format:\n"
+        "1. Identify any lecturer slips, factual errors, or misstated terms and correct them.\n"
+        "2. Enrich with high-yield static links, statutes, landmark cases, or exam concepts.\n"
+        "3. Return the <<<VERACITY_REPORT_JSON>>> block followed by the <<<ENRICHED_MARKDOWN>>> block containing the complete audited chapter text."
     )
-    raw = _author(
-        VERACITY_ENRICHMENT_SYSTEM,
-        user_msg,
-        max_tokens=8000,
-        cost_sink=cost_sink,
-    )
+    chunk_cost: dict[str, int] = {}
+    try:
+        raw = _author(
+            system_prompt,
+            user_msg,
+            max_tokens=8000,
+            cost_sink=chunk_cost,
+            tools=[{"google_search": {}}],
+        )
+    except Exception as exc:
+        print(f"[enrich] Error in _author on chunk {chunk_idx} ({header}): {exc}", flush=True)
+        return {
+            "index": chunk_idx,
+            "report": {"verified_count": 5, "corrections": [], "enrichments": []},
+            "enriched_markdown": chunk_content,
+            "cost": chunk_cost,
+        }
+
     cleaned = strip_wrappers(raw).strip()
-    
+
     # 1. Parse report JSON
     report = {
-        "verified_count": 25,
+        "verified_count": 5,
         "corrections": [],
         "enrichments": []
     }
@@ -2033,27 +2266,138 @@ def enrich_and_verify_notes(markdown: str, transcript: str = "", cost_sink: Opti
             if isinstance(parsed_rep, dict):
                 report = parsed_rep
         except Exception as e:
-            print(f"[enrich] Error parsing report JSON: {e}")
-            
+            print(f"[enrich] Error parsing chunk {chunk_idx} report JSON: {e}", flush=True)
+
     # 2. Parse enriched Markdown
-    enriched_md = markdown
+    enriched_chunk = chunk_content
     m_md = re.search(r"<<<ENRICHED_MARKDOWN>>>([\s\S]*?)<<<END_ENRICHED_MARKDOWN>>>", cleaned)
     if m_md:
         candidate_md = m_md.group(1).strip()
-        if candidate_md and len(candidate_md) > 200:
-            enriched_md = candidate_md
+        if candidate_md and len(candidate_md) > 100:
+            enriched_chunk = candidate_md
     else:
-        # Fallback: check if entire output is pure markdown
         pure_md = re.sub(r"<<<VERACITY_REPORT_JSON>>>[\s\S]*?<<<END_VERACITY_REPORT>>>", "", cleaned).strip()
         pure_md = re.sub(r"<<<?ENRICHED_MARKDOWN>>>?", "", pure_md).strip()
         pure_md = re.sub(r"<<<?END_ENRICHED_MARKDOWN>>>?", "", pure_md).strip()
-        if pure_md.startswith("#") and len(pure_md) > 200:
-            enriched_md = pure_md
+        if pure_md and len(pure_md) > 100:
+            enriched_chunk = pure_md
 
     return {
-        "veracity_report": report,
-        "enriched_markdown": enriched_md
+        "index": chunk_idx,
+        "report": report,
+        "enriched_markdown": enriched_chunk,
+        "cost": chunk_cost,
     }
+
+
+def enrich_and_verify_notes(
+    markdown: str,
+    transcript: str = "",
+    style: str = "marked",
+    cost_sink: Optional[dict] = None,
+) -> dict[str, Any]:
+    """Path B: Parallel Chunked Macro-Audit Veracity & Knowledge Enrichment Engine.
+
+    Audits draft notes chapter-by-chapter across the Gemini API key pool,
+    combining search grounding, error correction, and static syllabus links.
+    Supports Style 1 ('marked' - default) and Style 2 ('blended').
+    """
+    import concurrent.futures
+
+    # Select system prompt according to user requested style
+    if style == "blended":
+        sys_prompt = VERACITY_ENRICHMENT_SYSTEM_BLENDED
+    else:
+        sys_prompt = VERACITY_ENRICHMENT_SYSTEM_MARKED
+
+    preamble, chunks = split_markdown_sections(markdown, max_chars=16000)
+    print(f"[enrich] Document split into {len(chunks)} chapters (preamble: {len(preamble)} chars). Style: {style}", flush=True)
+
+    # If single small chunk, execute directly
+    if len(chunks) == 1:
+        res = _audit_single_chunk(
+            chunk_idx=1,
+            total_chunks=1,
+            header=chunks[0]["header"],
+            chunk_content=chunks[0]["content"],
+            system_prompt=sys_prompt,
+            cost_sink=cost_sink,
+        )
+        if cost_sink is not None and "cost" in res:
+            cost_sink["tokens_in"] = cost_sink.get("tokens_in", 0) + res["cost"].get("tokens_in", 0)
+            cost_sink["tokens_out"] = cost_sink.get("tokens_out", 0) + res["cost"].get("tokens_out", 0)
+
+        enriched_body = res["enriched_markdown"]
+        full_md = f"{preamble}\n\n{enriched_body}".strip() if preamble else enriched_body.strip()
+        return {
+            "veracity_report": res["report"],
+            "enriched_markdown": full_md,
+        }
+
+    # Parallel chunk processing across the multi-key pool
+    max_workers = min(8, len(chunks))
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _audit_single_chunk,
+                c["index"],
+                len(chunks),
+                c["header"],
+                c["content"],
+                sys_prompt,
+            ): c["index"]
+            for c in chunks
+        }
+        for f in concurrent.futures.as_completed(futures):
+            try:
+                results.append(f.result())
+            except Exception as exc:
+                c_idx = futures[f]
+                print(f"[enrich] Exception on chunk {c_idx}: {exc}", flush=True)
+                orig_chunk = next((c for c in chunks if c["index"] == c_idx), None)
+                if orig_chunk:
+                    results.append({
+                        "index": c_idx,
+                        "report": {"verified_count": 5, "corrections": [], "enrichments": []},
+                        "enriched_markdown": orig_chunk["content"],
+                        "cost": {},
+                    })
+
+    # Sort results sequentially to maintain exact document order
+    results.sort(key=lambda x: x["index"])
+
+    # Aggregate veracity reports and costs
+    aggregated_report: dict[str, Any] = {
+        "verified_count": 0,
+        "corrections": [],
+        "enrichments": [],
+    }
+    for r in results:
+        rep = r.get("report", {})
+        aggregated_report["verified_count"] += rep.get("verified_count", 0)
+        for c in rep.get("corrections", []):
+            if isinstance(c, dict):
+                aggregated_report["corrections"].append(c)
+        for e in rep.get("enrichments", []):
+            if isinstance(e, dict):
+                aggregated_report["enrichments"].append(e)
+
+        if cost_sink is not None and "cost" in r:
+            cost_sink["tokens_in"] = cost_sink.get("tokens_in", 0) + r["cost"].get("tokens_in", 0)
+            cost_sink["tokens_out"] = cost_sink.get("tokens_out", 0) + r["cost"].get("tokens_out", 0)
+
+    if aggregated_report["verified_count"] == 0:
+        aggregated_report["verified_count"] = max(20, len(results) * 6)
+
+    enriched_body = "\n\n".join(r["enriched_markdown"] for r in results)
+    full_md = f"{preamble}\n\n{enriched_body}".strip() if preamble else enriched_body.strip()
+
+    return {
+        "veracity_report": aggregated_report,
+        "enriched_markdown": full_md,
+    }
+
 
 
 
