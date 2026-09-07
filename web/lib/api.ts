@@ -238,12 +238,21 @@ export type EnrichResponse = {
 };
 
 export async function enrichJob(id: string): Promise<EnrichResponse> {
-  const r = await fetch(`/api/jobs/${id}/enrich`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-  });
-  if (!r.ok) throw new Error(await apiErrorMessage(r, 'Could not run veracity and knowledge enrichment pass.'));
-  return r.json();
+  const maxAttempts = 60;
+  for (let i = 0; i < maxAttempts; i++) {
+    const r = await fetch(`/api/jobs/${id}/enrich`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    });
+    if (!r.ok) throw new Error(await apiErrorMessage(r, 'Could not run veracity and knowledge enrichment pass.'));
+    const data = await r.json();
+    if (data.status === 'done' || data.enriched_pdf_url) {
+      return data;
+    }
+    // Background task running, poll again after 1.5 seconds
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  throw new Error('Enrichment pass timed out. Please try again.');
 }
 
 export async function getJob(id: string): Promise<Job> {

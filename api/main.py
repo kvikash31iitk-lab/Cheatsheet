@@ -1492,6 +1492,46 @@ async def get_pdf(
     )
 
 
+_ENRICHING_JOBS: set[str] = set()
+
+
+async def _bg_run_enrichment(job_id: str, work_dir: Path, title: str):
+    """Background execution of veracity and enrichment pass to prevent proxy timeouts."""
+    try:
+        md_path = work_dir / "output.md"
+        if not md_path.is_file():
+            return
+        md_text = md_path.read_text(encoding="utf-8")
+        tr_path = work_dir / "transcript.txt"
+        tr_text = tr_path.read_text(encoding="utf-8") if tr_path.is_file() else ""
+
+        cost_sink: dict[str, int] = {"tokens_in": 0, "tokens_out": 0}
+        enrich_result = await asyncio.to_thread(
+            enrich_and_verify_notes, md_text, tr_text, cost_sink
+        )
+
+        enriched_md_text = enrich_result.get("enriched_markdown", md_text)
+        veracity_report = enrich_result.get("veracity_report", {})
+
+        enriched_md_path = work_dir / "output_enriched.md"
+        enriched_md_path.write_text(enriched_md_text, encoding="utf-8")
+
+        report_path = work_dir / "veracity_report.json"
+        report_path.write_text(json.dumps(veracity_report, indent=2), encoding="utf-8")
+
+        enriched_pdf_path = work_dir / "output_enriched.pdf"
+        await asyncio.to_thread(
+            build_cheatsheet_refined,
+            enriched_md_path,
+            enriched_pdf_path,
+            title or "High-Yield Enriched Notes",
+        )
+    except Exception as exc:
+        logger.exception("Enrichment background task failed for job %s: %s", job_id, exc)
+    finally:
+        _ENRICHING_JOBS.discard(job_id)
+
+
 @app.post("/api/jobs/{job_id}/enrich")
 async def enrich_job(
     job_id: str,
@@ -1517,40 +1557,34 @@ async def enrich_job(
     if not md_path.is_file():
         raise HTTPException(404, "Original markdown output not found")
 
-    md_text = md_path.read_text(encoding="utf-8")
-    tr_path = work_dir / "transcript.txt"
-    tr_text = tr_path.read_text(encoding="utf-8") if tr_path.is_file() else ""
-
-    # Run veracity & enrichment critic
-    cost_sink: dict[str, int] = {"tokens_in": 0, "tokens_out": 0}
-    enrich_result = await asyncio.to_thread(
-        enrich_and_verify_notes, md_text, tr_text, cost_sink
-    )
-
-    enriched_md_text = enrich_result.get("enriched_markdown", md_text)
-    veracity_report = enrich_result.get("veracity_report", {})
-
-    # Save enriched outputs
-    enriched_md_path = work_dir / "output_enriched.md"
-    enriched_md_path.write_text(enriched_md_text, encoding="utf-8")
-
     report_path = work_dir / "veracity_report.json"
-    report_path.write_text(json.dumps(veracity_report, indent=2), encoding="utf-8")
-
     enriched_pdf_path = work_dir / "output_enriched.pdf"
-    title = gen.title or "High-Yield Enriched Notes"
-    await asyncio.to_thread(
-        build_cheatsheet_refined,
-        enriched_md_path,
-        enriched_pdf_path,
-        title,
-    )
+    if report_path.is_file() and enriched_pdf_path.is_file():
+        try:
+            veracity_report = json.loads(report_path.read_text(encoding="utf-8"))
+            return {
+                "ok": True,
+                "status": "done",
+                "job_id": job_id,
+                "enriched_pdf_url": f"/api/files/{job_id}/enriched_pdf",
+                "veracity_report": veracity_report,
+            }
+        except Exception:
+            pass
 
+    if job_id in _ENRICHING_JOBS:
+        return {
+            "ok": True,
+            "status": "running",
+            "job_id": job_id,
+        }
+
+    _ENRICHING_JOBS.add(job_id)
+    asyncio.create_task(_bg_run_enrichment(job_id, work_dir, gen.title or ""))
     return {
         "ok": True,
+        "status": "running",
         "job_id": job_id,
-        "enriched_pdf_url": f"/api/files/{job_id}/enriched_pdf",
-        "veracity_report": veracity_report,
     }
 
 
