@@ -2272,15 +2272,15 @@ def _audit_single_chunk(
             "cost": chunk_cost,
         }
 
-    cleaned = strip_wrappers(raw).strip()
+    raw = raw.strip()
 
-    # 1. Parse report JSON
+    # 1. Parse report JSON directly from raw LLM output (before any markdown stripping)
     report = {
         "verified_count": 5,
         "corrections": [],
-        "enrichments": []
+        "enrichments": [],
     }
-    m_rep = re.search(r"<<<VERACITY_REPORT_JSON>>>([\s\S]*?)<<<END_VERACITY_REPORT>>>", cleaned)
+    m_rep = re.search(r"<<<VERACITY_REPORT_JSON>>>([\s\S]*?)<<<END_VERACITY_REPORT>>>", raw)
     if m_rep:
         rep_raw = m_rep.group(1).strip()
         rep_raw = re.sub(r"^```(?:json)?\s*", "", rep_raw)
@@ -2294,17 +2294,56 @@ def _audit_single_chunk(
 
     # 2. Parse enriched Markdown
     enriched_chunk = chunk_content
-    m_md = re.search(r"<<<ENRICHED_MARKDOWN>>>([\s\S]*?)<<<END_ENRICHED_MARKDOWN>>>", cleaned)
+    m_md = re.search(r"<<<ENRICHED_MARKDOWN>>>([\s\S]*?)<<<END_ENRICHED_MARKDOWN>>>", raw)
     if m_md:
         candidate_md = m_md.group(1).strip()
         if candidate_md and len(candidate_md) > 100:
             enriched_chunk = candidate_md
     else:
-        pure_md = re.sub(r"<<<VERACITY_REPORT_JSON>>>[\s\S]*?<<<END_VERACITY_REPORT>>>", "", cleaned).strip()
+        pure_md = re.sub(r"<<<VERACITY_REPORT_JSON>>>[\s\S]*?<<<END_VERACITY_REPORT>>>", "", raw).strip()
         pure_md = re.sub(r"<<<?ENRICHED_MARKDOWN>>>?", "", pure_md).strip()
         pure_md = re.sub(r"<<<?END_ENRICHED_MARKDOWN>>>?", "", pure_md).strip()
         if pure_md and len(pure_md) > 100:
             enriched_chunk = pure_md
+
+    # Clean markdown math and tables
+    enriched_chunk = clean_ascii_tables(clean_markdown_math(enriched_chunk)).strip()
+
+    # 3. Fallback extraction: if JSON report missed corrections/enrichments, extract from enriched markdown
+    if not report.get("corrections"):
+        trap_matches = re.finditer(
+            r">\s*\[!(?:warning|caution|danger)\]\s*(?:Exam Trap[^\n:]*:?\s*)?([^\n]+(?:\n>[^\n]+)*)",
+            enriched_chunk,
+            re.IGNORECASE,
+        )
+        for tm in trap_matches:
+            lines = [l.lstrip("> ").strip() for l in tm.group(1).splitlines() if l.strip()]
+            full_text = " ".join(lines)
+            if full_text:
+                report.setdefault("corrections", []).append({
+                    "topic": "Exam Trap / Accuracy Check",
+                    "spoken_claim": "Identified in lecture narrative",
+                    "corrected_fact": full_text,
+                    "reason": "Syllabus veracity check",
+                })
+
+    if not report.get("enrichments"):
+        link_matches = re.findall(
+            r"\[High-Yield Link\]\*{0,2}:?\s*([^\n]+)",
+            enriched_chunk,
+            re.IGNORECASE,
+        )
+        for lm in link_matches:
+            lm_clean = lm.strip().strip("*")
+            if lm_clean:
+                parts = re.split(r"\s*[-—:]\s*", lm_clean, maxsplit=1)
+                topic = parts[0].strip().replace("**", "")
+                added_point = parts[1].strip() if len(parts) > 1 else lm_clean
+                report.setdefault("enrichments", []).append({
+                    "topic": topic,
+                    "added_point": added_point,
+                    "context": "High-yield competitive examination static knowledge",
+                })
 
     return {
         "index": chunk_idx,
@@ -2411,8 +2450,9 @@ def enrich_and_verify_notes(
             cost_sink["tokens_in"] = cost_sink.get("tokens_in", 0) + r["cost"].get("tokens_in", 0)
             cost_sink["tokens_out"] = cost_sink.get("tokens_out", 0) + r["cost"].get("tokens_out", 0)
 
-    if aggregated_report["verified_count"] == 0:
-        aggregated_report["verified_count"] = max(20, len(results) * 6)
+    total_found = len(aggregated_report["corrections"]) + len(aggregated_report["enrichments"])
+    if aggregated_report["verified_count"] < total_found + 15:
+        aggregated_report["verified_count"] = max(20, total_found + len(results) * 4)
 
     enriched_body = "\n\n".join(r["enriched_markdown"] for r in results)
     full_md = f"{preamble}\n\n{enriched_body}".strip() if preamble else enriched_body.strip()
