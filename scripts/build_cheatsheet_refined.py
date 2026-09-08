@@ -29,6 +29,7 @@ from reportlab.platypus import (
     KeepTogether,
     PageBreak,
     Paragraph,
+    Preformatted,
     SimpleDocTemplate,
     Spacer,
     Table,
@@ -133,6 +134,13 @@ STYLE_BULLET_L1 = ParagraphStyle(
     alignment=TA_JUSTIFY,
 )
 
+STYLE_BULLET_L1_HEAD = ParagraphStyle(
+    "RefinedBulletL1Head",
+    parent=STYLE_BULLET_L1,
+    keepWithNext=True,
+    spaceAfter=1.5,
+)
+
 STYLE_BULLET_L2 = ParagraphStyle(
     "RefinedBulletL2",
     parent=STYLE_BODY,
@@ -190,13 +198,19 @@ def _ascii_safe(text: str) -> str:
         return ""
     # Strip Indic / Devanagari scripts
     text = re.sub(r"[\u0900-\u097F]+", "", text)
+    # Translate subscripts and superscripts to standard digits
+    text = text.translate(str.maketrans("₀₁₂₃₄₅₆₇₈₉₊₋", "0123456789+-"))
+    text = text.translate(str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻", "0123456789+-"))
     replacements = {
         "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
         "\u2013": "-", "\u2014": "-", "\u2010": "-", "\u2011": "-", "\u2012": "-",
         "\u2212": "-", "\u00ad": "-", "\u2026": "...", "\u00a0": " ",
         "\u200b": "", "\u200c": "", "\u200d": "", "\ufeff": "",
         "₹": "Rs. ", "≈": "~", "≤": "<=", "≥": ">=", "≠": "!=",
-        "•": "*", "■": "-", "▪": "-", "►": ">", "✔": "[Y]", "✖": "[X]",
+        "•": "*", "■": "-", "▪": "-", "►": ">", "◄": "<", "✔": "[Y]", "✖": "[X]",
+        "│": "|", "─": "-", "▼": "v", "▲": "^", "┌": "+", "┐": "+", "└": "+", "┘": "+",
+        "├": "+", "┤": "+", "┬": "+", "┴": "+", "┼": "+", "║": "|", "═": "=",
+        "↓": "|v", "↑": "|^", "→": "->", "←": "<-", "█": "#", "░": "#", "▒": "#", "▓": "#",
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
@@ -209,6 +223,22 @@ def clean_inline(text: str) -> str:
         return ""
     # Pre-unescape all HTML entities
     text = html.unescape(str(text))
+    # Convert unicode subscripts/superscripts to ReportLab tags before ascii_safe
+    sub_map = {
+        '₀': '<sub>0</sub>', '₁': '<sub>1</sub>', '₂': '<sub>2</sub>', '₃': '<sub>3</sub>', '₄': '<sub>4</sub>',
+        '₅': '<sub>5</sub>', '₆': '<sub>6</sub>', '₇': '<sub>7</sub>', '₈': '<sub>8</sub>', '₉': '<sub>9</sub>',
+        '₊': '<sub>+</sub>', '₋': '<sub>-</sub>',
+    }
+    sup_map = {
+        '⁰': '<sup>0</sup>', '¹': '<sup>1</sup>', '²': '<sup>2</sup>', '³': '<sup>3</sup>', '⁴': '<sup>4</sup>',
+        '⁵': '<sup>5</sup>', '⁶': '<sup>6</sup>', '⁷': '<sup>7</sup>', '⁸': '<sup>8</sup>', '⁹': '<sup>9</sup>',
+        '⁺': '<sup>+</sup>', '⁻': '<sup>-</sup>',
+    }
+    for k, v in sub_map.items():
+        text = text.replace(k, v)
+    for k, v in sup_map.items():
+        text = text.replace(k, v)
+
     text = _ascii_safe(text)
     
     # LaTeX cleanup
@@ -255,6 +285,8 @@ def clean_inline(text: str) -> str:
     text = text.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
     text = text.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
     text = text.replace("&lt;u&gt;", "<u>").replace("&lt;/u&gt;", "</u>")
+    text = text.replace("&lt;sub&gt;", "<sub>").replace("&lt;/sub&gt;", "</sub>")
+    text = text.replace("&lt;sup&gt;", "<sup>").replace("&lt;/sup&gt;", "</sup>")
     text = re.sub(r"&lt;font(.*?)&gt;", r"<font\1>", text)
     text = text.replace("&lt;/font&gt;", "</font>")
     
@@ -290,6 +322,7 @@ def make_section_banner(title: str) -> Table:
         ("LINELEFT", (0, 0), (0, -1), 3.5, AMBER_HIGHLIGHT),
         ("BOX", (0, 0), (-1, -1), 0.5, NAVY_PRIMARY),
     ]))
+    t.keepWithNext = True
     return t
 
 
@@ -309,6 +342,85 @@ def make_callout_box(label: str, content: str, kind: str = "warning") -> Table:
         ("BOX", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
     ]))
     return t
+
+
+def make_code_block(code_text: str, lang: str = "") -> Table:
+    """Render an ASCII flowchart, timeline, or code block inside a clean, high-contrast card."""
+    code_text = _ascii_safe(code_text)
+    lines = code_text.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    clean_code = "\n".join(lines)
+    max_len = max((len(l) for l in lines), default=0)
+    f_size = 6.8 if max_len > 80 else (7.4 if max_len > 60 else 8.0)
+    leading = f_size * 1.3
+    c_style = ParagraphStyle(
+        "RefinedCode",
+        parent=ss["Normal"],
+        fontName="Courier-Bold",
+        fontSize=f_size,
+        leading=leading,
+        textColor=NAVY_PRIMARY,
+        alignment=TA_LEFT,
+    )
+    pre = Preformatted(clean_code, c_style)
+    t = Table([[pre]], colWidths=[BODY_W])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), BG_LIGHT),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("BOX", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+        ("LINELEFT", (0, 0), (0, -1), 2.5, NAVY_HEADER),
+    ]))
+    return t
+
+
+def _parse_ascii_table(code_text: str):
+    """Detect and parse ASCII grid tables into native header and rows."""
+    lines = [l for l in code_text.strip().split('\n') if l.strip()]
+    if len(lines) < 3:
+        return None
+    border_lines = [l for l in lines if l.startswith('+') and '-' in l]
+    if len(border_lines) < 2:
+        return None
+    first_b = border_lines[0]
+    col_starts = [i for i, ch in enumerate(first_b) if ch == '+']
+    if len(col_starts) < 3:
+        return None
+    raw_rows = []
+    curr_cells = []
+    for l in lines[1:]:
+        if l.startswith('+') and '-' in l:
+            if curr_cells:
+                row = [' '.join(c).strip().rstrip('|').strip() for c in curr_cells]
+                if any(row):
+                    raw_rows.append(row)
+                curr_cells = []
+            continue
+        if '|' in l:
+            pieces = []
+            for i in range(len(col_starts) - 1):
+                s = col_starts[i] + 1
+                e = col_starts[i+1] if col_starts[i+1] < len(l) else len(l)
+                cell_txt = l[s:e].strip().rstrip('|').strip() if s < len(l) else ''
+                pieces.append(cell_txt)
+            if not curr_cells:
+                curr_cells = [[p] for p in pieces]
+            else:
+                for i, p in enumerate(pieces):
+                    if i < len(curr_cells) and p:
+                        curr_cells[i].append(p)
+    if curr_cells:
+        row = [' '.join(c).strip().rstrip('|').strip() for c in curr_cells]
+        if any(row):
+            raw_rows.append(row)
+    if len(raw_rows) >= 2:
+        return raw_rows[0], raw_rows[1:]
+    return None
 
 
 def make_table(header: List[str], rows: List[List[str]]) -> Table:
@@ -391,8 +503,8 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
         pagesize=A4,
         leftMargin=MARGIN,
         rightMargin=MARGIN,
-        topMargin=MARGIN,
-        bottomMargin=MARGIN,
+        topMargin=1.25 * cm,
+        bottomMargin=1.15 * cm,
     )
     
     story = []
@@ -446,6 +558,29 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
             i += 1
             continue
             
+        # Code Blocks / Flowcharts / ASCII Diagrams
+        if line.startswith("```"):
+            fence_lang = line[3:].strip().lower()
+            code_lines = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            if i < len(lines) and lines[i].strip().startswith("```"):
+                i += 1
+            code_text = "\n".join(code_lines)
+            if code_text.strip():
+                parsed_tbl = _parse_ascii_table(code_text)
+                if parsed_tbl:
+                    story.append(Spacer(1, 1.2))
+                    story.append(make_table(parsed_tbl[0], parsed_tbl[1]))
+                    story.append(Spacer(1, 1.8))
+                else:
+                    story.append(Spacer(1, 1.2))
+                    story.append(KeepTogether(make_code_block(code_text, fence_lang)))
+                    story.append(Spacer(1, 1.8))
+            continue
+
         # Callouts (> [!warning] or > [!def])
         if line.startswith("> [!"):
             m = re.match(r"^>\s*\[!(\w+)\]\s*(.*)$", line)
@@ -464,7 +599,7 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
                 else:
                     c_body = [c_label]
                     c_label = "EXAM TRAP / KEY EXCEPTION"
-            story.append(make_callout_box(c_label, " ".join(c_body), "warning"))
+            story.append(KeepTogether(make_callout_box(c_label, " ".join(c_body), "warning")))
             story.append(Spacer(1, 1.8))
             continue
             
@@ -513,7 +648,7 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
             
             if len(lvl1_items) == 1 and len(sub_items) >= 4 and (sum(len(t) for _, t in sub_items) / len(sub_items) <= 65):
                 # Render Level 1 parent
-                p_parent = make_para(f'<font color="{ACCENT_BLUE.hexval()}" size="7.5">&#8226;</font>&nbsp;&nbsp;{lvl1_items[0][1]}', STYLE_BULLET_L1)
+                p_parent = make_para(f'<font color="{ACCENT_BLUE.hexval()}" size="7.5">&#8226;</font>&nbsp;&nbsp;{lvl1_items[0][1]}', STYLE_BULLET_L1_HEAD)
                 story.append(p_parent)
                 # Render sub-items as double-column grid!
                 story.append(make_double_column_grid(sub_items))
@@ -524,13 +659,24 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
                 story.append(Spacer(1, 1.2))
             else:
                 # Render individual hierarchical bullets
-                for lvl, text in bullet_group:
+                for idx, (lvl, text) in enumerate(bullet_group):
+                    is_parent = (
+                        lvl == 1
+                        and (
+                            text.rstrip().endswith(":")
+                            or text.rstrip().endswith(":-")
+                            or (idx + 1 < len(bullet_group) and bullet_group[idx + 1][0] > lvl)
+                        )
+                    )
                     if lvl == 3:
                         bullet_sym = f'<font color="{TEXT_MUTED.hexval()}" size="6.5">&#9675;</font>'
                         p = make_para(f"{bullet_sym}&nbsp;&nbsp;{text}", STYLE_BULLET_L3)
                     elif lvl == 2:
                         bullet_sym = f'<font color="{TEXT_MUTED.hexval()}" size="6.5">&#9642;</font>'
                         p = make_para(f"{bullet_sym}&nbsp;&nbsp;{text}", STYLE_BULLET_L2)
+                    elif is_parent:
+                        bullet_sym = f'<font color="{ACCENT_BLUE.hexval()}" size="7.5">&#8226;</font>'
+                        p = make_para(f"{bullet_sym}&nbsp;&nbsp;{text}", STYLE_BULLET_L1_HEAD)
                     else:
                         bullet_sym = f'<font color="{ACCENT_BLUE.hexval()}" size="7.5">&#8226;</font>'
                         p = make_para(f"{bullet_sym}&nbsp;&nbsp;{text}", STYLE_BULLET_L1)
@@ -578,3 +724,11 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
 
     doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
     print(f"OK: Refined Cheatsheet PDF -> {pdf_path}")
+
+
+if __name__ == "__main__":
+    import sys
+    src_arg = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("scratch/epfo_output.md")
+    dst_arg = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("scratch/out_test.pdf")
+    title_arg = sys.argv[3] if len(sys.argv) > 3 else "High-Yield Revision Cheatsheet"
+    build(src_arg, dst_arg, title_arg)
