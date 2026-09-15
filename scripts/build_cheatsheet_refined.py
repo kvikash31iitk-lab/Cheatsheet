@@ -12,13 +12,21 @@ High-density, exhaustive revision layout ("Seedhi Baat No Bakwaas"):
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import io
 import re
+import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
+from PIL import Image as PILImage
+try:
+    from scripts.math_typography import sanitize_math_typography
+except ImportError:
+    from math_typography import sanitize_math_typography
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
@@ -26,6 +34,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     HRFlowable,
+    Image as RLImage,
     KeepTogether,
     PageBreak,
     Paragraph,
@@ -198,15 +207,13 @@ def _ascii_safe(text: str) -> str:
         return ""
     # Strip Indic / Devanagari scripts
     text = re.sub(r"[\u0900-\u097F]+", "", text)
-    # Translate subscripts and superscripts to standard digits
-    text = text.translate(str.maketrans("₀₁₂₃₄₅₆₇₈₉₊₋", "0123456789+-"))
-    text = text.translate(str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻", "0123456789+-"))
     replacements = {
         "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
         "\u2013": "-", "\u2014": "-", "\u2010": "-", "\u2011": "-", "\u2012": "-",
         "\u2212": "-", "\u00ad": "-", "\u2026": "...", "\u00a0": " ",
         "\u200b": "", "\u200c": "", "\u200d": "", "\ufeff": "",
         "₹": "Rs. ", "≈": "~", "≤": "<=", "≥": ">=", "≠": "!=",
+        "\u00d7": "x", "×": "x", "\u00f7": "/", "÷": "/", "\u00b1": "+/-", "±": "+/-",
         "•": "*", "■": "-", "▪": "-", "►": ">", "◄": "<", "✔": "[Y]", "✖": "[X]",
         "│": "|", "─": "-", "▼": "v", "▲": "^", "┌": "+", "┐": "+", "└": "+", "┘": "+",
         "├": "+", "┤": "+", "┬": "+", "┴": "+", "┼": "+", "║": "|", "═": "=",
@@ -221,31 +228,9 @@ def clean_inline(text: str) -> str:
     """Format inline markdown bold, italics, tags, and entity references safely."""
     if not text:
         return ""
-    # Pre-unescape all HTML entities
-    text = html.unescape(str(text))
-    # Convert unicode subscripts/superscripts to ReportLab tags before ascii_safe
-    sub_map = {
-        '₀': '<sub>0</sub>', '₁': '<sub>1</sub>', '₂': '<sub>2</sub>', '₃': '<sub>3</sub>', '₄': '<sub>4</sub>',
-        '₅': '<sub>5</sub>', '₆': '<sub>6</sub>', '₇': '<sub>7</sub>', '₈': '<sub>8</sub>', '₉': '<sub>9</sub>',
-        '₊': '<sub>+</sub>', '₋': '<sub>-</sub>',
-    }
-    sup_map = {
-        '⁰': '<sup>0</sup>', '¹': '<sup>1</sup>', '²': '<sup>2</sup>', '³': '<sup>3</sup>', '⁴': '<sup>4</sup>',
-        '⁵': '<sup>5</sup>', '⁶': '<sup>6</sup>', '⁷': '<sup>7</sup>', '⁸': '<sup>8</sup>', '⁹': '<sup>9</sup>',
-        '⁺': '<sup>+</sup>', '⁻': '<sup>-</sup>',
-    }
-    for k, v in sub_map.items():
-        text = text.replace(k, v)
-    for k, v in sup_map.items():
-        text = text.replace(k, v)
-
+    # Master math typography sanitization
+    text = sanitize_math_typography(text)
     text = _ascii_safe(text)
-    
-    # LaTeX cleanup
-    text = text.replace("$$", " ").replace("$", " ")
-    text = re.sub(r"\\?text\{([^}]+)\}", r"\1", text)
-    for _ in range(3):
-        text = re.sub(r"\\?frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1) / (\2)", text)
 
     # Protect raw XML characters
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -289,6 +274,7 @@ def clean_inline(text: str) -> str:
     text = text.replace("&lt;sup&gt;", "<sup>").replace("&lt;/sup&gt;", "</sup>")
     text = re.sub(r"&lt;font(.*?)&gt;", r"<font\1>", text)
     text = text.replace("&lt;/font&gt;", "</font>")
+    text = text.replace("&amp;rarr;", "&rarr;").replace("&amp;larr;", "&larr;").replace("&amp;harr;", "&harr;")
     
     # Fix any crossing tags
     text = re.sub(r"<b><i>(.*?)</b></font></i>", r"<b><i>\1</i></b></font>", text)
@@ -323,6 +309,7 @@ def make_section_banner(title: str) -> Table:
         ("BOX", (0, 0), (-1, -1), 0.5, NAVY_PRIMARY),
     ]))
     t.keepWithNext = True
+    t.spaceAfter = 2.0
     return t
 
 
@@ -377,6 +364,96 @@ def make_code_block(code_text: str, lang: str = "") -> Table:
         ("LINELEFT", (0, 0), (0, -1), 2.5, NAVY_HEADER),
     ]))
     return t
+
+
+MERMAID_CACHE_DIR = Path.home() / ".cache" / "cheatsheet_mermaid"
+MERMAID_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def render_mermaid_png(code_text: str) -> Optional[Path]:
+    """Render a Mermaid diagram code block to a PNG file using Kroki API or local mmdc."""
+    clean_code = code_text.strip()
+    if not clean_code:
+        return None
+    code_hash = hashlib.md5(clean_code.encode("utf-8")).hexdigest()
+    out_png = MERMAID_CACHE_DIR / f"mermaid_{code_hash}.png"
+    if out_png.exists() and out_png.stat().st_size > 500:
+        return out_png
+
+    # 1. Try Kroki API (zero dependency, ultra-fast, consistent across platforms)
+    try:
+        data = clean_code.encode("utf-8")
+        req = urllib.request.Request(
+            "https://kroki.io/mermaid/png",
+            data=data,
+            headers={
+                "Content-Type": "text/plain; charset=utf-8",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CheatsheetBot/1.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            content = resp.read()
+            if content and len(content) > 500:
+                out_png.write_bytes(content)
+                return out_png
+    except Exception:
+        pass
+
+    # 2. Try local mmdc CLI fallback
+    try:
+        mmd_file = MERMAID_CACHE_DIR / f"temp_{code_hash}.mmd"
+        mmd_file.write_text(clean_code, encoding="utf-8")
+        cmd = ["mmdc", "-i", str(mmd_file), "-o", str(out_png), "-b", "transparent", "-s", "2"]
+        if Path("/etc/puppeteer-config.json").exists():
+            cmd.extend(["-p", "/etc/puppeteer-config.json"])
+        subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if out_png.exists() and out_png.stat().st_size > 500:
+            return out_png
+    except Exception:
+        pass
+
+    return None
+
+
+def make_mermaid_flowable(code_text: str) -> Any:
+    """Wrap rendered Mermaid PNG into a styled, proportional ReportLab card."""
+    png_path = render_mermaid_png(code_text)
+    if not png_path or not png_path.exists():
+        return make_code_block(code_text, "mermaid")
+
+    try:
+        with PILImage.open(png_path) as im:
+            orig_w, orig_h = im.size
+
+        if orig_w <= 0 or orig_h <= 0:
+            return make_code_block(code_text, "mermaid")
+
+        # Fit within body width while respecting aspect ratio
+        max_w = BODY_W - 12.0  # internal padding clearance
+        max_h = 240.0         # max ~3.3 inches height to prevent unnatural page breaks
+
+        scale = min(max_w / orig_w, max_h / orig_h)
+        disp_w = orig_w * scale
+        disp_h = orig_h * scale
+
+        rl_img = RLImage(str(png_path), width=disp_w, height=disp_h)
+
+        t = Table([[rl_img]], colWidths=[BODY_W])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), BG_LIGHT),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("BOX", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+            ("LINELEFT", (0, 0), (0, -1), 2.5, ACCENT_BLUE),
+        ]))
+        return KeepTogether(t)
+    except Exception:
+        return make_code_block(code_text, "mermaid")
+
 
 
 def _parse_ascii_table(code_text: str):
@@ -514,6 +591,32 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
     story.append(make_para("High-Yield Comprehensive Revision Digest | Quick-Scan Examination Reference", STYLE_SUBTITLE))
     story.append(HRFlowable(width="100%", thickness=0.8, color=NAVY_PRIMARY, spaceBefore=0, spaceAfter=3))
     
+    pending_headings: List[Any] = []
+
+    def emit(flowable_or_list):
+        nonlocal pending_headings
+        if flowable_or_list is None:
+            return
+        items = flowable_or_list if isinstance(flowable_or_list, list) else [flowable_or_list]
+        if not items:
+            return
+        if pending_headings:
+            # Anchor pending headings to the first non-spacer flowable inside KeepTogether
+            non_spacer_idx = 0
+            while non_spacer_idx < len(items) and isinstance(items[non_spacer_idx], Spacer):
+                non_spacer_idx += 1
+            if non_spacer_idx < len(items):
+                bundle_items = pending_headings + items[:non_spacer_idx + 1]
+                story.append(KeepTogether(bundle_items))
+                pending_headings = []
+                for it in items[non_spacer_idx + 1:]:
+                    story.append(it)
+            else:
+                pending_headings.extend(items)
+        else:
+            for it in items:
+                story.append(it)
+
     lines = raw_md.splitlines()
     i = 0
     while i < len(lines):
@@ -534,27 +637,24 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
         # H1 Sections (Navy Ribbon Banner)
         if line.startswith("## "):
             sec_title = line.replace("## ", "").strip()
-            story.append(Spacer(1, 2.5))
-            story.append(make_section_banner(sec_title))
-            story.append(Spacer(1, 1.8))
+            pending_headings.append(Spacer(1, 2.5))
+            pending_headings.append(make_section_banner(sec_title))
             i += 1
             continue
             
         # H2 Subsections
         if line.startswith("### "):
             sub_title = line.replace("### ", "").strip()
-            story.append(Spacer(1, 1.8))
-            story.append(make_para(f"<b>{sub_title}</b>", STYLE_H2))
-            story.append(Spacer(1, 1.0))
+            pending_headings.append(Spacer(1, 1.8))
+            pending_headings.append(make_para(f"<b>{sub_title}</b>", STYLE_H2))
             i += 1
             continue
             
         # H3 Sub-subsections
         if line.startswith("#### "):
             h3_title = line.replace("#### ", "").strip()
-            story.append(Spacer(1, 1.2))
-            story.append(make_para(f"<b>{h3_title}</b>", STYLE_H3))
-            story.append(Spacer(1, 0.8))
+            pending_headings.append(Spacer(1, 1.2))
+            pending_headings.append(make_para(f"<b>{h3_title}</b>", STYLE_H3))
             i += 1
             continue
             
@@ -570,15 +670,14 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
                 i += 1
             code_text = "\n".join(code_lines)
             if code_text.strip():
-                parsed_tbl = _parse_ascii_table(code_text)
-                if parsed_tbl:
-                    story.append(Spacer(1, 1.2))
-                    story.append(make_table(parsed_tbl[0], parsed_tbl[1]))
-                    story.append(Spacer(1, 1.8))
+                if fence_lang in ("mermaid", "mmd"):
+                    emit([Spacer(1, 1.5), make_mermaid_flowable(code_text), Spacer(1, 2.0)])
                 else:
-                    story.append(Spacer(1, 1.2))
-                    story.append(KeepTogether(make_code_block(code_text, fence_lang)))
-                    story.append(Spacer(1, 1.8))
+                    parsed_tbl = _parse_ascii_table(code_text)
+                    if parsed_tbl:
+                        emit([Spacer(1, 1.2), make_table(parsed_tbl[0], parsed_tbl[1]), Spacer(1, 1.8)])
+                    else:
+                        emit([Spacer(1, 1.2), KeepTogether(make_code_block(code_text, fence_lang)), Spacer(1, 1.8)])
             continue
 
         # Callouts (> [!warning] or > [!def])
@@ -599,8 +698,7 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
                 else:
                     c_body = [c_label]
                     c_label = "EXAM TRAP / KEY EXCEPTION"
-            story.append(KeepTogether(make_callout_box(c_label, " ".join(c_body), "warning")))
-            story.append(Spacer(1, 1.8))
+            emit([KeepTogether(make_callout_box(c_label, " ".join(c_body), "warning")), Spacer(1, 1.8)])
             continue
             
         # Tables
@@ -611,9 +709,7 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
             while i < len(lines) and "|" in lines[i].strip() and lines[i].strip():
                 rows.append([c.strip() for c in lines[i].strip().strip("|").split("|")])
                 i += 1
-            story.append(Spacer(1, 1.2))
-            story.append(make_table(header, rows))
-            story.append(Spacer(1, 2.0))
+            emit([Spacer(1, 1.2), make_table(header, rows), Spacer(1, 2.0)])
             continue
             
         # Bullets & Intelligent 2-Column Grid Detection
@@ -649,14 +745,10 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
             if len(lvl1_items) == 1 and len(sub_items) >= 4 and (sum(len(t) for _, t in sub_items) / len(sub_items) <= 65):
                 # Render Level 1 parent
                 p_parent = make_para(f'<font color="{ACCENT_BLUE.hexval()}" size="7.5">&#8226;</font>&nbsp;&nbsp;{lvl1_items[0][1]}', STYLE_BULLET_L1_HEAD)
-                story.append(p_parent)
-                # Render sub-items as double-column grid!
-                story.append(make_double_column_grid(sub_items))
-                story.append(Spacer(1, 1.2))
+                emit([p_parent, make_double_column_grid(sub_items), Spacer(1, 1.2)])
             elif len(bullet_group) >= 4 and (sum(len(t) for _, t in bullet_group) / len(bullet_group) <= 60):
                 # Whole group as double column
-                story.append(make_double_column_grid(bullet_group))
-                story.append(Spacer(1, 1.2))
+                emit([make_double_column_grid(bullet_group), Spacer(1, 1.2)])
             else:
                 # Render individual hierarchical bullets
                 for idx, (lvl, text) in enumerate(bullet_group):
@@ -680,7 +772,7 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
                     else:
                         bullet_sym = f'<font color="{ACCENT_BLUE.hexval()}" size="7.5">&#8226;</font>'
                         p = make_para(f"{bullet_sym}&nbsp;&nbsp;{text}", STYLE_BULLET_L1)
-                    story.append(p)
+                    emit(p)
             continue
             
         # Numbered List
@@ -697,13 +789,18 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
                 num_p = make_para(f'<b><font color="{TEXT_MUTED.hexval()}">{n_num}.</font></b>&nbsp;&nbsp;{n_text}', STYLE_BULLET_L2)
             else:
                 num_p = make_para(f'<b><font color="{NAVY_HEADER.hexval()}">{n_num}.</font></b>&nbsp;&nbsp;{n_text}', STYLE_BULLET_L1)
-            story.append(num_p)
+            emit(num_p)
             i += 1
             continue
             
         # Plain text
-        story.append(make_para(line, STYLE_BODY))
+        emit(make_para(line, STYLE_BODY))
         i += 1
+
+    if pending_headings:
+        for it in pending_headings:
+            story.append(it)
+        pending_headings = []
 
     def draw_footer(canvas, doc):
         canvas.saveState()

@@ -11,6 +11,11 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    from scripts.math_typography import sanitize_math_typography
+except ImportError:
+    from math_typography import sanitize_math_typography
+
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
@@ -133,22 +138,7 @@ STYLE_FORMULA = ParagraphStyle(
 
 def clean_latex_math(text: str) -> str:
     """Turn raw LaTeX equations into clean readable arithmetic expressions."""
-    if not text:
-        return ""
-    # Strip unmapped Devanagari / Indic Unicode scripts to prevent black square missing glyph boxes (■) in Helvetica
-    text = re.sub(r'[\u0900-\u097F]+', '', text)
-    text = text.replace("$$", " ").replace("$", " ")
-    text = re.sub(r"\\?text\{([^}]+)\}", r"\1", text)
-    for _ in range(5):
-        text = re.sub(r"\\?frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1) / (\2)", text)
-    text = text.replace(r"\left(", "(").replace(r"\right)", ")")
-    text = text.replace(r"\left[", "[").replace(r"\right]", "]")
-    text = text.replace(r"\approx", " ≈ ").replace(r"\times", " * ").replace(r"\cdot", " * ")
-    text = text.replace(r"\le", "<=").replace(r"\ge", ">=").replace(r"\pm", "+/-")
-    text = text.replace("{", "").replace("}", "")
-    text = text.replace("→", " &rarr; ").replace("₹", "Rs. ")
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return sanitize_math_typography(text)
 
 
 def clean_inline(text: str) -> str:
@@ -185,6 +175,8 @@ def clean_inline(text: str) -> str:
 
     text = text.replace("&amp;rarr;", "&rarr;").replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
     text = text.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
+    text = text.replace("&lt;sub&gt;", "<sub>").replace("&lt;/sub&gt;", "</sub>")
+    text = text.replace("&lt;sup&gt;", "<sup>").replace("&lt;/sup&gt;", "</sup>")
     text = re.sub(r"&lt;font(.*?)&gt;", r"<font\1>", text)
     text = text.replace("&lt;/font&gt;", "</font>")
     return text

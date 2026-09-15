@@ -22,6 +22,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+try:
+    from scripts.math_typography import sanitize_math_typography
+except ImportError:
+    from math_typography import sanitize_math_typography
+
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
@@ -126,74 +131,8 @@ def _ascii_safe(text: str) -> str:
 
 
 def sanitize_math_expressions(text: str) -> str:
-    r"""Convert raw LaTeX math expressions (\frac{}, \approx, \sqrt{}, \text{}, etc.) into clean typography."""
-    text = _ascii_safe(text)
-    # 0. Clean set brackets, spacing, and arrows
-    text = text.replace(r'\{', '{').replace(r'\}', '}')
-    text = text.replace(r'\left\{', '{').replace(r'\right\}', '}')
-    text = text.replace(r'\left(', '(').replace(r'\right)', ')')
-    text = text.replace(r'\left[', '[').replace(r'\right]', ']')
-    text = text.replace(r'\setminus', ' minus ')
-    text = re.sub(r'\\(?:q?quad)', '  ', text)
-    text = text.replace(r'\,', ' ').replace(r'\;', ' ').replace(r'\:', ' ')
-    text = re.sub(r'\\xrightarrow(?:\[(.*?)\])?\{(.*?)\}', r' --[\2]--> ', text)
-
-    # 1. Un-nest \frac{a}{b} iteratively (up to 5 levels of nesting)
-    for _ in range(5):
-        def repl_frac(m):
-            num = m.group(1).strip()
-            den = m.group(2).strip()
-            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±']) and not (s.startswith('(') and s.endswith(')'))
-            num_clean = f"({num})" if has_op(num) else num
-            den_clean = f"({den})" if has_op(den) else den
-            return f"{num_clean} / {den_clean}"
-        text = re.sub(r'\\?(?:frac|tfrac|dfrac)\{([^{}]+)\}\{([^{}]+)\}', repl_frac, text)
-
-    # 2. Text formatting macros
-    text = re.sub(r'\\(?:mathrm|textbf|mathbf)\{([^}]+)\}', r'<b>\1</b>', text)
-    text = re.sub(r'\\text\{([^}]+)\}', r'\1', text)
-    text = re.sub(r'\\(?:mathit|textit)\{([^}]+)\}', r'<i>\1</i>', text)
-    text = re.sub(r'\\sqrt\{([^}]+)\}', r'√(\1)', text)
-    text = re.sub(r'\\sqrt([0-9a-zA-Z])', r'√\1', text)
-
-    # 3. Greek & math symbols
-    symbols = {
-        r'\approx': '~', r'\sim': '~', r'\neq': '!=', r'\ne': '!=',
-        r'\leq': '<=', r'\le': '<=', r'\geq': '>=', r'\ge': '>=',
-        r'\times': 'x', r'\div': '/', r'\pm': '+/-', r'\mp': '-/+',
-        r'\cdot': '*', r'\circ': ' deg', r'\degree': ' deg', r'\infty': 'inf',
-        r'\rightarrow': '->', r'\to': '->', r'\leftarrow': '<-',
-        r'\Rightarrow': '=>', r'\Leftarrow': '<=', r'\Leftrightarrow': '<=>',
-        r'\pi': 'pi', r'\theta': 'theta', r'\alpha': 'alpha', r'\beta': 'beta',
-        r'\gamma': 'gamma', r'\Delta': 'Delta', r'\delta': 'delta', r'\lambda': 'lambda',
-        r'\mu': 'mu', r'\sigma': 'sigma', r'\omega': 'omega', r'\Omega': 'Omega',
-        r'\phi': 'phi', r'\rho': 'rho', r'\tau': 'tau', r'\epsilon': 'epsilon',
-        r'\sum': 'SUM', r'\prod': 'PROD', r'\int': 'INT',
-    }
-    for k, v in symbols.items():
-        text = re.sub(re.escape(k) + r'(?![a-zA-Z])', v, text)
-
-    # 4. Superscripts and Subscripts
-    text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
-    text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
-
-    # 1. Un-nest \frac{a}{b} iteratively (up to 5 levels of nesting)
-    for _ in range(5):
-        def repl_frac(m):
-            num = m.group(1).strip()
-            den = m.group(2).strip()
-            has_op = lambda s: any(op in s for op in ['+', '-', '*', '=', '±']) and not (s.startswith('(') and s.endswith(')'))
-            num_clean = f"({num})" if has_op(num) else num
-            den_clean = f"({den})" if has_op(den) else den
-            return f"{num_clean} / {den_clean}"
-        text = re.sub(r'\\?(?:frac|tfrac|dfrac)\{([^{}]+)\}\{([^{}]+)\}', repl_frac, text)
-
-    # 5. Clean up math dollar signs $...$
-    text = re.sub(r'\$([^\$]+)\$', r'\1', text)
-    text = text.replace('$', '')
-    # Strip any dangling LaTeX slashes before words (e.g. \frac left as \frac)
-    text = re.sub(r'\\([a-zA-Z]+)', r'\1', text)
-    return text
+    r"""Convert raw LaTeX math expressions into clean typography via unified math engine."""
+    return sanitize_math_typography(text)
 
 
 _clean_latex_math = sanitize_math_expressions
