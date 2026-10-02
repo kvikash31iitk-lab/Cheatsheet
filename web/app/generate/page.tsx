@@ -285,7 +285,7 @@ function GenerateForm() {
         </div>
 
         {/* Live Playlist Progress Dashboard Banner */}
-        {(playlistStatus || mode === 'playlist') && (() => {
+        {playlistJobId && playlistStatus && (() => {
           if (!playlistStatus) return null;
           // Extract percentage and item progress if available in manifest or string
           const manifest = playlistStatus.manifest;
