@@ -200,6 +200,17 @@ STYLE_CO_BODY = ParagraphStyle(
     alignment=TA_JUSTIFY,
 )
 
+STYLE_CAPTION = ParagraphStyle(
+    "RefinedCaption",
+    parent=ss["Normal"],
+    fontName="Helvetica-Oblique",
+    fontSize=7.6,
+    leading=10.5,
+    textColor=colors.HexColor("#475569"),
+    alignment=TA_CENTER,
+    spaceBefore=3,
+)
+
 
 def _ascii_safe(text: str) -> str:
     """Sanitize text to Latin-1 range for standard Helvetica, preventing black square (■) glyph errors."""
@@ -272,6 +283,7 @@ def clean_inline(text: str) -> str:
     text = text.replace("&lt;u&gt;", "<u>").replace("&lt;/u&gt;", "</u>")
     text = text.replace("&lt;sub&gt;", "<sub>").replace("&lt;/sub&gt;", "</sub>")
     text = text.replace("&lt;sup&gt;", "<sup>").replace("&lt;/sup&gt;", "</sup>")
+    text = re.sub(r"&lt;br\s*/?&gt;", "<br/>", text, flags=re.IGNORECASE)
     text = re.sub(r"&lt;font(.*?)&gt;", r"<font\1>", text)
     text = text.replace("&lt;/font&gt;", "</font>")
     text = text.replace("&amp;rarr;", "&rarr;").replace("&amp;larr;", "&larr;").replace("&amp;harr;", "&harr;")
@@ -308,7 +320,6 @@ def make_section_banner(title: str) -> Table:
         ("LINELEFT", (0, 0), (0, -1), 3.5, AMBER_HIGHLIGHT),
         ("BOX", (0, 0), (-1, -1), 0.5, NAVY_PRIMARY),
     ]))
-    t.keepWithNext = True
     t.spaceAfter = 2.0
     return t
 
@@ -366,6 +377,95 @@ def make_code_block(code_text: str, lang: str = "") -> Table:
     return t
 
 
+FIGURE_CACHE_DIR = Path.home() / ".cache" / "cheatsheet_figures"
+FIGURE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def make_figure(src: str, caption: str = "") -> list[Any]:
+    """Render an academic figure image inside a framed card with caption & credit."""
+    p: Path | None = None
+    if src.startswith(("http://", "https://")):
+        src_hash = hashlib.md5(src.encode("utf-8")).hexdigest()
+        ext = Path(src.split("?")[0]).suffix or ".png"
+        cached_file = FIGURE_CACHE_DIR / f"fig_{src_hash}{ext}"
+        if not cached_file.exists() or cached_file.stat().st_size < 500:
+            try:
+                req = urllib.request.Request(
+                    src,
+                    headers={"User-Agent": "CheatsheetEducationalBot/1.0 (contact@cheetsheet.tech)"}
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    cached_file.write_bytes(resp.read())
+            except Exception:
+                pass
+        if cached_file.exists() and cached_file.stat().st_size > 500:
+            p = cached_file
+    else:
+        local_p = Path(src)
+        if local_p.exists():
+            p = local_p.resolve()
+
+    if p is None or not p.exists():
+        return [make_para(f"<i>[Figure image not found: {caption or src}]</i>", STYLE_BODY)]
+
+    try:
+        with PILImage.open(p) as im:
+            iw, ih = im.size
+    except Exception as exc:
+        return [make_para(f"<i>[Figure image error: {exc}]</i>", STYLE_BODY)]
+
+    max_w = BODY_W - 16
+    max_h = 125
+    scale = min(max_w / iw, max_h / ih, 1.0)
+    disp_w, disp_h = iw * scale, ih * scale
+
+    rl_img = RLImage(str(p), width=disp_w, height=disp_h)
+    rl_img.hAlign = "CENTER"
+
+    clean_caption = ""
+    if caption:
+        clean_caption = re.sub(r'[\(\[\{]?\s*Source:.*?[\)\]\}]?', '', caption, flags=re.IGNORECASE).strip()
+        clean_caption = clean_caption.rstrip(" -–—:|").strip()
+
+    # For smaller/portrait photos, use a compact 2-column side-by-side card to optimize vertical space
+    if disp_w < BODY_W * 0.42 and clean_caption:
+        img_col_w = disp_w + 16
+        text_col_w = BODY_W - img_col_w
+        cap_p = make_para(f'<font color="#334155" size="8"><b>FIGURE:</b> {clean_caption}</font>', STYLE_CAPTION)
+        t = Table([[rl_img, cap_p]], colWidths=[img_col_w, text_col_w])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), BG_LIGHT),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (0, 0), "CENTER"),
+            ("ALIGN", (1, 0), (1, 0), "LEFT"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("BOX", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+            ("LINELEFT", (0, 0), (0, -1), 2.5, ACCENT_BLUE),
+        ]))
+        return [Spacer(1, 2.5), KeepTogether(t), Spacer(1, 3)]
+
+    card_rows = [[rl_img]]
+    if clean_caption:
+        cap_p = make_para(f'<font color="#475569" size="7.5"><b>FIGURE:</b> <i>{clean_caption}</i></font>', STYLE_CAPTION)
+        card_rows.append([cap_p])
+
+    t = Table(card_rows, colWidths=[BODY_W])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), BG_LIGHT),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, 0), 6),
+        ("BOTTOMPADDING", (0, -1), (-1, -1), 6),
+        ("BOX", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+        ("LINELEFT", (0, 0), (0, -1), 2.5, ACCENT_BLUE),
+    ]))
+    return [Spacer(1, 2.5), KeepTogether(t), Spacer(1, 3)]
+
+
 MERMAID_CACHE_DIR = Path.home() / ".cache" / "cheatsheet_mermaid"
 MERMAID_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -380,7 +480,7 @@ def render_mermaid_png(code_text: str) -> Optional[Path]:
     if out_png.exists() and out_png.stat().st_size > 500:
         return out_png
 
-    # 1. Try Kroki API (zero dependency, ultra-fast, consistent across platforms)
+    # 1. Try Kroki API
     try:
         data = clean_code.encode("utf-8")
         req = urllib.request.Request(
@@ -391,6 +491,22 @@ def render_mermaid_png(code_text: str) -> Optional[Path]:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CheatsheetBot/1.0",
             },
         )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            content = resp.read()
+            if content and len(content) > 500:
+                out_png.write_bytes(content)
+                return out_png
+    except Exception:
+        pass
+
+    # 2. Try mermaid.ink API (fast, handles mindmaps and modern diagrams)
+    try:
+        import base64
+        b64 = base64.b64encode(clean_code.encode("utf-8")).decode("ascii")
+        req = urllib.request.Request(
+            f"https://mermaid.ink/img/{b64}",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CheatsheetBot/1.0"},
+        )
         with urllib.request.urlopen(req, timeout=12) as resp:
             content = resp.read()
             if content and len(content) > 500:
@@ -399,7 +515,7 @@ def render_mermaid_png(code_text: str) -> Optional[Path]:
     except Exception:
         pass
 
-    # 2. Try local mmdc CLI fallback
+    # 3. Try local mmdc CLI fallback
     try:
         mmd_file = MERMAID_CACHE_DIR / f"temp_{code_hash}.mmd"
         mmd_file.write_text(clean_code, encoding="utf-8")
@@ -607,7 +723,13 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
                 non_spacer_idx += 1
             if non_spacer_idx < len(items):
                 bundle_items = pending_headings + items[:non_spacer_idx + 1]
-                story.append(KeepTogether(bundle_items))
+                flat_bundle = []
+                for b_item in bundle_items:
+                    if isinstance(b_item, KeepTogether):
+                        flat_bundle.extend(b_item._content)
+                    else:
+                        flat_bundle.append(b_item)
+                story.append(KeepTogether(flat_bundle))
                 pending_headings = []
                 for it in items[non_spacer_idx + 1:]:
                     story.append(it)
@@ -617,7 +739,22 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
             for it in items:
                 story.append(it)
 
+    summary_match = re.search(r"<!--\s*SUMMARY\s*-->(.*?)<!--\s*/SUMMARY\s*-->", raw_md, re.DOTALL)
+    if summary_match:
+        summary_raw = summary_match.group(1).strip()
+        raw_md = raw_md[:summary_match.start()] + raw_md[summary_match.end():]
+        s_lines = [l.strip() for l in summary_raw.splitlines() if l.strip()]
+        if s_lines:
+            summary_body = []
+            for sl in s_lines:
+                sl_clean = re.sub(r"^[\*\-]\s*", "", sl)
+                summary_body.append(sl_clean)
+            story.append(Spacer(1, 2))
+            story.append(make_callout_box("EXECUTIVE SUMMARY & AT A GLANCE", "<br/>".join(summary_body), "def"))
+            story.append(Spacer(1, 2.5))
+
     lines = raw_md.splitlines()
+    seen_first_section = False
     i = 0
     while i < len(lines):
         line = lines[i].strip()
@@ -625,6 +762,11 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
             i += 1
             continue
             
+        if line in ("<!--PAGEBREAK-->", "\\pagebreak", '<div class="page-break"></div>'):
+            story.append(PageBreak())
+            i += 1
+            continue
+
         if re.match(r"^(\-{3,}|\*{3,}|_{3,})$", line):
             i += 1
             continue
@@ -636,6 +778,7 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
 
         # H1 Sections (Navy Ribbon Banner)
         if line.startswith("## "):
+            seen_first_section = True
             sec_title = line.replace("## ", "").strip()
             pending_headings.append(Spacer(1, 2.5))
             pending_headings.append(make_section_banner(sec_title))
@@ -645,8 +788,12 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
         # H2 Subsections
         if line.startswith("### "):
             sub_title = line.replace("### ", "").strip()
-            pending_headings.append(Spacer(1, 1.8))
-            pending_headings.append(make_para(f"<b>{sub_title}</b>", STYLE_H2))
+            if not seen_first_section:
+                story.append(make_para(f"<i>{sub_title}</i>", STYLE_SUBTITLE))
+                story.append(Spacer(1, 1.5))
+            else:
+                pending_headings.append(Spacer(1, 1.8))
+                pending_headings.append(make_para(f"<b>{sub_title}</b>", STYLE_H2))
             i += 1
             continue
             
@@ -746,7 +893,7 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
                 # Render Level 1 parent
                 p_parent = make_para(f'<font color="{ACCENT_BLUE.hexval()}" size="7.5">&#8226;</font>&nbsp;&nbsp;{lvl1_items[0][1]}', STYLE_BULLET_L1_HEAD)
                 emit([p_parent, make_double_column_grid(sub_items), Spacer(1, 1.2)])
-            elif len(bullet_group) >= 4 and (sum(len(t) for _, t in bullet_group) / len(bullet_group) <= 60):
+            elif len(bullet_group) >= 4 and (sum(len(t) for _, t in bullet_group) / len(bullet_group) <= 165):
                 # Whole group as double column
                 emit([make_double_column_grid(bullet_group), Spacer(1, 1.2)])
             else:
@@ -792,7 +939,16 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
             emit(num_p)
             i += 1
             continue
-            
+
+        # Image Figures: ![caption](path_or_url)
+        img_match = re.match(r"^!\[(.*?)\]\((.*?)\)$", line)
+        if img_match:
+            caption_text = img_match.group(1).strip()
+            img_src = img_match.group(2).strip()
+            emit(make_figure(img_src, caption_text))
+            i += 1
+            continue
+
         # Plain text
         emit(make_para(line, STYLE_BODY))
         i += 1

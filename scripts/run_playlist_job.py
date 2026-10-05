@@ -14,6 +14,8 @@ import argparse
 import json
 import os
 import random
+import re
+import shutil
 import sys
 import time
 
@@ -118,36 +120,42 @@ def load_playlist_manifest(manifest_path: Path, playlist_url: str) -> dict[str, 
     }
 
 
-import re
-
 def _extract_episode_number(title: str) -> float | None:
-    """Extract class/episode/part number from video title (e.g. 'Class-8' -> 8.0, 'Part-1' -> 1.0, 'Lec-28' -> 28.0)."""
+    """Extract class/lecture or episode/part number from video title."""
     if not title:
         return None
 
-    # Priority 1: Match explicit keyword prefixes (e.g., 'Part-1', 'Part 1', 'Class-8', 'Lec-28', 'Lec 28', 'Lecture 5', 'Ep 3', '#4')
-    match = re.search(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*(\d+(?:\.\d+)?)\b', title, re.IGNORECASE)
+    # Priority 1: Match explicit Class or Lecture prefix
+    match_cls = re.search(r'\b(?:class|lecture|lec)[-:\s]*(\d+(?:\.\d+)?)\b', title, re.IGNORECASE)
+    if match_cls:
+        try:
+            return float(match_cls.group(1))
+        except ValueError:
+            pass
+
+    # Priority 2: Match general episode / part / vol prefixes
+    match_ep = re.search(r'\b(?:ep|episode|part|vol|v|#)[-:\s]*(\d+(?:\.\d+)?)\b', title, re.IGNORECASE)
+    if match_ep:
+        try:
+            return float(match_ep.group(1))
+        except ValueError:
+            pass
+
+    return None
+
+
+def _extract_part_number(title: str) -> float | None:
+    """Extract sub-part number if present (e.g. 'Part-2' -> 2.0)."""
+    if not title:
+        return None
+    match = re.search(r'\b(?:part|ep|episode|vol|v)[-:\s]*(\d+(?:\.\d+)?)\b', title, re.IGNORECASE)
     if match:
         try:
             return float(match.group(1))
         except ValueError:
             pass
+    return None
 
-    # Priority 2: Match trailing 'Class 26' or numbers after hyphen/pipe separators (e.g. 'Class 26 EPFO Complete Course' -> 26.0)
-    match_sec = re.search(r'\b(?:class|part|lec|lecture)[-:\s]*(\d+)', title, re.IGNORECASE)
-    if match_sec:
-        try:
-            return float(match_sec.group(1))
-        except ValueError:
-            pass
-
-    # Priority 3: Fallback standalone number if near 'Class' or at end of title segment
-    match_num = re.search(r'(?:class|part)\s*(\d+)', title, re.IGNORECASE)
-    if match_num:
-        try:
-            return float(match_num.group(1))
-        except ValueError:
-            pass
 
 def _extract_topic_key(title: str) -> str:
     """Extract specific subject/sub-topic chunk from title (e.g. 'Audit', 'Cost Accounting', 'Bills of Exchange').
@@ -164,6 +172,7 @@ def _extract_topic_key(title: str) -> str:
     ignore_phrases = {
         "upsc", "epfo", "apfc", "ao", "eo", "exam", "general accounting principles",
         "complete course", "by anurag sir", "anurag sir", "target upsc",
+        "upsc epfo ao/eo & apfc computer",
     }
     
     for seg in segments:
@@ -180,36 +189,60 @@ def _extract_topic_key(title: str) -> str:
     # Fallback: token-based
     cleaned = re.sub(r'\b(?:class|ep|episode|part|lecture|lec|vol|v|#)[-:\s]*\d+(?:\.\d+)?\b', '', title, flags=re.IGNORECASE)
     cleaned = re.sub(r'[\d_|\-–—:]+', ' ', cleaned)
-    tokens = [w.lower() for w in cleaned.split() if len(w) > 3 and w.lower() not in {"upsc", "epfo", "apfc", "general", "accounting", "principles", "anurag", "complete", "course"}]
+    tokens = [w.lower() for w in cleaned.split() if len(w) > 3 and w.lower() not in {"upsc", "epfo", "apfc", "general", "accounting", "principles", "anurag", "complete", "course", "computer"}]
     return tokens[0] if tokens else ""
+
+
+def _clean_module_title(title: str) -> str:
+    s = title
+    for noise in [
+        "Computer By Sandeep Sir", "By Sandeep Sir", "UPSC EPFO Computer Class|",
+        "UPSC EPFO AO/EO & APFC Computer", "UPSC EPFO AO/EO & APFC", "UPSC EPFO",
+        "By Anurag Sir", "Anurag Sir",
+    ]:
+        s = re.sub(re.escape(noise), "", s, flags=re.IGNORECASE)
+    parts = [p.strip() for p in re.split(r'[|–—]', s) if p.strip()]
+    return " | ".join(parts) if parts else title
 
 
 def consolidate_markdowns(
     items_results: list[dict[str, Any]],
     playlist_title: str = "Playlist Summary",
 ) -> str:
-    """Combine individual video markdowns into a master consolidated markdown, grouped by sub-topic and sorted by episode number."""
-    # Find the earliest playlist index for each distinct sub-topic
-    topic_first_seen: dict[str, int] = {}
-    for item in items_results:
-        t_key = _extract_topic_key(item.get("title", ""))
-        idx = int(item.get("playlist_index", 0))
-        if t_key and t_key not in topic_first_seen:
-            topic_first_seen[t_key] = idx
+    """Combine individual video markdowns into a master consolidated markdown, grouped and ordered logically."""
+    # Check if items have explicit class/lecture numbers
+    has_class_numbers = any(
+        re.search(r'\b(?:class|lecture|lec)[-:\s]*\d+', item.get("title", ""), re.IGNORECASE)
+        for item in items_results
+    )
 
-    def sort_key(item: dict[str, Any]) -> tuple[int, float, int]:
-        title = item.get("title", "")
-        t_key = _extract_topic_key(title)
-        topic_order = topic_first_seen.get(t_key, 999)
-        ep = _extract_episode_number(title)
-        
-        if ep is not None:
-            return (topic_order, ep, int(item.get("playlist_index", 0)))
-        return (topic_order, 999.0, int(item.get("playlist_index", 0)))
+    if has_class_numbers:
+        # For structured lecture series, sort primarily by Class/Lecture number, then sub-part, then playlist index
+        def sort_key(item: dict[str, Any]) -> tuple[float, float, int]:
+            title = item.get("title", "")
+            cls_match = re.search(r'\b(?:class|lecture|lec)[-:\s]*(\d+(?:\.\d+)?)\b', title, re.IGNORECASE)
+            cls_num = float(cls_match.group(1)) if cls_match else 999.0
+            p_num = _extract_part_number(title) or 0.0
+            return (cls_num, p_num, int(item.get("playlist_index", 0)))
+    else:
+        # Find the earliest playlist index for each distinct sub-topic
+        topic_first_seen: dict[str, int] = {}
+        for item in items_results:
+            t_key = _extract_topic_key(item.get("title", ""))
+            idx = int(item.get("playlist_index", 0))
+            if t_key and t_key not in topic_first_seen:
+                topic_first_seen[t_key] = idx
+
+        def sort_key(item: dict[str, Any]) -> tuple[int, float, int]:
+            title = item.get("title", "")
+            t_key = _extract_topic_key(title)
+            topic_order = topic_first_seen.get(t_key, 999)
+            ep = _extract_episode_number(title)
+            if ep is not None:
+                return (topic_order, ep, int(item.get("playlist_index", 0)))
+            return (topic_order, 999.0, int(item.get("playlist_index", 0)))
 
     sorted_items = sorted(items_results, key=sort_key)
-
-
 
     lines = [
         f"# {playlist_title.strip()}",
@@ -221,13 +254,9 @@ def consolidate_markdowns(
     ]
 
     for display_idx, item in enumerate(sorted_items, start=1):
-        idx = item.get("playlist_index", display_idx)
         raw_title = str(item.get("title") or f"Module {display_idx}").strip()
-        # Clean title for markdown link text
-        clean_title = re.sub(r'[\[\]]', '', raw_title)
-        v_id = item.get('video_id', '') or f"vid_{display_idx}"
-        anchor = f"module-{display_idx}-{v_id}"
-        lines.append(f"{display_idx}. [{clean_title}](#{anchor})")
+        clean_title = _clean_module_title(raw_title)
+        lines.append(f"{display_idx}. **{clean_title}**")
 
     lines.append("")
     lines.append("---")
@@ -235,15 +264,13 @@ def consolidate_markdowns(
 
     for display_idx, item in enumerate(sorted_items, start=1):
         raw_title = str(item.get("title") or f"Module {display_idx}").strip()
-        v_id = item.get('video_id', '') or f"vid_{display_idx}"
-        anchor = f"module-{display_idx}-{v_id}"
+        clean_title = _clean_module_title(raw_title)
         md_path_str = item.get("markdown_path")
 
-        lines.append(f'<a name="{anchor}"></a>')
-        lines.append(f"# Module {display_idx}: {raw_title}")
+        lines.append(f"# Module {display_idx}: {clean_title}")
         lines.append("")
         if item.get("url"):
-            lines.append(f"**Source Video**: [{item['url']}]({item['url']})")
+            lines.append(f"**Source Video**: {item['url']}")
             lines.append("")
 
         if md_path_str and Path(md_path_str).is_file():
@@ -296,8 +323,12 @@ def run_playlist_job(
     import threading
 
     def emit(msg: str) -> None:
-        if progress:
-            print(f"[playlist-job] {msg}", flush=True)
+        if callable(progress):
+            try:
+                progress(msg)
+            except Exception:
+                pass
+        print(f"[playlist-job] {msg}", flush=True)
 
     feats = _normalize_features(features or [])
     root_dir = Path(out_dir) if out_dir else (DEFAULT_RUN_ROOT / "playlists" / "run")
@@ -305,6 +336,7 @@ def run_playlist_job(
 
     manifest_path = root_dir / "playlist_manifest.json"
     manifest = load_playlist_manifest(manifest_path, playlist_url)
+    t0 = time.time()
 
     emit(f"Extracting playlist info from: {playlist_url}")
     try:
@@ -533,10 +565,15 @@ def run_playlist_job(
             source_url=playlist_url,
         )
 
+    elapsed_sec = round(time.time() - t0, 2)
+    elapsed_formatted = f"{int(elapsed_sec // 60)}m {int(elapsed_sec % 60):02d}s"
+
     summary_result = {
         "playlist_url": playlist_url,
         "total_videos": len(playlist_items),
         "successful_videos": len(successful_results),
+        "elapsed_seconds": elapsed_sec,
+        "elapsed_formatted": elapsed_formatted,
         "root_dir": str(root_dir),
         "master_markdown_path": str(master_md_path),
         "master_pdf_path": str(master_pdf_path),
@@ -548,7 +585,7 @@ def run_playlist_job(
     manifest["summary"] = summary_result
     _atomic_write_json(manifest_path, manifest)
 
-    emit(f"Playlist batch processing finished! Master PDF: {master_pdf_path}")
+    emit(f"Playlist batch processing finished in {elapsed_formatted} ({elapsed_sec}s)! Master PDF: {master_pdf_path}")
     return summary_result
 
 
@@ -559,7 +596,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("playlist_url", help="YouTube playlist URL")
     parser.add_argument(
         "--kind",
-        choices=("cheatsheet", "book"),
+        choices=("cheatsheet", "cheatsheet_refined", "book", "mcq", "structured_notes"),
         default="cheatsheet",
         help="Output type for each video and master PDF",
     )
@@ -567,6 +604,12 @@ def _parse_args() -> argparse.Namespace:
         "--out-dir",
         default=None,
         help="Output folder to store all runs, manifests, and consolidated files",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=3,
+        help="Number of concurrent workers for processing videos (default: 3)",
     )
     parser.add_argument(
         "--delay-seconds",
@@ -602,6 +645,7 @@ def main() -> None:
             out_dir=Path(args.out_dir) if args.out_dir else None,
             delay_seconds=args.delay_seconds,
             max_videos=args.max_videos,
+            concurrency=args.concurrency,
             features=_normalize_features(args.features),
             continue_on_error=not args.stop_on_error,
         )

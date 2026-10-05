@@ -128,47 +128,14 @@ def _run(cmd: list[str], **kw):
     return subprocess.run(cmd, **kw)
 
 
-def fetch_metadata(url: str) -> dict:
-    """Return {'id', 'title', 'duration'} via yt-dlp --print.
-
-    Uses three separate ``--print`` flags so each field is on its own line —
-    avoids brittle separator parsing when titles contain pipes / tabs / etc.
-    """
-    p = run_ytdlp(
-        [
-            "--skip-download", "--no-playlist",
-            "--print", "%(id)s",
-            "--print", "%(title)s",
-            "--print", "%(duration)s",
-            url,
-        ],
-        operation="read video information",
-    )
-    lines = [ln for ln in p.stdout.splitlines() if ln.strip()]
-    if len(lines) < 3:
-        raise invalid_response_error(
-            "read video information",
-            f"Expected id/title/duration lines; output was:\n{p.stdout}",
-        )
-    # Last 3 non-empty lines are id, title, duration (warnings come before).
-    vid, title, duration = lines[-3], lines[-2], lines[-1]
-    try:
-        duration_f = float(duration or 0)
-    except ValueError:
-        raise invalid_response_error(
-            "read video information",
-            f"Non-numeric duration {duration!r}; output was:\n{p.stdout}",
-        )
-    return {"id": vid.strip(), "title": title.strip(), "duration": duration_f}
-
-
 def fetch_metadata_resilient(url: str, on_progress: ProgressFn = None) -> dict:
-    """Fetch metadata across extractor clients, with a usable URL-only fallback."""
-
+    """Fetch metadata across extractor clients, with oEmbed + transcript duration fallback."""
     video_id = extract_video_id(url)
-    # oEmbed is a lightweight public metadata path.  It avoids invoking the
-    # media extractor merely to obtain a title, and therefore keeps a
-    # caption-first job independent from downloadable YouTube formats.
+    title = ""
+    channel = ""
+    duration = 0.0
+
+    # 1. oEmbed is a lightweight public metadata path immune to YouTube datacenter IP blocking.
     try:
         endpoint = "https://www.youtube.com/oembed?" + urlencode(
             {
@@ -176,15 +143,36 @@ def fetch_metadata_resilient(url: str, on_progress: ProgressFn = None) -> dict:
                 "format": "json",
             }
         )
-        request = Request(endpoint, headers={"User-Agent": "YTsummary/1.0"})
-        with urlopen(request, timeout=15) as response:
+        request = Request(endpoint, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        with urlopen(request, timeout=10) as response:
             raw = response.read(128 * 1024)
         payload = json.loads(raw.decode("utf-8"))
         title = str(payload.get("title") or "").strip()
-        if title:
-            return {"id": video_id, "title": title, "duration": 0.0}
+        channel = str(payload.get("author_name") or "").strip()
     except Exception:
-        _emit(on_progress, "Lightweight title lookup unavailable; trying extractor metadata...")
+        pass
+
+    # 2. Try lightweight caption API to compute exact duration (fast & immune to yt-dlp 429)
+    try:
+        segs = _fetch_captions_with_transcript_api(video_id)
+        if segs:
+            last = segs[-1]
+            dur = float(last.get("start", 0)) + float(last.get("duration", 0))
+            if dur > 0:
+                duration = round(dur, 1)
+    except Exception:
+        pass
+
+    # If oEmbed gave title and captions gave duration, return immediately with full metadata
+    if title and duration > 0:
+        return {
+            "id": video_id,
+            "title": title,
+            "channel": channel,
+            "duration": duration,
+        }
+
+    # 3. Otherwise try yt-dlp profiles (desktop, android, tv, etc.)
     try:
         p = run_ytdlp_profiles(
             [
@@ -203,21 +191,34 @@ def fetch_metadata_resilient(url: str, on_progress: ProgressFn = None) -> dict:
         lines = [line for line in p.stdout.splitlines() if line.strip()]
         if len(lines) >= 3:
             try:
-                duration = float(lines[-1] or 0)
+                ytdlp_dur = float(lines[-1] or 0)
             except ValueError:
-                duration = 0.0
+                ytdlp_dur = 0.0
             return {
                 "id": lines[-3].strip() or video_id,
-                "title": lines[-2].strip(),
-                "duration": duration,
+                "title": title or lines[-2].strip(),
+                "channel": channel,
+                "duration": ytdlp_dur if ytdlp_dur > 0 else duration,
             }
     except YtDlpError as exc:
         _emit(
             on_progress,
-            "Metadata lookup was blocked; continuing with transcript-derived "
-            f"metadata ({exc.kind.value}).",
+            "Metadata lookup via yt-dlp was rate-limited or blocked; continuing with public metadata.",
         )
-    return {"id": video_id, "title": f"YouTube video {video_id}", "duration": 0.0}
+
+    # 4. Fallback: return what we have without raising 502/rate-limit error
+    final_title = title or f"YouTube video {video_id}"
+    return {
+        "id": video_id,
+        "title": final_title,
+        "channel": channel,
+        "duration": duration,
+    }
+
+
+def fetch_metadata(url: str) -> dict:
+    """Return {'id', 'title', 'duration', 'channel'} resiliently."""
+    return fetch_metadata_resilient(url)
 
 
 def _clean_caption_text(value: str) -> str:
