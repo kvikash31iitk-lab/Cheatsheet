@@ -522,11 +522,21 @@ def _public_message(kind: YtDlpFailureKind, operation: str) -> str:
 
 def _cookies_path(env: Mapping[str, str] | None = None) -> Path | None:
     source = os.environ if env is None else env
-    raw = source.get("YT_COOKIES_PATH", DEFAULT_COOKIES_PATH).strip()
-    if not raw:
-        return None
-    path = Path(raw)
-    return path if path.is_file() else None
+    raw = source.get("YT_COOKIES_PATH", "").strip()
+    if raw:
+        path = Path(raw)
+        if path.is_file():
+            return path
+    # 1. Project root cookies.txt (written by admin panel upload)
+    project_cookies = Path(__file__).resolve().parent.parent / "cookies.txt"
+    if project_cookies.is_file():
+        return project_cookies
+    # 2. System default cookies path (/home/botuser/cookies.txt)
+    default_path = Path(DEFAULT_COOKIES_PATH)
+    if default_path.is_file():
+        return default_path
+    return None
+
 
 
 def _base_command(env: Mapping[str, str] | None = None) -> list[str]:
