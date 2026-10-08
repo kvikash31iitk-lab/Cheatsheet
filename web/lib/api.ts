@@ -479,6 +479,115 @@ export async function rebuildPdf(jobId: string): Promise<{ ok: boolean; pdf_url:
   return res.json();
 }
 
+export interface DocChapter {
+  index: number;
+  level: number;
+  title: string;
+  start_page: number;
+  end_page: number;
+  page_span: string;
+}
+
+export interface DocInspectionResult {
+  file_id: string;
+  filename: string;
+  file_size_mb: number;
+  page_count: number;
+  doc_type: 'digital' | 'scanned' | 'handwritten';
+  has_toc: boolean;
+  chapters: DocChapter[];
+  preview_text: string;
+}
+
+export async function inspectDocument(file: File): Promise<DocInspectionResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch('/api/docs/inspect', {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to inspect document'));
+  return res.json();
+}
+
+export async function getDemoDocument(): Promise<DocInspectionResult> {
+  const res = await fetch('/api/docs/demo');
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to load demo document'));
+  return res.json();
+}
+
+export async function generateDocumentCheatsheet(formData: FormData): Promise<{ id: string; title: string }> {
+  const res = await fetch('/api/docs/generate', {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to start generation'));
+  return res.json();
+}
+
+export interface BookBatchItem {
+  index: number;
+  title: string;
+  start_page: number;
+  end_page: number;
+  page_span: string;
+  status: 'pending' | 'running' | 'complete' | 'failed';
+  step: string;
+  pdf_url?: string | null;
+  error?: string | null;
+}
+
+export interface BookBatchJob {
+  id: string;
+  book_title: string;
+  status: 'running' | 'complete' | 'stopped' | 'error';
+  total_chapters: number;
+  completed_count: number;
+  failed_count: number;
+  desktop_folder?: string;
+  items: Record<string, BookBatchItem>;
+  created_at: string;
+}
+
+export async function startBookBatchJob(req: {
+  file_id: string;
+  book_title: string;
+  chapters: DocChapter[];
+  concurrency?: number;
+  exam_target?: string;
+}): Promise<{ id: string; batch_id: string; total_chapters: number }> {
+  const res = await fetch('/api/docs/batch/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to start book batch job'));
+  return res.json();
+}
+
+export async function getBookBatchStatus(batchId: string): Promise<BookBatchJob> {
+  const res = await fetch(`/api/docs/batch/status/${encodeURIComponent(batchId)}`);
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to fetch batch status'));
+  return res.json();
+}
+
+export async function stopBookBatchJob(batchId: string): Promise<{ id: string; status: string }> {
+  const res = await fetch(`/api/docs/batch/stop/${encodeURIComponent(batchId)}`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to stop batch job'));
+  return res.json();
+}
+
+export async function listBookBatches(): Promise<BookBatchJob[]> {
+  const res = await fetch('/api/docs/batch/list');
+  if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to fetch book batches'));
+  return res.json();
+}
+
+
+
+
 
 
 

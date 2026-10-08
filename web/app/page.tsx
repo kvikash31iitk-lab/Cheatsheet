@@ -23,6 +23,16 @@ const NavBar = () => (
       <a href="#how" style={{ textDecoration: 'none', color: 'inherit' }}>How it works</a>
       <a href="#faq" style={{ textDecoration: 'none', color: 'inherit' }}>FAQ</a>
       <Link
+        href="/upload"
+        style={{
+          textDecoration: 'none',
+          color: 'var(--c-accent, #C9572B)',
+          fontWeight: 600,
+        }}
+      >
+        Books & Notes 📚
+      </Link>
+      <Link
         href="/upsc"
         style={{
           textDecoration: 'none',
@@ -48,9 +58,14 @@ const NavBar = () => (
 const Hero = () => (
   <section style={{ padding: '72px 56px 56px', textAlign: 'center', position: 'relative' }}>
     <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 24, flexWrap: 'wrap' }}>
-      <Link href="/upsc" style={{ textDecoration: 'none' }}>
+      <Link href="/upload" style={{ textDecoration: 'none' }}>
         <Tag tone="accent" style={{ padding: '5px 12px', cursor: 'pointer' }}>
-          <Ic.sparkle size={11} /> New · UPSC daily digest →
+          <Ic.sparkle size={11} /> New · Books, PDFs & Notes to Cheatsheet →
+        </Tag>
+      </Link>
+      <Link href="/upsc" style={{ textDecoration: 'none' }}>
+        <Tag tone="neutral" style={{ padding: '5px 12px', cursor: 'pointer' }}>
+          UPSC daily digest →
         </Tag>
       </Link>
       <DesktopDownloadTag />
@@ -58,40 +73,45 @@ const Hero = () => (
     <h1
       style={{
         fontFamily: 'var(--font-serif)',
-        fontSize: 88,
-        lineHeight: 0.98,
+        fontSize: 84,
+        lineHeight: 1.02,
         fontWeight: 400,
         letterSpacing: '-0.025em',
         margin: '0 auto 28px',
-        maxWidth: 920,
+        maxWidth: 960,
         color: 'var(--c-ink)',
       }}
     >
-      Turn any YouTube video<br />
+      Turn YouTube videos & books<br />
       into <span style={{ fontStyle: 'italic', color: 'var(--c-accent)' }}>study-ready</span> notes.
     </h1>
     <p
       style={{
-        fontSize: 19,
-        lineHeight: 1.5,
+        fontSize: 18.5,
+        lineHeight: 1.55,
         color: 'var(--c-ink-2)',
-        maxWidth: 600,
+        maxWidth: 680,
         margin: '0 auto 36px',
       }}
     >
-      Paste a link. Get a clean cheatsheet, solved MCQ handbook, or an exhaustive master academic handbook — formatted, downloadable,
-      and built for how students actually study.
+      Paste a YouTube link or upload any textbook, coaching handout, or handwritten notes.
+      Get dense cheatsheets, solved MCQ handbooks, or chapter-by-chapter batch guides — formatted, downloadable, and built for exams.
     </p>
     <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+      <Link href="/upload" style={{ textDecoration: 'none' }}>
+        <Btn variant="accent" size="xl" icon={<Ic.book size={16} />}>
+          Books & Notes Ingest
+        </Btn>
+      </Link>
       <Link href="/generate" style={{ textDecoration: 'none' }}>
         <Btn variant="primary" size="xl" iconRight={<Ic.arrow size={16} />}>
-          Start Web App — Free
+          YouTube Video Notes
         </Btn>
       </Link>
       <DesktopDownloadBtn variant="secondary" size="xl" label="Download for PC (v2.1)" />
     </div>
     <div style={{ fontSize: 12.5, color: 'var(--c-ink-3)' }}>
-      No credit card · Free web version + 100% offline desktop edition · Zero setup plug-and-play
+      No credit card required · Free tier + 100% offline desktop edition · Zero setup
     </div>
   </section>
 );
@@ -268,6 +288,88 @@ const FeatureSplit = () => (
               {t}
             </span>
           ))}
+        </div>
+      </div>
+
+      <div
+        style={{
+          gridColumn: '1 / -1',
+          background: 'var(--c-surface)',
+          borderRadius: 20,
+          padding: 32,
+          border: '1px solid var(--c-line)',
+          display: 'grid',
+          gridTemplateColumns: '1.2fr 1fr',
+          gap: 28,
+          alignItems: 'center',
+        }}
+      >
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <div
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                background: 'rgba(16,185,129,.12)',
+                color: '#059669',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ic.book size={18} />
+            </div>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--c-ink)' }}>
+                Books, PDFs & Handwritten Notes Engine
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--c-accent)', fontWeight: 600 }}>
+                NEW · Batch Chapter Processing + Vision OCR
+              </div>
+            </div>
+          </div>
+          <p style={{ fontSize: 14, color: 'var(--c-ink-2)', lineHeight: 1.55, marginBottom: 16 }}>
+            Ingest full standard textbooks (Laxmikanth, Bipan Chandra, NCERTs), coaching handouts, or spiral notebook photos.
+            The engine automatically detects Table of Contents chapters, extracts core knowledge, builds comparative matrices and exam traps, and batches entire books like a playlist.
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+            {['Auto TOC Slicing', 'Handwriting Vision OCR', 'Batch Book Processing', 'Comparative Matrices', 'Exam Traps'].map((t) => (
+              <Tag key={t} tone="accent">{t}</Tag>
+            ))}
+          </div>
+          <Link href="/upload" style={{ textDecoration: 'none' }}>
+            <Btn variant="primary" size="md" iconRight={<Ic.arrow size={14} />}>
+              Try Book & Notes Ingestion
+            </Btn>
+          </Link>
+        </div>
+
+        <div
+          style={{
+            background: 'var(--c-surface-2)',
+            borderRadius: 12,
+            padding: 20,
+            fontSize: 12,
+            lineHeight: 1.6,
+            border: '1px solid var(--c-line)',
+          }}
+        >
+          <div style={{ fontWeight: 600, color: 'var(--c-ink)', marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>📘 Bipan Chandra: India Since Independence</span>
+            <span style={{ color: '#059669', fontWeight: 700, fontSize: 11, background: 'rgba(16,185,129,.12)', padding: '2px 8px', borderRadius: 6 }}>
+              48 Chapters Detected
+            </span>
+          </div>
+          <div style={{ color: 'var(--c-ink-2)', marginBottom: 8 }}>
+            ✓ <strong>Chapter 8:</strong> Linguistic Reorganisation (Dhar vs JVP vs SRC Matrix)
+          </div>
+          <div style={{ color: 'var(--c-ink-2)', marginBottom: 8 }}>
+            ✓ <strong>Chapter 6:</strong> The Initial Years & Integration of States
+          </div>
+          <div style={{ color: 'var(--c-ink-3)', fontSize: 11.5, fontStyle: 'italic', marginTop: 12 }}>
+            ⚡ Live chapter-by-chapter queue with 1-click ZIP export & desktop folder sync
+          </div>
         </div>
       </div>
     </div>

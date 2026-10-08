@@ -100,11 +100,18 @@ export default function DashboardPage() {
               : 'Loading…'}
           </div>
         </div>
-        <Link href="/generate" style={{ textDecoration: 'none' }}>
-          <Btn variant="primary" size="md" icon={<Ic.plus size={13} />}>
-            New generation
-          </Btn>
-        </Link>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <Link href="/upload" style={{ textDecoration: 'none' }}>
+            <Btn variant="accent" size="md" icon={<Ic.book size={13} />}>
+              Books & Notes
+            </Btn>
+          </Link>
+          <Link href="/generate" style={{ textDecoration: 'none' }}>
+            <Btn variant="primary" size="md" icon={<Ic.plus size={13} />}>
+              New video
+            </Btn>
+          </Link>
+        </div>
       </header>
 
       <div style={{ padding: 32, maxWidth: 1200, margin: '0 auto' }}>
@@ -450,6 +457,14 @@ function QuickGenerate() {
         >
           Antigravity Engine
         </Btn>
+      </div>
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--c-line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: 12, color: 'var(--c-ink-3)' }}>Have a textbook, PDF, or handwritten notes?</span>
+        <Link href="/upload" style={{ textDecoration: 'none' }}>
+          <Btn variant="ghost" size="sm" icon={<Ic.book size={12} />}>
+            Upload Books & Notes →
+          </Btn>
+        </Link>
       </div>
     </div>
   );

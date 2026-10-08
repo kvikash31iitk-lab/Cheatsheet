@@ -134,6 +134,7 @@ from api import settings as app_settings  # noqa: E402
 from api.admin import router as admin_router  # noqa: E402
 from api.playlist_routes import router as playlist_router  # noqa: E402
 from api.upsc_routes import router as upsc_router  # noqa: E402
+from api.doc_routes import doc_router  # noqa: E402
 from api.youtube_urls import validate_public_youtube_url  # noqa: E402
 
 
@@ -728,6 +729,7 @@ async def startup() -> None:
 app.include_router(admin_router)
 app.include_router(upsc_router)
 app.include_router(playlist_router)
+app.include_router(doc_router)
 
 
 
@@ -2420,10 +2422,33 @@ async def get_version():
             return json.loads(version_file.read_text(encoding="utf-8"))
         except Exception:
             pass
-    return {"version": "2.1.0", "release_name": "Exhaustive Academic Engine"}
+@app.post("/api/civilstap/queue")
+async def add_civilstap_queue(item: dict[str, Any]):
+    from scripts.process_civilstap_queue import load_queue_file, save_queue
+    queue_path, items = await asyncio.to_thread(load_queue_file)
+    idx = next((i for i, it in enumerate(items) if it.get("subject") == item.get("subject") and it.get("title") == item.get("title")), -1)
+    if idx >= 0:
+        items[idx]["stream_url"] = item.get("stream_url", items[idx].get("stream_url"))
+        items[idx]["duration"] = item.get("duration", items[idx].get("duration"))
+        items[idx]["updated_at"] = datetime.now(timezone.utc).isoformat()
+    else:
+        item["id"] = item.get("id") or f"civils_{int(time.time())}"
+        item["status"] = "pending"
+        item["added_at"] = datetime.now(timezone.utc).isoformat()
+        items.append(item)
+    await asyncio.to_thread(save_queue, queue_path, items)
+    return {"ok": True, "count": len(items), "item": item}
+
+
+@app.get("/api/civilstap/queue")
+async def get_civilstap_queue():
+    from scripts.process_civilstap_queue import load_queue_file
+    _, items = await asyncio.to_thread(load_queue_file)
+    return {"ok": True, "count": len(items), "items": items}
 
 
 if __name__ == "__main__":
+
     import uvicorn
 
     uvicorn.run("api.main:app", host="127.0.0.1", port=8000, reload=False)

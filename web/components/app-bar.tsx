@@ -116,6 +116,16 @@ export function AppBar() {
                 Generate
               </Link>
               <Link
+                href="/upload"
+                style={{
+                  color: 'var(--c-accent)',
+                  textDecoration: 'none',
+                  fontWeight: 600,
+                }}
+              >
+                📚 Books & Notes
+              </Link>
+              <Link
                 href="/new"
                 style={{
                   color: 'var(--c-mint)',
@@ -175,6 +185,16 @@ export function AppBar() {
             <>
               <Link href="/" style={{ color: 'inherit', textDecoration: 'none' }}>
                 Home
+              </Link>
+              <Link
+                href="/upload"
+                style={{
+                  color: 'var(--c-accent)',
+                  textDecoration: 'none',
+                  fontWeight: 600,
+                }}
+              >
+                📚 Books & Notes
               </Link>
               <Link href="/login" style={{ textDecoration: 'none' }}>
                 <Btn variant="primary" size="sm">

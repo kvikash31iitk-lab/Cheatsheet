@@ -133,11 +133,18 @@ export default function LibraryPage() {
               All your generated notes.
             </h1>
           </div>
-          <Link href="/generate" style={{ textDecoration: 'none' }}>
-            <Btn variant="primary" size="md" icon={<Ic.plus size={13} />}>
-              New generation
-            </Btn>
-          </Link>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Link href="/upload" style={{ textDecoration: 'none' }}>
+              <Btn variant="accent" size="md" icon={<Ic.book size={13} />}>
+                Books & Notes
+              </Btn>
+            </Link>
+            <Link href="/generate" style={{ textDecoration: 'none' }}>
+              <Btn variant="primary" size="md" icon={<Ic.plus size={13} />}>
+                New video
+              </Btn>
+            </Link>
+          </div>
         </div>
 
         {/* Toolbar */}

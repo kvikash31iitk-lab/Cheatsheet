@@ -321,6 +321,7 @@ def make_section_banner(title: str) -> Table:
         ("BOX", (0, 0), (-1, -1), 0.5, NAVY_PRIMARY),
     ]))
     t.spaceAfter = 2.0
+    t.keepWithNext = True
     return t
 
 
@@ -616,11 +617,40 @@ def _parse_ascii_table(code_text: str):
     return None
 
 
+def split_markdown_cells(row_str: str) -> list[str]:
+    """Split a markdown table row by '|' while respecting backticks and escaped pipes."""
+    s = row_str.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    cells = []
+    curr = []
+    in_code = False
+    escaped = False
+    for ch in s:
+        if ch == "\\" and not escaped:
+            escaped = True
+            curr.append(ch)
+            continue
+        if ch == "`" and not escaped:
+            in_code = not in_code
+            curr.append(ch)
+        elif ch == "|" and not in_code and not escaped:
+            cells.append("".join(curr).strip())
+            curr = []
+        else:
+            curr.append(ch)
+        escaped = False
+    cells.append("".join(curr).strip())
+    return cells
+
+
 def make_table(header: List[str], rows: List[List[str]]) -> Table:
-    """Ultra-compact comparative table with repeatRows=1."""
+    """Ultra-compact comparative table with repeatRows=1 and fixed column widths."""
     num_cols = len(header)
     th_style = ParagraphStyle("RefinedTH", parent=STYLE_BODY, fontName="Helvetica-Bold", fontSize=7.6, leading=9.8, textColor=colors.white, alignment=TA_LEFT)
-    td_style = ParagraphStyle("RefinedTD", parent=STYLE_BODY, fontName="Helvetica", fontSize=7.5, leading=10.0, alignment=TA_JUSTIFY)
+    td_style = ParagraphStyle("RefinedTD", parent=STYLE_BODY, fontName="Helvetica", fontSize=7.5, leading=10.0, alignment=TA_LEFT)
     
     if num_cols == 2:
         col_w = [BODY_W * 0.32, BODY_W * 0.68]
@@ -631,15 +661,24 @@ def make_table(header: List[str], rows: List[List[str]]) -> Table:
     else:
         col_w = [BODY_W / num_cols] * num_cols
 
-    data = [[make_para(c, th_style) for c in header]]
+    # Ensure every row has exactly num_cols cells
+    normalized_rows = []
     for r in rows:
+        if len(r) < num_cols:
+            r = r + [""] * (num_cols - len(r))
+        elif len(r) > num_cols:
+            r = r[:num_cols - 1] + [" ".join(r[num_cols - 1:])]
+        normalized_rows.append(r)
+
+    data = [[make_para(c, th_style) for c in header]]
+    for r in normalized_rows:
         row_cells = []
         for i, c in enumerate(r):
             p_st = ParagraphStyle("RefinedTDH", parent=td_style, fontName="Helvetica-Bold", textColor=NAVY_HEADER) if i == 0 else td_style
             row_cells.append(make_para(c, p_st))
         data.append(row_cells)
 
-    t = Table(data, colWidths=col_w, repeatRows=1)
+    t = Table(data, colWidths=col_w, repeatRows=1, hAlign="LEFT")
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), NAVY_HEADER),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -850,11 +889,11 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
             
         # Tables
         if "|" in line and i + 1 < len(lines) and re.match(r"^[\s\|:\-]+$", lines[i+1].strip()):
-            header = [c.strip() for c in line.strip("|").split("|")]
+            header = split_markdown_cells(line)
             i += 2
             rows = []
             while i < len(lines) and "|" in lines[i].strip() and lines[i].strip():
-                rows.append([c.strip() for c in lines[i].strip().strip("|").split("|")])
+                rows.append(split_markdown_cells(lines[i].strip()))
                 i += 1
             emit([Spacer(1, 1.2), make_table(header, rows), Spacer(1, 2.0)])
             continue
@@ -884,17 +923,32 @@ def build(md_path: Path, pdf_path: Path, title: str = "High-Yield Revision Cheat
                 bullet_group.append((lvl, curr_text))
                 i += 1
                 
-            # If the group has a parent bullet (e.g. Level 1) followed by 4+ short sub-bullets (Level >= 2 and avg len <= 65)
-            # OR the whole group is 4+ short items (avg len <= 65 chars):
+            # Only use double-column grid when it's genuinely a flat list of short key-values:
+            # Case 1: Exactly 1 parent header, followed by only short leaf sub-bullets (no nested sub-sub bullets)
+            # Case 2: ALL items in bullet_group are Level 1 (flat list, no hierarchy), and all are short key-values (<= 45 chars)
             sub_items = [(lvl, t) for (lvl, t) in bullet_group if lvl >= 2]
             lvl1_items = [(lvl, t) for (lvl, t) in bullet_group if lvl == 1]
             
-            if len(lvl1_items) == 1 and len(sub_items) >= 4 and (sum(len(t) for _, t in sub_items) / len(sub_items) <= 65):
+            is_flat_l1 = (
+                len(lvl1_items) == len(bullet_group)
+                and len(bullet_group) >= 6
+                and (sum(len(t) for _, t in bullet_group) / len(bullet_group) <= 45)
+                and max(len(t) for _, t in bullet_group) <= 75
+            )
+            is_single_parent_leaves = (
+                len(lvl1_items) == 1
+                and len(sub_items) >= 4
+                and all(l == 2 for l, _ in sub_items)
+                and (sum(len(t) for _, t in sub_items) / len(sub_items) <= 50)
+                and max(len(t) for _, t in sub_items) <= 80
+            )
+
+            if is_single_parent_leaves:
                 # Render Level 1 parent
                 p_parent = make_para(f'<font color="{ACCENT_BLUE.hexval()}" size="7.5">&#8226;</font>&nbsp;&nbsp;{lvl1_items[0][1]}', STYLE_BULLET_L1_HEAD)
                 emit([p_parent, make_double_column_grid(sub_items), Spacer(1, 1.2)])
-            elif len(bullet_group) >= 4 and (sum(len(t) for _, t in bullet_group) / len(bullet_group) <= 165):
-                # Whole group as double column
+            elif is_flat_l1:
+                # Flat list without hierarchy
                 emit([make_double_column_grid(bullet_group), Spacer(1, 1.2)])
             else:
                 # Render individual hierarchical bullets

@@ -282,6 +282,23 @@ function GenerateForm() {
           >
             📑 Playlist Extraction
           </button>
+          <button
+            type="button"
+            onClick={() => router.push('/upload')}
+            style={{
+              flex: 1,
+              padding: '10px 16px',
+              borderRadius: 8,
+              border: '1.5px solid var(--c-line)',
+              background: 'var(--c-surface)',
+              color: 'var(--c-accent)',
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontSize: 14,
+            }}
+          >
+            📚 Book & Notes Upload
+          </button>
         </div>
 
         {/* Live Playlist Progress Dashboard Banner */}
