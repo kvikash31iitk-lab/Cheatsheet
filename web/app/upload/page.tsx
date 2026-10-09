@@ -53,6 +53,14 @@ export default function DocumentUploadPage() {
   // Drag state
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isLocalHost, setIsLocalHost] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const h = window.location.hostname;
+      setIsLocalHost(h === 'localhost' || h === '127.0.0.1');
+    }
+  }, []);
 
   // Handle Drag Events
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
@@ -1297,63 +1305,85 @@ export default function DocumentUploadPage() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-              <a
-                href={`/api/jobs/${encodeURIComponent(singleJobId)}/download`}
-                download
-                style={{
-                  flex: 1,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                  padding: '12px 20px',
-                  borderRadius: 999,
-                  background: 'var(--c-accent)',
-                  color: '#fff',
-                  fontWeight: 600,
-                  fontSize: 15,
-                  textDecoration: 'none',
-                }}
-              >
-                📥 Download Publication PDF
-              </a>
+            {(() => {
+              const pdfUrl = (singleJob.status as any).pdf_url || `/api/files/${singleJobId}/pdf`;
+              const safeDownloadName = `${(singleJob.meta?.title || customTitle || 'Cheatsheet').replace(/[^\w\s.-]/g, '_').trim()}.pdf`;
+              return (
+                <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+                  <a
+                    href={pdfUrl}
+                    download={safeDownloadName}
+                    style={{
+                      flex: 1,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                      padding: '12px 20px',
+                      borderRadius: 999,
+                      background: 'var(--c-accent)',
+                      color: '#fff',
+                      fontWeight: 600,
+                      fontSize: 15,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    📥 Download Publication PDF
+                  </a>
 
-              <a
-                href={(singleJob.status as any).pdf_url || `/api/files/${singleJobId}/pdf`}
-                target="_blank"
-                rel="noreferrer"
+                  <a
+                    href={`${pdfUrl}?inline=1`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      padding: '12px 20px',
+                      borderRadius: 999,
+                      border: '1px solid var(--c-line)',
+                      background: 'var(--c-surface-2)',
+                      color: 'var(--c-ink)',
+                      fontWeight: 600,
+                      fontSize: 15,
+                      textDecoration: 'none',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    👁️ View PDF
+                  </a>
+                </div>
+              );
+            })()}
+
+            {isLocalHost ? (
+              <div
                 style={{
-                  padding: '12px 20px',
-                  borderRadius: 999,
+                  fontSize: 12.5,
+                  color: 'var(--c-ink-3)',
+                  background: 'var(--c-bg)',
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  marginBottom: 20,
                   border: '1px solid var(--c-line)',
-                  background: 'var(--c-surface-2)',
-                  color: 'var(--c-ink)',
-                  fontWeight: 600,
-                  fontSize: 15,
-                  textDecoration: 'none',
-                  display: 'inline-flex',
-                  alignItems: 'center',
                 }}
               >
-                👁️ View PDF
-              </a>
-            </div>
-
-            <div
-              style={{
-                fontSize: 12.5,
-                color: 'var(--c-ink-3)',
-                background: 'var(--c-bg)',
-                padding: '10px 14px',
-                borderRadius: 8,
-                marginBottom: 20,
-                border: '1px solid var(--c-line)',
-              }}
-            >
-              💻 <strong>Desktop copy saved:</strong> Automatically copied to{' '}
-              <code style={{ color: 'var(--c-accent)' }}>Desktop\Civils Tap\Documents</code> for offline access.
-            </div>
+                💻 <strong>Desktop copy saved:</strong> Automatically copied to{' '}
+                <code style={{ color: 'var(--c-accent)' }}>Desktop\Civils Tap\Documents</code> for offline access.
+              </div>
+            ) : (
+              <div
+                style={{
+                  fontSize: 12.5,
+                  color: 'var(--c-ink-3)',
+                  background: 'var(--c-bg)',
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  marginBottom: 20,
+                  border: '1px solid var(--c-line)',
+                }}
+              >
+                ✨ <strong>Publication PDF Ready:</strong> Complete with high-density revision matrices, chronological timelines, fact grids, and exam traps.
+              </div>
+            )}
 
             <div style={{ borderTop: '1px solid var(--c-line)', paddingTop: 18 }}>
               <button

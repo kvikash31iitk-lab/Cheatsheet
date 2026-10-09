@@ -1476,6 +1476,7 @@ async def wallet_transactions(
 @app.get("/api/files/{job_id}/pdf")
 async def get_pdf(
     job_id: str,
+    inline: bool = False,
     user: User = Depends(current_user),
     s: AsyncSession = Depends(get_session),
 ) -> FileResponse:
@@ -1489,9 +1490,23 @@ async def get_pdf(
         raise HTTPException(404, "pdf not ready")
     safe = "".join(c if c.isalnum() or c in " ._-" else "_" for c in (gen.title or ""))
     safe = safe.strip()[:80] or "cheatsheet"
+    disposition = "inline" if inline else "attachment"
     return FileResponse(
-        gen.pdf_path, media_type="application/pdf", filename=f"{safe}.pdf"
+        gen.pdf_path,
+        media_type="application/pdf",
+        filename=f"{safe}.pdf",
+        content_disposition_type=disposition,
     )
+
+
+@app.get("/api/jobs/{job_id}/download")
+async def download_job_pdf(
+    job_id: str,
+    user: User = Depends(current_user),
+    s: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    """Download alias for generated job PDF."""
+    return await get_pdf(job_id=job_id, inline=False, user=user, s=s)
 
 
 _ENRICHING_JOBS: set[str] = set()
