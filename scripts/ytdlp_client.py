@@ -471,13 +471,17 @@ def _classify_failure(output: str) -> YtDlpFailureKind:
 def _is_explicit_bot_challenge(output: str) -> bool:
     """Return whether YouTube explicitly asks this client to sign in as human."""
 
-    message = output.casefold()
+    normalized = output.casefold().replace("’", "'").replace("‘", "'").replace("`", "'")
     return any(
-        marker in message
+        marker in normalized
         for marker in (
             "sign in to confirm you're not a bot",
             "sign in to confirm you are not a bot",
             "sign in to confirm youâ€™re not a bot",
+            "sign in to confirm",
+            "confirm you're not a bot",
+            "not a bot",
+            "use --cookies",
         )
     )
 
