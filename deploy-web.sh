@@ -81,9 +81,21 @@ sudo -u "$BOT_USER" -H bash -c "
 "
 
 # --- 3. systemd units ---
+# Ensure INTERNAL_API_TOKEN is synchronized from web/.env.local or .env.local to .env if missing
+if [[ -f "$INSTALL_DIR/web/.env.local" ]] && grep -Eq '^INTERNAL_API_TOKEN=.+' "$INSTALL_DIR/web/.env.local"; then
+  TOKEN_VAL="$(grep -E '^INTERNAL_API_TOKEN=.+' "$INSTALL_DIR/web/.env.local" | head -n 1 | cut -d= -f2-)"
+  if [[ -f "$INSTALL_DIR/.env" ]] && ! grep -Eq '^INTERNAL_API_TOKEN=.+' "$INSTALL_DIR/.env"; then
+    echo "INTERNAL_API_TOKEN=$TOKEN_VAL" >> "$INSTALL_DIR/.env"
+  fi
+fi
+
 ENV_FILE_DIRECTIVE=""
 if [[ -f "$INSTALL_DIR/.env" ]]; then
   ENV_FILE_DIRECTIVE="EnvironmentFile=$INSTALL_DIR/.env"
+fi
+if [[ -f "$INSTALL_DIR/.env.local" ]]; then
+  ENV_FILE_DIRECTIVE="${ENV_FILE_DIRECTIVE}
+EnvironmentFile=$INSTALL_DIR/.env.local"
 fi
 
 echo "==> writing $API_SVC.service..."

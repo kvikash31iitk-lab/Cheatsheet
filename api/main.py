@@ -73,11 +73,13 @@ _local_cookies = PROJECT_ROOT / "cookies.txt"
 if _local_cookies.exists() and "YT_COOKIES_PATH" not in os.environ:
     os.environ["YT_COOKIES_PATH"] = str(_local_cookies)
 
-# Load the project .env so the existing pipeline picks up keys.
+# Load the project .env and .env.local so the existing pipeline picks up keys.
 try:
     from dotenv import load_dotenv  # type: ignore
 
     load_dotenv(PROJECT_ROOT / ".env")
+    load_dotenv(PROJECT_ROOT / ".env.local", override=True)
+    load_dotenv(PROJECT_ROOT / "web" / ".env.local", override=True)
 except ImportError:
     pass
 
