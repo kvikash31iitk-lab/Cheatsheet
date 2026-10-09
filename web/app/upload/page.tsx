@@ -120,14 +120,38 @@ export default function DocumentUploadPage() {
       setStartPage(1);
       setEndPage(Math.min(res.page_count, 25));
 
-      if (res.chapters && res.chapters.length > 0) {
+      let effectiveChapters = res.chapters || [];
+      if (effectiveChapters.length === 0 && res.page_count > 25) {
+        const chunkSize = 20;
+        let idx = 1;
+        const synth: DocChapter[] = [];
+        for (let sp = 1; sp <= res.page_count; sp += chunkSize) {
+          const ep = Math.min(res.page_count, sp + chunkSize - 1);
+          synth.push({
+            index: idx,
+            level: 1,
+            title: `Part ${idx}: Pages ${sp}–${ep}`,
+            start_page: sp,
+            end_page: ep,
+            page_span: `pp. ${sp}–${ep}`,
+          });
+          idx++;
+        }
+        effectiveChapters = synth;
+        res.chapters = synth;
+        res.has_toc = true;
+      }
+
+      if (effectiveChapters.length > 0) {
         setChapterMode('batch');
-        setupDefaultBatchSelection(res.chapters);
-        setSelectedChapterIdx(res.chapters[0].index);
-        setStartPage(res.chapters[0].start_page);
-        setEndPage(res.chapters[0].end_page);
+        setupDefaultBatchSelection(effectiveChapters);
+        setSelectedChapterIdx(effectiveChapters[0].index);
+        setStartPage(effectiveChapters[0].start_page);
+        setEndPage(effectiveChapters[0].end_page);
       } else {
-        setChapterMode('custom');
+        setChapterMode('single');
+        setStartPage(1);
+        setEndPage(res.page_count);
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to inspect uploaded document.');
@@ -555,7 +579,7 @@ export default function DocumentUploadPage() {
             </div>
 
             {/* Chapter Mode Selector */}
-            {docInfo.has_toc && docInfo.chapters.length > 0 && (
+            {docInfo.chapters && docInfo.chapters.length > 0 && (
               <div style={{ marginBottom: 24 }}>
                 <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
                   <button
@@ -573,7 +597,7 @@ export default function DocumentUploadPage() {
                       fontSize: 13.5,
                     }}
                   >
-                    🚀 Batch Process All Chapters ({docInfo.chapters.length} Found)
+                    🚀 Batch Process Whole Book ({docInfo.chapters.length} Chapters/Parts)
                   </button>
                   <button
                     type="button"
@@ -589,7 +613,7 @@ export default function DocumentUploadPage() {
                       fontSize: 13.5,
                     }}
                   >
-                    📑 Single Chapter
+                    📑 Single Chapter / Part
                   </button>
                   <button
                     type="button"
