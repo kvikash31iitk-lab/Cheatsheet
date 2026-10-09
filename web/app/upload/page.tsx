@@ -835,6 +835,25 @@ export default function DocumentUploadPage() {
             {/* If no TOC found */}
             {(!docInfo.has_toc || docInfo.chapters.length === 0) && (
               <div style={{ marginBottom: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>Page Range Selection</span>
+                  <button
+                    type="button"
+                    onClick={() => { setStartPage(1); setEndPage(docInfo.page_count); }}
+                    style={{
+                      background: 'none',
+                      border: '1px solid var(--c-line)',
+                      borderRadius: 6,
+                      padding: '4px 10px',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      color: 'var(--c-accent)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    ⚡ Select Entire Document (Pages 1–{docInfo.page_count})
+                  </button>
+                </div>
                 <div style={{ display: 'flex', gap: 14 }}>
                   <div style={{ flex: 1 }}>
                     <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
@@ -859,7 +878,7 @@ export default function DocumentUploadPage() {
                   </div>
                   <div style={{ flex: 1 }}>
                     <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
-                      End Page (Max 15 pages for vision)
+                      End Page
                     </label>
                     <input
                       type="number"

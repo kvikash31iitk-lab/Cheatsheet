@@ -110,7 +110,7 @@ def _inspect_pdf_file(pdf_path: Path) -> dict[str, Any]:
     avg_chars = total_chars / max(1, sample_pages)
     doc_type = "digital" if avg_chars > 250 else "scanned"
 
-    # Extract TOC
+    # 1. Extract digital electronic TOC bookmarks if present
     raw_toc = doc.get_toc()
     chapters: list[dict[str, Any]] = []
 
@@ -132,6 +132,60 @@ def _inspect_pdf_file(pdf_path: Path) -> dict[str, Any]:
                     "end_page": min(page_count, max(start_p, end_p)),
                     "page_span": f"pp. {start_p}–{end_p}",
                 })
+
+    # 2. If no digital bookmarks, scan for printed UNIT / CHAPTER / BLOCK / MODULE headings
+    if not chapters:
+        import re
+        detected_units: list[tuple[int, str]] = []
+        for p in range(page_count):
+            try:
+                txt = doc[p].get_text()
+            except Exception:
+                continue
+            lines = [l.strip() for l in txt.split("\n") if l.strip()]
+            for idx, l in enumerate(lines[:10]):
+                m = re.match(r"^(?:UNIT|CHAPTER|BLOCK|MODULE|LESSON)\s*[-:]?\s*(\d+|[IVX]+)\b", l, re.IGNORECASE)
+                if m:
+                    # Skip table of contents pages in the very beginning
+                    if p < 10 and any(w in txt.lower()[:250] for w in ["contents", "table of contents"]):
+                        continue
+                    clean_h = re.sub(r"\s+", " ", l).strip()
+                    if idx + 1 < len(lines) and 3 < len(lines[idx + 1]) < 60:
+                        sub = re.sub(r"\s+", " ", lines[idx + 1]).strip()
+                        clean_h += f": {sub}"
+                    # Ensure minimum 5 pages spacing between chapters
+                    if not detected_units or (p + 1 - detected_units[-1][0] >= 5):
+                        detected_units.append((p + 1, clean_h))
+                    break
+
+        if len(detected_units) >= 2:
+            for i, (sp, t) in enumerate(detected_units):
+                ep = detected_units[i + 1][0] - 1 if i + 1 < len(detected_units) else page_count
+                chapters.append({
+                    "index": i + 1,
+                    "level": 1,
+                    "title": t[:80],
+                    "start_page": sp,
+                    "end_page": min(page_count, max(sp, ep)),
+                    "page_span": f"pp. {sp}–{ep}",
+                })
+
+    # 3. If still no chapters and document is large (> 25 pages), auto-partition into 20-page parts
+    # so the user can always batch process the entire document without hitting single-prompt limits!
+    if not chapters and page_count > 25:
+        chunk_size = 20
+        chunk_idx = 1
+        for sp in range(1, page_count + 1, chunk_size):
+            ep = min(page_count, sp + chunk_size - 1)
+            chapters.append({
+                "index": chunk_idx,
+                "level": 1,
+                "title": f"Part {chunk_idx}: Pages {sp}–{ep}",
+                "start_page": sp,
+                "end_page": ep,
+                "page_span": f"pp. {sp}–{ep}",
+            })
+            chunk_idx += 1
 
     return {
         "page_count": page_count,
